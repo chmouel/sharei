@@ -42,6 +42,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 HTML_SUFFIXES = {".html", ".htm"}
+VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".webm", ".ogv"}
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
 TEXT_MAX_BYTES = 2 * 1024**2
 HIGHLIGHT_MAX_BYTES = 512 * 1024
@@ -1556,7 +1557,9 @@ def read_text_file(path: Path) -> str | None:
 
 
 def view_url(project: str, path: Path) -> str | None:
-    """Reader page for a dropped file: /md for markdown, /view for other text, else None."""
+    """Reader page for a dropped file: /md for markdown, /play for video, /view for other text."""
+    if path.suffix.lower() in VIDEO_SUFFIXES:
+        return f"/play/{quote(project)}/{quote(path.name)}"
     if is_markdown(path.name):
         return f"/md/{quote(project)}/{quote(path.name)}"
     if path.suffix.lower() not in IMAGE_SUFFIXES and looks_like_text(path):
@@ -1901,6 +1904,40 @@ def code_headers(nonce: str) -> dict[str, str]:
             "default-src 'none'; img-src 'self'; style-src 'self' 'unsafe-inline'; "
             f"script-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; "
             "frame-ancestors 'self'"
+        ),
+    }
+
+
+PLAY_CSS = """
+  .page.play-page { display:grid; place-items:center; width:min(100%, 1280px); min-height:calc(100vh - 120px); }
+  .play-page video { display:block; width:100%; max-height:calc(100vh - 120px); border-radius:6px; background:#000; }
+"""
+
+
+def play_page(project: str, name: str) -> tuple[bytes, str]:
+    """A dropped video in the browser's own player, streamed from /poub."""
+    nonce = secrets.token_urlsafe(16)
+    url = html.escape(f"/poub/{quote(project)}/{quote(name)}")
+    document = f"""<!doctype html>
+<html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
+{theme_script(nonce)}
+<link rel="icon" href="/icon-192.png">
+<style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}</style></head><body>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a></nav></header>
+<main class="page play-page"><video src="{url}" controls playsinline preload="metadata"></video></main>
+</body></html>"""
+    return document.encode("utf-8"), nonce
+
+
+def play_headers(nonce: str) -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": (
+            "default-src 'none'; img-src 'self'; media-src 'self'; "
+            f"style-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
         ),
     }
 
@@ -2266,7 +2303,9 @@ DROP_CSS = """
   .file:active { transform:scale(.985); border-color:var(--accent-line); }
   .file:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .file-thumb { display:grid; place-items:center; flex:0 0 46px; height:46px; overflow:hidden; border-radius:10px; background:var(--chip); color:var(--accent); font-size:20px; }
-  .file-thumb img { width:100%; height:100%; object-fit:cover; }
+  .file-thumb img, .file-thumb video { width:100%; height:100%; object-fit:cover; }
+  .file-thumb video { position:absolute; inset:0; pointer-events:none; }
+  .play-mark { position:relative; display:grid; place-items:center; width:24px; height:24px; padding-left:2px; border-radius:50%; background:rgba(0,0,0,.55); color:#fff; font-size:10px; }
   .file-thumb { position:relative; }
   .file-thumb:has(iframe) { background:#fff; }
   .file-thumb iframe { position:absolute; left:0; top:0; width:184px; height:184px; border:0; transform:scale(.25); transform-origin:0 0; pointer-events:none; }
@@ -2402,6 +2441,14 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
             thumb = f'<img src="/poub/{entry["url"]}" alt="" loading="lazy" decoding="async">'
             action = "Open"
             download = ""
+        elif Path(entry["name"]).suffix.lower() in VIDEO_SUFFIXES:
+            thumb = (
+                f'<video src="/poub/{entry["url"]}#t=0.1" muted playsinline preload="metadata" '
+                'tabindex="-1" aria-hidden="true"></video><span class="play-mark" aria-hidden="true">▶</span>'
+            )
+            action = "Play"
+            download = ""
+            href = f"/play/{entry['url']}"
         elif is_markdown(entry["name"]):
             thumb = '<span aria-hidden="true">¶</span>'
             action = "Read"
@@ -3166,6 +3213,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(body, code_headers(nonce))
                 return
 
+        if parsed.path.startswith("/play/"):
+            path = poub_path(parsed.path.removeprefix("/play/"))
+            if path is not None and path.suffix.lower() in VIDEO_SUFFIXES:
+                body, nonce = play_page(path.parent.parent.name, path.name)
+                self.send_html(body, play_headers(nonce))
+                return
+
         if parsed.path == "/clip/md":
             text = clip_snapshot()["text"]
             rendered, notice = render_markdown(text) if text else ("", None)
@@ -3202,7 +3256,7 @@ class Handler(BaseHTTPRequestHandler):
                     headers["Content-Security-Policy"] = (
                         "sandbox allow-scripts allow-forms"
                     )
-                elif suffix not in IMAGE_SUFFIXES:
+                elif suffix not in IMAGE_SUFFIXES and suffix not in VIDEO_SUFFIXES:
                     headers["Content-Disposition"] = (
                         f"attachment; filename*=UTF-8''{quote(path.name)}"
                     )
@@ -3744,15 +3798,44 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def send_file(self, path: Path, content_type: str, headers: dict[str, str]) -> None:
-        self.send_response(200)
+        size = path.stat().st_size
+        start, end = 0, size - 1
+        status = 200
+        # Video players need a single byte range to seek; anything fancier gets the whole file.
+        match = re.fullmatch(
+            r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip()
+        )
+        if match and (match[1] or match[2]):
+            if match[1]:
+                start = int(match[1])
+                end = min(int(match[2]), size - 1) if match[2] else size - 1
+            else:
+                start = max(size - int(match[2]), 0)
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            status = 206
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(path.stat().st_size))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         for name, value in headers.items():
             self.send_header(name, value)
         self.end_headers()
         with path.open("rb") as stream:
-            while chunk := stream.read(128 * 1024):
-                self.wfile.write(chunk)
+            stream.seek(start)
+            remaining = end - start + 1
+            try:
+                while remaining and (chunk := stream.read(min(128 * 1024, remaining))):
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"{self.client_address[0]} - {format % args}")

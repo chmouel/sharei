@@ -62,12 +62,16 @@ Pages:
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
   skipped above 512 KB. Anything else returns 404 and downloads from `/poub`.
+- `/play/<project>/<name>`: a dropped video (`VIDEO_SUFFIXES`) in the
+  browser's player, under a nonce-only CSP with `media-src 'self'`
 - `/clip/md`: the clipboard, rendered as markdown
 
 Files:
 
 - `/shot/<key>`, `/thumb/<key>`
 - `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
+  Images and videos are served inline, everything else as an attachment.
+  `send_file` answers a single `Range` with 206, so players can seek.
 - `/download/...` for APKs
 - `/vendor/...`
 

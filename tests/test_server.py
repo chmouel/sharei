@@ -78,3 +78,25 @@ def test_foreign_host_is_rejected(live_server):
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(request)
     assert error.value.code in (400, 403, 421)
+
+
+def test_video_plays_inline_and_seeks(live_server):
+    data = bytes(range(256)) * 4
+    result = upload(live_server, "clip.mp4", data)
+    assert result["view"] == "/play/inbox/clip.mp4"
+    _, headers, body = get(live_server + result["view"])
+    assert b'<video src="/poub/inbox/clip.mp4"' in body
+    assert "media-src 'self'" in headers["Content-Security-Policy"]
+
+    url = live_server + result["url"]
+    _, headers, body = get(url)
+    assert "Content-Disposition" not in headers and body == data
+    for header, expected in (("bytes=10-19", data[10:20]), ("bytes=-5", data[-5:])):
+        request = urllib.request.Request(url, headers={"Range": header})
+        with urllib.request.urlopen(request) as response:
+            assert response.status == 206 and response.read() == expected
+            assert response.headers["Content-Range"].endswith(f"/{len(data)}")
+    request = urllib.request.Request(url, headers={"Range": "bytes=5000-"})
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(request)
+    assert error.value.code == 416

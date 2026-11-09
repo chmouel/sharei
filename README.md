@@ -17,8 +17,8 @@ through them, draw arrows and notes on them, and set them to disappear after a
 while.
 
 Drop holds files you send either way. Markdown opens formatted the way GitHub
-shows it, code opens with colours and line numbers, and pictures open full
-screen. Any file there can be set to expire too.
+shows it, code opens with colours and line numbers, pictures open full
+screen, and videos play right in the page. Any file there can be set to expire too.
 
 Clipboard is a single shared note. Paste on one device and copy on the other.
 It clears itself after ten minutes unless you change that.
