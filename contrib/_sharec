@@ -15,6 +15,19 @@ __sharei_shot_files() {
     fi
 }
 
+if [[ $words[2] == get ]]; then
+    shift words
+    (( CURRENT-- ))
+    _arguments -s -S \
+        '(- *)'{-h,--help}'[show help]' \
+        '(-c --copy)'{-c,--copy}'[clip: put it on this clipboard]' \
+        '(-o --output)'{-o+,--output=}'[drop/shot: file or folder to save to, - for stdout]:output:_files' \
+        '(-p --project)'{-p+,--project=}'[sharei project]:project:__sharei_shot_projects' \
+        '1:what:((clip\:"the shared clipboard" drop\:"the newest dropped file" shot\:"the newest screenshot" list\:"what sharei holds"))' \
+        '2:steps back from the newest: '
+    return
+fi
+
 _arguments -s -S \
     '(- *)'{-h,--help}'[show help]' \
     '(-s --screenshot -c --clipboard -m --markdown -f --file *)'{-s,--screenshot}'[capture the screen and upload it]' \
@@ -23,6 +36,6 @@ _arguments -s -S \
     '(-s --screenshot -c --clipboard -m --markdown -f --file)'{-f,--file}'[upload FILE as is, even a markdown file]' \
     '(-n --name)'{-n+,--name=}'[name to upload under]:name: ' \
     '(-p --project)'{-p+,--project=}'[sharei project]:project:__sharei_shot_projects' \
-    '1:file to share (.md/.markdown is shown as markdown, text files highlighted):__sharei_shot_files'
+    '1:file to share, or get to fetch (.md/.markdown is shown as markdown, text files highlighted):__sharei_shot_files'
 
 # vim: ft=zsh

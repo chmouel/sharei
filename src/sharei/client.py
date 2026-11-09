@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Upload a file, a screenshot or markdown to sharei.
+"""Upload a file, a screenshot or markdown to sharei, or get things back.
 
 Without FILE or a mode option, pick an action from a menu. FILE ending in .md
 or .markdown is shared as markdown along with its local images; any other file
 is uploaded as is, and text files get a syntax-highlighted page.
+
+"sharec get" fetches the shared clipboard, the newest dropped file or
+screenshot, or lists what is there; see "sharec get --help".
 
 Environment: SHAREI_URL (upload target, default http://localhost:8000),
 SHAREI_PUBLIC_URL (base of the printed links, default SHAREI_URL),
@@ -33,7 +36,16 @@ UPLOAD_FILE = "Upload a file"
 SCREENSHOT = "Capture and upload screenshot"
 MARKDOWN_FILE = "Share markdown from file"
 MARKDOWN_CLIPBOARD = "Share markdown from clipboard"
-ACTIONS = [UPLOAD_FILE, SCREENSHOT, MARKDOWN_FILE, MARKDOWN_CLIPBOARD]
+GET_CLIP = "Copy the shared clipboard here"
+GET_DROP = "Download the newest dropped file"
+ACTIONS = [
+    UPLOAD_FILE,
+    SCREENSHOT,
+    MARKDOWN_FILE,
+    MARKDOWN_CLIPBOARD,
+    GET_CLIP,
+    GET_DROP,
+]
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -104,6 +116,176 @@ def upload(name: str, data: bytes, project: str) -> dict:
         raise Abort(f"Uploading {name} failed: {detail}") from error
     except (urllib.error.URLError, OSError, ValueError) as error:
         raise Abort(f"Uploading {name} failed: {error}") from error
+
+
+def fetch(path: str) -> bytes:
+    try:
+        with urllib.request.urlopen(f"{SHAREI_URL}{path}", timeout=300) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        try:
+            detail = json.load(error).get("error", error.reason)
+        except ValueError:
+            detail = error.reason
+        raise Abort(f"Fetching {path} failed: {detail}") from error
+    except (urllib.error.URLError, OSError) as error:
+        raise Abort(f"Fetching {path} failed: {error}") from error
+
+
+def recent(limit: int, project: str) -> dict:
+    params = {"limit": str(limit), **({"project": project} if project else {})}
+    try:
+        return json.loads(fetch(f"/recent?{urlencode(params)}"))
+    except ValueError as error:
+        raise Abort(f"Unexpected answer from {SHAREI_URL}/recent") from error
+
+
+def write_clipboard(data: bytes) -> None:
+    if shutil.which("wl-copy") and os.environ.get("WAYLAND_DISPLAY"):
+        command = ["wl-copy"]
+    elif shutil.which("xclip"):
+        command = ["xclip", "-selection", "clipboard"]
+    elif shutil.which("pbcopy"):
+        command = ["pbcopy"]
+    else:
+        raise Abort("No clipboard tool found (wl-copy, xclip, pbcopy).")
+    subprocess.run(command, input=data, check=True)
+
+
+def free_name(folder: Path, name: str) -> Path:
+    """A path in folder for name that does not exist yet: name, name-1.ext, name-2.ext..."""
+    name = Path(name).name.lstrip(".") or "download"
+    stem, suffix = Path(name).stem, Path(name).suffix
+    candidate, index = folder / name, 0
+    while candidate.exists() or candidate.is_symlink():
+        index += 1
+        candidate = folder / f"{stem}-{index}{suffix}"
+    return candidate
+
+
+def ago(seconds: int) -> str:
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{seconds // size}{unit} ago"
+    return f"{seconds}s ago"
+
+
+def get_clip(back: int, copy: bool) -> None:
+    data = fetch(f"/clip/raw?n={back}")
+    if copy:
+        if not data:
+            raise Abort("The shared clipboard is empty.")
+        write_clipboard(data)
+        print(f"Copied {human(len(data))} to the clipboard.", file=sys.stderr)
+        return
+    sys.stdout.buffer.write(data)
+    if data and sys.stdout.isatty() and not data.endswith(b"\n"):
+        sys.stdout.buffer.write(b"\n")
+    sys.stdout.flush()
+
+
+def get_file(kind: str, back: int, project: str, output: str | None) -> None:
+    items = recent(back + 1, project)[kind]
+    label = "dropped file" if kind == "drop" else "screenshot"
+    if len(items) <= back:
+        where = f" in {project}" if project else ""
+        raise Abort(
+            f"No {label}{where} {back} back." if back else f"No {label}{where}."
+        )
+    item = items[back]
+    data = fetch(item["url"])
+    if output == "-":
+        sys.stdout.buffer.write(data)
+        sys.stdout.flush()
+        return
+    target = Path(output) if output else free_name(Path.cwd(), item["name"])
+    if target.is_dir():
+        target = free_name(target, item["name"])
+    try:
+        with target.open("xb") as stream:
+            stream.write(data)
+    except FileExistsError as error:
+        raise Abort(f"{target} already exists.") from error
+    print(f"Saved {item['project']}/{item['name']} to {target} ({human(len(data))})")
+
+
+def get_list(limit: int, project: str) -> None:
+    payload = recent(limit, project)
+    clip = payload["clip"]
+    if clip["chars"]:
+        print(f"clip   {clip['chars']} chars, {ago(clip['age_seconds'])}")
+    for entry in clip.get("history", []):
+        print(f"clip {entry['n']} {entry['chars']} chars, {ago(entry['age_seconds'])}")
+    for kind in ("drop", "shots"):
+        for back, item in enumerate(payload[kind]):
+            size = f"{human(item['bytes'])}, " if "bytes" in item else ""
+            print(
+                f"{kind[:4]} {back}  {item['project']}/{item['name']}  "
+                f"{size}{ago(item['age_seconds'])}"
+            )
+
+
+def parse_get_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="sharec get",
+        description="Fetch the shared clipboard, the newest dropped file or "
+        "screenshot, or list what sharei holds.",
+    )
+    parser.add_argument(
+        "what",
+        nargs="?",
+        choices=("clip", "drop", "shot", "list"),
+        default="clip",
+        help="what to fetch (default: clip)",
+    )
+    parser.add_argument(
+        "back",
+        nargs="?",
+        type=int,
+        default=0,
+        metavar="N",
+        help="how many steps back from the newest (default: 0, the newest); "
+        "for list, how many items per kind (default: 5)",
+    )
+    parser.add_argument(
+        "-c", "--copy", action="store_true", help="clip: put it on this clipboard"
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="drop/shot: file or folder to save to, - for stdout "
+        "(default: the current folder, never overwriting)",
+    )
+    parser.add_argument(
+        "-p",
+        "--project",
+        default=os.environ.get("SHAREI_PROJECT", ""),
+        help="drop/shot/list: only this project (default: $SHAREI_PROJECT)",
+    )
+    args = parser.parse_args(argv)
+    if args.back < 0:
+        parser.error("N must be 0 or more")
+    if args.copy and args.what != "clip":
+        parser.error("--copy only works with clip")
+    if args.output and args.what not in ("drop", "shot"):
+        parser.error("--output only works with drop or shot")
+    return args
+
+
+def get_main(argv: list[str]) -> int:
+    args = parse_get_args(argv)
+    if args.what == "clip":
+        get_clip(args.back, args.copy)
+    elif args.what == "list":
+        get_list(args.back or 5, args.project)
+    else:
+        get_file(
+            "drop" if args.what == "drop" else "shots",
+            args.back,
+            args.project,
+            args.output,
+        )
+    return 0
 
 
 def markdown_name(name: str) -> str:
@@ -404,9 +586,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["get"]:
+        return get_main(sys.argv[2:])
     args = parse_args()
     action = args.action or gum("choose", *ACTIONS)
     if not action:
+        return 0
+    if action == GET_CLIP:
+        get_clip(0, copy=True)
+        return 0
+    if action == GET_DROP:
+        get_file("drop", 0, args.project, None)
         return 0
     with tempfile.TemporaryDirectory() as workdir:
         if action == UPLOAD_FILE:

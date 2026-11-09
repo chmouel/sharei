@@ -16,6 +16,8 @@ proxy with authentication (see SECURITY.md).
   shares a screenshot, the clipboard, a markdown file with its local images,
   or any file. A FILE ending in `.md` or `.markdown` is shared as markdown,
   anything else as is. With no arguments it shows a `gum` menu.
+  `sharec get [clip|drop|shot|list] [N]` reads back through `/clip/raw` and
+  `/recent` (N is steps back from the newest) and never overwrites a file.
 - `src/sharei/vendor/`: third-party assets served at `/vendor/`:
   github-markdown-css, mermaid, markerjs, highlight.js (common languages
   bundle). Keep their licence files next to them;

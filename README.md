@@ -136,6 +136,19 @@ public address (for example `https://share.example.com`) so those links work
 away from home. The menu needs [gum](https://github.com/charmbracelet/gum). Zsh
 completion lives in [`contrib/_sharec`](contrib/_sharec).
 
+It can fetch things back too:
+
+```sh
+sharec get               # print the shared clipboard
+sharec get clip 1 -c     # put the previous clipboard note on this clipboard
+sharec get drop          # download the newest dropped file here
+sharec get shot          # same for the newest screenshot
+sharec get drop 2 -o -   # the third newest file, to stdout
+sharec get list          # what is on sharei right now
+```
+
+Downloads never overwrite a file; they become `name-1.ext` instead.
+
 ## Privacy
 
 Everything stays on your computer except markdown: sharei asks GitHub to format
