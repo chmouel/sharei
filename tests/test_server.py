@@ -19,9 +19,18 @@ def upload(base, name, data):
 
 
 def test_pages_render(live_server):
-    for path in ("/", "/shots", "/clip", "/drop"):
+    for path in ("/artifacts", "/shots", "/clip", "/drop"):
         status, _, body = get(live_server + path)
         assert status == 200 and b"<!doctype html>" in body
+    import http.client
+    from urllib.parse import urlparse
+
+    u = urlparse(live_server)
+    conn = http.client.HTTPConnection(u.hostname, u.port)
+    conn.request("GET", "/")
+    resp = conn.getresponse()
+    assert resp.status == 302 and resp.getheader("Location") == "/shots"
+    conn.close()
 
 
 def test_upload_text_gets_viewer_and_escapes(live_server):

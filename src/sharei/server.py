@@ -3567,7 +3567,7 @@ def layout(
             tab("shots", "/shots", "Screenshots", tab_counts["shots"], "▣"),
             tab("drop", "/drop", "Drop", tab_counts["drop"], "⇪"),
             tab("clip", "/clip", "Clipboard", 0, "⎘"),
-            tab("artifacts", "/", "Artifacts", tab_counts["artifacts"], "↓"),
+            tab("artifacts", "/artifacts", "Artifacts", tab_counts["artifacts"], "↓"),
         )
     )
 
@@ -3966,6 +3966,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urlparse(self.path)
         if parsed.path == "/":
+            self.send_response(302)
+            self.send_header("Location", "/shots")
+            self.end_headers()
+            return
+
+        if parsed.path == "/artifacts":
             apks, shots, files = available_artifacts(), available_shots(), poub_files()
             self.send_html(artifacts_page(apks, counts(apks, shots, files)))
             return
