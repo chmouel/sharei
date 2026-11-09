@@ -254,9 +254,24 @@ def kitty_image(
     return b"".join(out)
 
 
-NEXT_KEYS = {b" ", b"\x1b[C", b"\x1bOC"}
-PREVIOUS_KEYS = {b"\x7f", b"\x08", b"\x1b[3~", b"\x1b[D", b"\x1bOD"}
+NEXT_KEYS = {b" ", b"j", b"\x1b[C", b"\x1bOC"}
+PREVIOUS_KEYS = {b"k", b"\x7f", b"\x08", b"\x1b[3~", b"\x1b[D", b"\x1bOD"}
+DELETE_KEYS = {b"\x04"}
 BROWSE_MAX = 50
+
+
+def delete_item(item: dict) -> None:
+    """Delete a screenshot or dropped file listed by /recent on the server."""
+    url = item["url"]
+    if url.startswith("/shot/"):
+        path = "/shots/delete/" + url.removeprefix("/shot/")
+    else:
+        path = "/poub/delete/" + url.removeprefix("/poub/")
+    request = urllib.request.Request(f"{SHAREI_URL}{path}", data=b"", method="POST")
+    try:
+        urllib.request.urlopen(request, timeout=30).close()
+    except (urllib.error.URLError, OSError) as error:
+        raise Abort(f"Deleting {item['name']} failed: {error}") from error
 
 
 def wait_key() -> bytes:
@@ -278,8 +293,9 @@ def wait_key() -> bytes:
 
 def browse(items: list[dict], index: int, image: tuple[bytes, int, int]) -> None:
     """Show items[index] full screen. Space or right goes to the next (older)
-    image, backspace, delete or left to the previous one, wrapping around and
-    skipping what isn't an image; any other key puts the terminal back."""
+    image (also j), backspace, delete, left or k to the previous one, wrapping
+    around and skipping what isn't an image; Ctrl-D deletes the image on the
+    server after a y to confirm; any other key puts the terminal back."""
     out = sys.stdout.buffer
     cache: dict[int, tuple[bytes, int, int] | None] = {index: image}
 
@@ -291,22 +307,53 @@ def browse(items: list[dict], index: int, image: tuple[bytes, int, int]) -> None
                 cache[position] = None
         return cache[position]
 
+    def say(text: str) -> None:
+        columns, rows = terminal_size()[:2]
+        text = TERMINAL_UNSAFE.sub("", text)[:columns]
+        out.write(f"\x1b[{rows};1H\x1b[2K\x1b[2m{text}\x1b[0m".encode())
+        out.flush()
+
     image_id = int.from_bytes(os.urandom(3)) | 1
     clear = f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\".encode()
     out.write(b"\x1b[?1049h\x1b[?25l")
     try:
         while True:
-            columns, rows = terminal_size()[:2]
+            rows = terminal_size()[1]
             png, width, height = cache[index]
             out.write(clear + b"\x1b[H\x1b[2J")
             out.write(kitty_image(png, width, height, max(rows - 1, 1), image_id))
             hint = f"{items[index]['name']}  {index + 1}/{len(items)}"
             if len(items) > 1:
-                hint += "  space/→ next  ⌫/← previous  other keys quit"
-            hint = TERMINAL_UNSAFE.sub("", hint)[:columns]
-            out.write(f"\x1b[{rows};1H\x1b[2m{hint}\x1b[0m".encode())
-            out.flush()
+                hint += "  j/→ next  k/← previous"
+            hint += "  ^D delete  q quit"
+
+            say(hint)
             key = wait_key()
+            if key in DELETE_KEYS:
+                say(f"Delete {items[index]['name']} from sharei? y to confirm")
+                if wait_key() not in (b"y", b"Y"):
+                    continue
+                try:
+                    delete_item(items[index])
+                except Abort as error:
+                    say(f"{error}  any key")
+                    wait_key()
+                    continue
+                del items[index]
+                cache = {
+                    position - (position > index): value
+                    for position, value in cache.items()
+                    if position != index
+                }
+                start = index - 1
+                for offset in range(1, len(items) + 1):
+                    candidate = (start + offset) % len(items)
+                    if load(candidate):
+                        index = candidate
+                        break
+                else:
+                    break
+                continue
             step = 1 if key in NEXT_KEYS else -1 if key in PREVIOUS_KEYS else 0
             if not step:
                 break

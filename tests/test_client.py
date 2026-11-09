@@ -82,7 +82,7 @@ def test_get_browses_images_with_keys(sharec, monkeypatch, capsysbinary):
     monkeypatch.setattr(sharec.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(sharec.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sharec, "terminal_size", lambda: (80, 24, 10, 20))
-    keys = iter([b" ", b"\x1b[C", b"\x1b[D", b"\x7f", b"q"])
+    keys = iter([b"j", b"\x1b[C", b"k", b"\x7f", b"q"])
     monkeypatch.setattr(sharec, "wait_key", lambda: next(keys))
     tall = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x64\x00\x00\x03\xe8"
     sharec.upload("a.png", tall, "")
@@ -102,3 +102,22 @@ def test_get_browses_images_with_keys(sharec, monkeypatch, capsysbinary):
     assert out.startswith(b"\x1b[?1049h") and out.endswith(b"\x1b[?1049l")
     image_id = re.search(rb"\x1b_Ga=T,f=100,q=2,c=4,i=(\d+),m=0;", out)[1]
     assert out.count(b"\x1b_Ga=d,d=I,i=" + image_id + b",q=2\x1b\\") == 6
+
+
+def test_get_browse_deletes_after_confirming(sharec, monkeypatch, capsysbinary):
+    monkeypatch.setattr(sharec.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sharec.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sharec, "terminal_size", lambda: (80, 24, 10, 20))
+    keys = iter([b"\x04", b"n", b"\x04", b"y", b"\x04", b"y"])
+    monkeypatch.setattr(sharec, "wait_key", lambda: next(keys))
+    tall = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x64\x00\x00\x03\xe8"
+    sharec.upload("a.png", tall, "")
+    sharec.upload("note.txt", b"text", "")
+    sharec.upload("b.png", tall, "")
+    sharec.get_main(["drop"])
+    out = capsysbinary.readouterr().out
+    assert next(keys, None) is None
+    assert out.count(b"Delete b.png from sharei? y to confirm") == 2
+    assert b"Delete a.png from sharei? y to confirm" in out
+    assert out.endswith(b"\x1b[?1049l")
+    assert [item["name"] for item in sharec.recent(10, "")["drop"]] == ["note.txt"]

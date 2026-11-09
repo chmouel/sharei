@@ -181,9 +181,10 @@ sharec get list          # what is on sharei right now
 ```
 
 Images show up right in terminals that speak the kitty graphics protocol
-(kitty, Ghostty, WezTerm, Konsole). The image fills the window: Space or →
-shows the next older one, Backspace, Delete or ← the newer one, going round
-in a loop, and any other key closes it and puts the terminal back as it was.
+(kitty, Ghostty, WezTerm, Konsole). The image fills the window: j, Space or
+→ shows the next older one, k, Backspace or ← the newer one, going round in a
+loop. Ctrl-D deletes it from sharei after you confirm with y. Any other key
+closes it and puts the terminal back as it was.
 JPEG, GIF and WebP need the thumbnails
 extra; files that can't be shown are saved in the current folder. When the
 output goes to a pipe or a file, you get the file itself. Downloads never
