@@ -254,8 +254,14 @@ def kitty_image(
     return b"".join(out)
 
 
-def wait_key() -> None:
-    """Wait for one key press on the terminal without echoing it."""
+NEXT_KEYS = {b" ", b"\x1b[C", b"\x1bOC"}
+PREVIOUS_KEYS = {b"\x7f", b"\x08", b"\x1b[3~", b"\x1b[D", b"\x1bOD"}
+BROWSE_MAX = 50
+
+
+def wait_key() -> bytes:
+    """Wait for one key press on the terminal without echoing it; Ctrl-C reads
+    as no key."""
     import termios
     import tty
 
@@ -263,40 +269,66 @@ def wait_key() -> None:
     saved = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd)
-        os.read(fd, 32)
+        return os.read(fd, 32)
     except KeyboardInterrupt:
-        pass
+        return b""
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
-def show_image(png: bytes, width: int, height: int, name: str) -> None:
-    """Draw the image; on an interactive terminal show it full screen until a
-    key is pressed, then put the terminal back as it was."""
+def browse(items: list[dict], index: int, image: tuple[bytes, int, int]) -> None:
+    """Show items[index] full screen. Space or right goes to the next (older)
+    image, backspace, delete or left to the previous one, wrapping around and
+    skipping what isn't an image; any other key puts the terminal back."""
     out = sys.stdout.buffer
-    if not sys.stdin.isatty():
-        out.write(kitty_image(png, width, height) + b"\n")
-        return
-    rows = terminal_size()[1]
+    cache: dict[int, tuple[bytes, int, int] | None] = {index: image}
+
+    def load(position: int) -> tuple[bytes, int, int] | None:
+        if position not in cache:
+            try:
+                cache[position] = as_png(fetch(items[position]["url"]))
+            except Abort:
+                cache[position] = None
+        return cache[position]
+
     image_id = int.from_bytes(os.urandom(3)) | 1
-    out.write(b"\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J")
+    clear = f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\".encode()
+    out.write(b"\x1b[?1049h\x1b[?25l")
     try:
-        out.write(kitty_image(png, width, height, max(rows - 1, 1), image_id))
-        hint = TERMINAL_UNSAFE.sub("", f"{name}: press any key")
-        out.write(f"\x1b[{rows};1H\x1b[2m{hint}\x1b[0m".encode())
-        out.flush()
-        wait_key()
+        while True:
+            columns, rows = terminal_size()[:2]
+            png, width, height = cache[index]
+            out.write(clear + b"\x1b[H\x1b[2J")
+            out.write(kitty_image(png, width, height, max(rows - 1, 1), image_id))
+            hint = f"{items[index]['name']}  {index + 1}/{len(items)}"
+            if len(items) > 1:
+                hint += "  space/→ next  ⌫/← previous  other keys quit"
+            hint = TERMINAL_UNSAFE.sub("", hint)[:columns]
+            out.write(f"\x1b[{rows};1H\x1b[2m{hint}\x1b[0m".encode())
+            out.flush()
+            key = wait_key()
+            step = 1 if key in NEXT_KEYS else -1 if key in PREVIOUS_KEYS else 0
+            if not step:
+                break
+            for offset in range(1, len(items)):
+                candidate = (index + step * offset) % len(items)
+                if load(candidate):
+                    index = candidate
+                    break
     finally:
-        out.write(f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\".encode())
-        out.write(b"\x1b[?25h\x1b[?1049l")
+        out.write(clear + b"\x1b[?25h\x1b[?1049l")
         out.flush()
 
 
-def show_in_terminal(data: bytes, name: str) -> bool:
-    """Draw an image or print a text file; False when neither fits a terminal."""
+def show_in_terminal(items: list[dict], index: int, data: bytes) -> bool:
+    """Draw an image or print a text file; False when neither fits a terminal.
+    On an interactive terminal images open in the full-screen browser."""
     image = as_png(data)
+    if image and sys.stdin.isatty():
+        browse(items, index, image)
+        return True
     if image:
-        show_image(*image, name)
+        sys.stdout.buffer.write(kitty_image(*image) + b"\n")
     elif b"\0" not in data[:65536]:
         try:
             text = TERMINAL_UNSAFE.sub("", data.decode())
@@ -312,7 +344,8 @@ def show_in_terminal(data: bytes, name: str) -> bool:
 def get_file(
     kind: str, back: int, project: str, output: str | None, save: bool = True
 ) -> None:
-    items = recent(back + 1, project)[kind]
+    browsing = not save and not output and sys.stdout.isatty()
+    items = recent(max(back + 1, BROWSE_MAX if browsing else 0), project)[kind]
     label = "dropped file" if kind == "drop" else "screenshot"
     if len(items) <= back:
         where = f" in {project}" if project else ""
@@ -324,7 +357,7 @@ def get_file(
     if not save and not output:
         if not sys.stdout.isatty():
             output = "-"
-        elif show_in_terminal(data, item["name"]):
+        elif show_in_terminal(items, back, data):
             return
         else:
             print(f"{item['name']} can't be shown here, saving it.", file=sys.stderr)
