@@ -609,18 +609,25 @@ def theme_picker() -> str:
             f'style="background:{palette["base"]};border-color:{palette["edge"]};color:{palette["accent"]}"></span>'
             f"{html.escape(label)}</button>"
         )
-    push_item = (
-        '<hr hidden><button type="button" data-push hidden><span>Notifications<small></small></span></button>'
+    push_button = (
+        '<button type="button" data-push class="theme-button push-button" hidden aria-pressed="false" '
+        'aria-label="Turn on notifications" title="Turn on notifications">'
+        '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">'
+        '<path d="M10 2.75a5 5 0 0 0-5 5v3.1L3.6 13.4h12.8L15 10.85v-3.1a5 5 0 0 0-5-5z" '
+        'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'
+        '<path d="M8 15.6a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.6" '
+        'stroke-linecap="round"/><path class="push-slash" d="M3.5 3.5l13 13" stroke="currentColor" '
+        'stroke-width="1.6" stroke-linecap="round"/></svg></button>'
         if PUSH_ENABLED
         else ""
     )
     return (
-        '<div class="theme-picker"><button class="theme-button" id="theme-button" type="button" '
+        f'<div class="theme-picker">{push_button}<button class="theme-button" id="theme-button" type="button" '
         'aria-label="Theme" title="Theme" aria-haspopup="true" aria-expanded="false">'
         '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.5" '
         'fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" '
         'fill="currentColor"/></svg></button>'
-        f'<div class="theme-menu" id="theme-menu" hidden>{"".join(items)}{push_item}</div></div>'
+        f'<div class="theme-menu" id="theme-menu" hidden>{"".join(items)}</div></div>'
     )
 
 
@@ -634,7 +641,7 @@ EXTRA_CSS = """
   .tab[aria-current] { color:var(--accent); }
   .tab[aria-current] .tab-icon { background:var(--accent); color:var(--accent-ink); }
   .tab:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-  .theme-picker { position:absolute; top:18px; right:0; z-index:6; }
+  .theme-picker { position:absolute; top:18px; right:0; z-index:6; display:flex; gap:8px; }
   .theme-button { display:grid; place-items:center; width:36px; height:36px; border:1px solid var(--edge); border-radius:12px; background:var(--field); color:var(--muted); font:inherit; font-size:17px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
   .theme-button:hover, .theme-button[aria-expanded=true] { color:var(--ink); border-color:var(--accent-line); }
   .theme-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -645,10 +652,12 @@ EXTRA_CSS = """
   .theme-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
   .theme-menu button[aria-pressed=true] { background:color-mix(in srgb, var(--accent) 16%, var(--panel)); }
   .theme-menu button[aria-pressed=true]::after { content:"✓"; margin-left:auto; color:var(--accent); }
-  .theme-menu hr { width:100%; margin:4px 0; border:0; border-top:1px solid var(--line); }
-  .theme-menu [data-push] span { display:grid; gap:2px; }
-  .theme-menu [data-push] small { color:var(--muted); font-size:11.5px; font-weight:500; }
-  .theme-menu [data-push] small:empty { display:none; }
+  .push-button[hidden] { display:none; }
+  .push-button[aria-pressed=true] { color:var(--accent); border-color:var(--accent-line); }
+  .push-button[aria-pressed=true] path:first-child { fill:currentColor; }
+  .push-button:disabled { opacity:.6; cursor:progress; }
+  .push-button .push-slash { display:none; }
+  .push-button[data-state=blocked] .push-slash { display:inline; }
   .swatch { position:relative; flex:0 0 22px; height:22px; border:1px solid; border-radius:50%; }
   .swatch::after { content:""; position:absolute; inset:6px; border-radius:50%; background:currentColor; }
   .swatch.auto { border-color:#8a9590; background:linear-gradient(135deg, #f3f5f4 50%, #111820 50%); color:#0f7b56; }
@@ -3859,14 +3868,17 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 
 PUSH_JS = """
 (() => {
-  const item = document.querySelector('#theme-menu [data-push]');
+  const item = document.querySelector('.theme-picker [data-push]');
   if (!item || !('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) return;
   item.hidden = false;
-  item.previousElementSibling.hidden = false;
+  const BLOCKED = 'Notifications blocked in the browser settings';
 
   function paint(on, note) {
     item.setAttribute('aria-pressed', String(on));
-    item.querySelector('small').textContent = note || '';
+    item.dataset.state = note === BLOCKED ? 'blocked' : '';
+    const label = note || (on ? 'Notifications on' : 'Turn on notifications');
+    item.title = label;
+    item.setAttribute('aria-label', label);
   }
   async function current() {
     const registration = await navigator.serviceWorker.getRegistration('/');
@@ -3882,10 +3894,9 @@ PUSH_JS = """
   }
 
   current().then((subscription) => paint(Boolean(subscription))).catch(() => paint(false));
-  if (Notification.permission === 'denied') paint(false, 'Blocked in the browser settings');
+  if (Notification.permission === 'denied') paint(false, BLOCKED);
 
-  item.addEventListener('click', async (event) => {
-    event.stopPropagation();
+  item.addEventListener('click', async () => {
     item.disabled = true;
     try {
       const existing = await current();
@@ -3896,7 +3907,7 @@ PUSH_JS = """
         return;
       }
       if (await Notification.requestPermission() !== 'granted') {
-        paint(false, 'Blocked in the browser settings');
+        paint(false, BLOCKED);
         return;
       }
       const { key } = await (await fetch('/push/key')).json();
@@ -3907,7 +3918,7 @@ PUSH_JS = """
       paint(true);
     } catch (error) {
       console.error(error);
-      paint(false, 'Could not turn them on');
+      paint(false, 'Could not turn notifications on');
     } finally {
       item.disabled = false;
     }

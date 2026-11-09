@@ -81,8 +81,8 @@ arrives. Install it with the push extra:
 uv tool install 'sharei[push] @ git+https://github.com/chmouel/sharei'
 ```
 
-Then open sharei on the phone, tap the theme button and pick
-**Notifications**. Browsers only allow this on an HTTPS address (or
+Then open sharei on the phone and tap the bell at the top, next to the theme
+button. Browsers only allow this on an HTTPS address (or
 `localhost`), so it works through your reverse proxy. On an iPhone, add sharei
 to the home screen first and turn notifications on from there. Set
 `push_subject` in the config to your email address.
