@@ -20,8 +20,10 @@ Drop holds files you send either way. Markdown opens formatted the way GitHub
 shows it, code opens with colours and line numbers, pictures open full
 screen, and videos play right in the page. Any file there can be set to expire too.
 
-Clipboard is a single shared note. Paste on one device and copy on the other.
-It clears itself after ten minutes unless you change that.
+Clipboard is a shared note. Paste on one device and copy on the other.
+It clears itself after ten minutes unless you change that. The last five
+notes you replaced stay underneath, each on its own timer, so you can copy
+one again or put it back. Clear forgets the current note for good.
 
 Artifacts lists the files your projects build, newest first: Android APKs,
 Python wheels, release archives, whatever you point it at. Tap one on your

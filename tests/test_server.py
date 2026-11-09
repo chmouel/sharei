@@ -116,3 +116,61 @@ def test_delete_shots_of_one_project(live_server, sharei_root):
         assert json.load(response) == {"deleted": 1}
     assert not (sharei_root / "alpha/shots/a.png").exists()
     assert (sharei_root / "beta/shots/a.png").exists()
+
+
+def post(url, data=b""):
+    request = urllib.request.Request(
+        url, data=data, method="POST", headers={"Content-Type": "text/plain"}
+    )
+    with urllib.request.urlopen(request) as response:
+        return json.load(response)
+
+
+def test_clip_history_keeps_last_five(live_server):
+    for index in range(7):
+        state = post(live_server + "/clip", f"text {index}".encode())
+    post(live_server + "/clip", b"text 3")
+    texts = [entry["text"] for entry in state["history"]]
+    assert texts == ["text 5", "text 4", "text 3", "text 2", "text 1"]
+    state = post(live_server + "/clip", b"text 3")
+    assert [entry["text"] for entry in state["history"]] == [
+        "text 6",
+        "text 5",
+        "text 4",
+        "text 2",
+        "text 1",
+    ]
+    assert get(live_server + "/clip/raw?n=1")[2] == b"text 6"
+    for bad in ("?n=6", "?n=-1", "?n=x"):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            get(live_server + "/clip/raw" + bad)
+        assert error.value.code == 404
+
+
+def test_clip_history_restore_delete_clear(live_server):
+    post(live_server + "/clip", b"first")
+    state = post(live_server + "/clip", b"second")
+    first = state["history"][0]["id"]
+    state = post(live_server + f"/clip/history/restore?id={first}")
+    assert state["text"] == "first"
+    assert [entry["text"] for entry in state["history"]] == ["second"]
+    state = post(live_server + "/clip/clear")
+    assert state["text"] == "" and len(state["history"]) == 1
+    state = post(live_server + f"/clip/history/delete?id={state['history'][0]['id']}")
+    assert state["history"] == []
+    with pytest.raises(urllib.error.HTTPError) as error:
+        post(live_server + f"/clip/history/delete?id={first}")
+    assert error.value.code == 404
+    post(live_server + "/clip", b"a")
+    post(live_server + "/clip", b"b")
+    assert post(live_server + "/clip/history/clear")["history"] == []
+
+
+def test_clip_history_entries_expire(live_server):
+    from sharei import server
+
+    post(live_server + "/clip", b"old")
+    post(live_server + "/clip", b"new")
+    server.CLIP["history"][0]["updated"] -= 3600
+    state = json.loads(get(live_server + "/clip/state")[2])
+    assert state["text"] == "new" and state["history"] == []

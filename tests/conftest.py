@@ -30,6 +30,12 @@ def sharei_root(tmp_path, monkeypatch):
         server, "ARTIFACT_CACHE", {"at": 0.0, "items": [], "thread": None}
     )
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(server, "CLIP_FILE", tmp_path / "cache" / "clip.json")
+    monkeypatch.setattr(
+        server,
+        "CLIP",
+        {"text": "", "version": 0, "updated": 0.0, "ttl": 600, "history": []},
+    )
     return root
 
 

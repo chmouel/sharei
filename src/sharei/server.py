@@ -128,6 +128,7 @@ CLIP_LOCK = threading.Lock()
 CLIP_DEFAULT_TTL = 10 * 60
 CLIP_MAX_TTL = 7 * 24 * 60 * 60
 CLIP_TTL_CHOICES = (60, 600, 3600, 0)
+CLIP_HISTORY_MAX = 5
 
 EXPIRY_FILE = ".expiry.json"
 EXPIRY_LOCK = threading.Lock()
@@ -136,14 +137,28 @@ EXPIRY_MAX = 30 * 24 * 60 * 60
 EXPIRY_SWEEP_SECONDS = 60
 
 
+class ClipEntry(TypedDict):
+    id: int
+    text: str
+    updated: float
+    ttl: int
+
+
 class ClipState(TypedDict):
     text: str
     version: int
     updated: float
     ttl: int
+    history: list[ClipEntry]
 
 
-CLIP: ClipState = {"text": "", "version": 0, "updated": 0.0, "ttl": CLIP_DEFAULT_TTL}
+CLIP: ClipState = {
+    "text": "",
+    "version": 0,
+    "updated": 0.0,
+    "ttl": CLIP_DEFAULT_TTL,
+    "history": [],
+}
 
 UPLOAD_MAX_BYTES = 2 * 1024**3
 # Share target bodies are parsed in memory, so they get a lower cap than /upload.
@@ -1991,13 +2006,24 @@ def clip_load() -> None:
             float(data["updated"]),
             max(0, min(int(data["ttl"]), CLIP_MAX_TTL)),
         )
+        history = [
+            ClipEntry(
+                id=int(entry["id"]),
+                text=str(entry["text"]),
+                updated=float(entry["updated"]),
+                ttl=max(0, min(int(entry["ttl"]), CLIP_MAX_TTL)),
+            )
+            for entry in data.get("history", [])
+        ][:CLIP_HISTORY_MAX]
     except FileNotFoundError:
         return
     except (OSError, ValueError, TypeError, KeyError) as error:
         print(f"ignoring saved clipboard {CLIP_FILE}: {error}")
         return
     with CLIP_LOCK:
-        CLIP.update(text=text, version=version, updated=updated, ttl=ttl)
+        CLIP.update(
+            text=text, version=version, updated=updated, ttl=ttl, history=history
+        )
         clip_expire_locked()
 
 
@@ -2007,14 +2033,27 @@ def clip_state_locked() -> ClipState:
         version=CLIP["version"],
         updated=CLIP["updated"],
         ttl=CLIP["ttl"],
+        history=[ClipEntry(**entry) for entry in CLIP["history"]],
     )
 
 
+def clip_entry_expired(entry: ClipEntry, now: float) -> bool:
+    return bool(entry["ttl"]) and entry["updated"] + entry["ttl"] <= now
+
+
 def clip_expire_locked() -> None:
-    if CLIP["text"] and CLIP["ttl"] and CLIP["updated"] + CLIP["ttl"] <= time.time():
+    now = time.time()
+    changed = False
+    if CLIP["text"] and CLIP["ttl"] and CLIP["updated"] + CLIP["ttl"] <= now:
         CLIP["text"] = ""
-        CLIP["version"] += 1
         CLIP["updated"] = 0.0
+        changed = True
+    history = [entry for entry in CLIP["history"] if not clip_entry_expired(entry, now)]
+    if len(history) != len(CLIP["history"]):
+        CLIP["history"] = history
+        changed = True
+    if changed:
+        CLIP["version"] += 1
         clip_save_locked()
 
 
@@ -2025,10 +2064,51 @@ def clip_snapshot() -> ClipState:
 
 
 def clip_store(text: str) -> ClipState:
+    """Set the clip. Unless the clip is being cleared, the text it replaces moves to the front of the history."""
     with CLIP_LOCK:
+        clip_expire_locked()
+        history = [entry for entry in CLIP["history"] if entry["text"] != text]
+        previous = CLIP["text"]
+        if text and previous and previous != text:
+            history = [entry for entry in history if entry["text"] != previous]
+            history.insert(
+                0,
+                ClipEntry(
+                    id=CLIP["version"],
+                    text=previous,
+                    updated=CLIP["updated"],
+                    ttl=CLIP["ttl"],
+                ),
+            )
+        CLIP["history"] = history[:CLIP_HISTORY_MAX]
         CLIP["text"] = text
         CLIP["version"] += 1
         CLIP["updated"] = time.time() if text else 0.0
+        clip_save_locked()
+        return clip_state_locked()
+
+
+def clip_history_entry(entry_id: int) -> ClipEntry | None:
+    with CLIP_LOCK:
+        clip_expire_locked()
+        return next(
+            (ClipEntry(**e) for e in CLIP["history"] if e["id"] == entry_id), None
+        )
+
+
+def clip_history_delete(entry_id: int | None) -> ClipState | None:
+    """Drop one history entry, or all of them when entry_id is None."""
+    with CLIP_LOCK:
+        clip_expire_locked()
+        history = [
+            entry
+            for entry in CLIP["history"]
+            if entry_id is not None and entry["id"] != entry_id
+        ]
+        if len(history) == len(CLIP["history"]) and entry_id is not None:
+            return None
+        CLIP["history"] = history
+        CLIP["version"] += 1
         clip_save_locked()
         return clip_state_locked()
 
@@ -2042,6 +2122,29 @@ def clip_set_ttl(seconds: int) -> ClipState:
             CLIP["version"] += 1
             clip_save_locked()
         return clip_state_locked()
+
+
+def clip_json(state: ClipState) -> dict[str, object]:
+    return {
+        "text": state["text"],
+        "version": state["version"],
+        "updated": state["updated"],
+        "chars": len(state["text"]),
+        "ttl": state["ttl"],
+        "expires_at": state["updated"] + state["ttl"]
+        if state["updated"] and state["ttl"]
+        else 0,
+        "history": [
+            {
+                "id": entry["id"],
+                "text": entry["text"],
+                "updated": entry["updated"],
+                "chars": len(entry["text"]),
+                "expires_at": entry["updated"] + entry["ttl"] if entry["ttl"] else 0,
+            }
+            for entry in state["history"]
+        ],
+    }
 
 
 CLIP_CSS = """
@@ -2068,6 +2171,13 @@ CLIP_CSS = """
   .clip-status[data-tone=warn] { color:var(--warn); }
   .clip-note { margin:0; color:var(--faint); font-size:12px; line-height:1.6; }
   .clip-note code { color:var(--soft); overflow-wrap:anywhere; }
+  .clip-history { margin-top:18px; }
+  .clip-history[hidden] { display:none; }
+  .clip-history ol { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+  .clip-entry { display:grid; grid-template-columns:1fr auto; align-items:center; gap:4px 10px; padding:10px 12px; background:var(--panel); border:1px solid var(--line); border-radius:14px; }
+  .clip-entry pre { grid-column:1/-1; margin:0; overflow:hidden; color:var(--ink); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+  .clip-entry small { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+  .clip-entry .clip-ttl { justify-content:flex-end; }
 """
 
 CLIP_JS = """
@@ -2116,6 +2226,9 @@ field.addEventListener('input', () => {
 
 setInterval(() => {
   describe(Object.assign({}, latest, { chars: dirty ? field.value.length : latest.chars }));
+  for (const [index, age] of historyList.querySelectorAll('small').entries()) {
+    if (latest.history[index]) age.textContent = entryAge(latest.history[index]);
+  }
 }, 1000);
 
 async function call(url, body) {
@@ -2124,12 +2237,84 @@ async function call(url, body) {
   return response.json();
 }
 
+const historyBox = document.getElementById('clip-history');
+const historyList = historyBox.querySelector('ol');
+
+function entryAge(entry) {
+  const label = new Date(entry.updated * 1000).toLocaleTimeString() + ' · ' + entry.chars + (entry.chars === 1 ? ' char' : ' chars');
+  if (!entry.expires_at) return label;
+  const left = Math.max(0, Math.round(entry.expires_at - Date.now() / 1000));
+  return label + ' · clears in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+}
+
+function renderHistory(state) {
+  historyBox.hidden = !state.history.length;
+  historyList.replaceChildren(...state.history.map((entry) => {
+    const row = document.createElement('li');
+    row.className = 'clip-entry';
+    const text = document.createElement('pre');
+    text.textContent = entry.text;
+    const age = document.createElement('small');
+    age.textContent = entryAge(entry);
+    const tools = document.createElement('span');
+    tools.className = 'clip-ttl';
+    for (const [label, action] of [['Copy', 'copy'], ['Use', 'restore'], ['✕', 'delete']]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.dataset.historyAction = action;
+      button.dataset.id = entry.id;
+      if (action === 'delete') button.setAttribute('aria-label', 'Delete this entry');
+      tools.append(button);
+    }
+    row.append(text, age, tools);
+    return row;
+  }));
+}
+
 function adopt(state) {
   latest = state;
   known = state.version;
   describe(state);
   markButtons();
+  renderHistory(state);
 }
+
+historyList.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-history-action]');
+  if (!button) return;
+  const entry = latest.history.find((item) => String(item.id) === button.dataset.id);
+  if (!entry) return;
+  if (button.dataset.historyAction === 'copy') {
+    try {
+      await navigator.clipboard.writeText(entry.text);
+      setStatus('Copied to this device.', 'ok');
+    } catch (error) {
+      setStatus('This browser blocks clipboard writes here. Use it, then Copy.', 'warn');
+    }
+    return;
+  }
+  try {
+    adopt(await call('/clip/history/' + button.dataset.historyAction + '?id=' + entry.id, ''));
+    if (button.dataset.historyAction === 'restore') {
+      field.value = latest.text; dirty = false; reload.hidden = true;
+      setStatus('Shared with every device.', 'ok');
+    }
+  } catch (error) {
+    setStatus('Could not update the history: ' + error.message, 'warn');
+  }
+});
+
+document.getElementById('history-clear').addEventListener('click', async () => {
+  if (!confirm('Forget every older clipboard entry?')) return;
+  try {
+    adopt(await call('/clip/history/clear', ''));
+  } catch (error) {
+    setStatus('Could not clear the history: ' + error.message, 'warn');
+  }
+});
+
+renderHistory(latest);
 
 document.getElementById('copy').addEventListener('click', async () => {
   const text = field.value;
@@ -2203,6 +2388,7 @@ setInterval(async () => {
     const textChanged = state.text !== latest.text;
     latest = state;
     known = state.version;
+    renderHistory(state);
     if (!textChanged) {
       describe(state);
       markButtons();
@@ -2226,16 +2412,7 @@ def clip_page(state: ClipState, tab_counts: Counts) -> bytes:
     text = state["text"]
     updated = state["updated"]
     characters = len(text)
-    payload = json.dumps(
-        {
-            "text": text,
-            "version": state["version"],
-            "updated": updated,
-            "chars": characters,
-            "ttl": state["ttl"],
-            "expires_at": updated + state["ttl"] if updated and state["ttl"] else 0,
-        }
-    ).replace("</", "<\\/")
+    payload = json.dumps(clip_json(state)).replace("</", "<\\/")
     if updated:
         left = max(0, int(updated + state["ttl"] - time.time())) if state["ttl"] else 0
         updated_label = (
@@ -2276,7 +2453,11 @@ def clip_page(state: ClipState, tab_counts: Counts) -> bytes:
       <button id="reload" class="wide" type="button" hidden>Load the new text</button>
     </div>
     <p class="clip-status" id="clip-status" role="status" aria-live="polite"></p>
-    <p class="clip-note">From a terminal: <code>curl -H 'Content-Type: text/plain' --data-binary 'some text' http://HOST:PORT/clip</code> to send, <code>curl http://HOST:PORT/clip/raw</code> to read.</p>
+    <p class="clip-note">From a terminal: <code>curl -H 'Content-Type: text/plain' --data-binary 'some text' http://HOST:PORT/clip</code> to send, <code>curl http://HOST:PORT/clip/raw</code> to read, <code>?n=1</code> for the previous one.</p>
+  </section>
+  <section class="clip-history" id="clip-history"{"" if state["history"] else " hidden"}>
+    <div class="shelf-label"><span>Earlier</span><span class="shelf-actions"><button class="wipe" id="history-clear" type="button">Forget all</button></span></div>
+    <ol></ol>
   </section>
   <script id="clip-state" type="application/json">{payload}</script>
   <script>{CLIP_JS}</script>"""
@@ -2816,6 +2997,14 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
             "expires_at": state["updated"] + state["ttl"]
             if state["updated"] and state["ttl"]
             else 0,
+            "history": [
+                {
+                    "n": index,
+                    "chars": len(entry["text"]),
+                    "age_seconds": int(now - entry["updated"]),
+                }
+                for index, entry in enumerate(state["history"], start=1)
+            ],
         },
         "drop": drop,
         "shots": shots,
@@ -3284,7 +3473,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if parsed.path == "/clip/state":
-            self.send_json(self.clip_payload(clip_snapshot()))
+            self.send_json(clip_json(clip_snapshot()))
             return
 
         if parsed.path == "/state":
@@ -3321,7 +3510,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/clip/raw":
-            body = clip_snapshot()["text"].encode("utf-8")
+            state = clip_snapshot()
+            try:
+                index = int((parse_qs(parsed.query).get("n") or ["0"])[-1])
+            except ValueError:
+                index = -1
+            if not 0 <= index <= len(state["history"]):
+                self.send_json({"error": "no such clipboard entry"}, status=404)
+                return
+            text = state["history"][index - 1]["text"] if index else state["text"]
+            body = text.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -3413,7 +3611,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/clip/clear":
-            self.send_json(self.clip_payload(clip_store("")))
+            self.send_json(clip_json(clip_store("")))
+            return
+
+        if parsed.path.startswith("/clip/history/"):
+            self.handle_clip_history(
+                parsed.path.removeprefix("/clip/history/"), parse_qs(parsed.query)
+            )
             return
 
         if parsed.path == "/clip/ttl":
@@ -3428,7 +3632,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json({"error": "seconds must be an integer"}, status=400)
                 return
-            self.send_json(self.clip_payload(clip_set_ttl(seconds)))
+            self.send_json(clip_json(clip_set_ttl(seconds)))
             return
 
         if parsed.path != "/clip":
@@ -3456,7 +3660,7 @@ class Handler(BaseHTTPRequestHandler):
             text = fields["text"][-1]
         else:
             text = raw.decode("utf-8", "replace")
-        self.send_json(self.clip_payload(clip_store(text)))
+        self.send_json(clip_json(clip_store(text)))
 
     def handle_annotate(self) -> None:
         query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
@@ -3706,17 +3910,26 @@ class Handler(BaseHTTPRequestHandler):
             saved += 1
         return saved
 
-    def clip_payload(self, state: ClipState) -> dict[str, object]:
-        return {
-            "text": state["text"],
-            "version": state["version"],
-            "updated": state["updated"],
-            "chars": len(state["text"]),
-            "ttl": state["ttl"],
-            "expires_at": state["updated"] + state["ttl"]
-            if state["updated"] and state["ttl"]
-            else 0,
-        }
+    def handle_clip_history(self, action: str, query: dict[str, list[str]]) -> None:
+        if action not in ("clear", "restore", "delete"):
+            self.send_error(404)
+            return
+        entry_id = None
+        if action != "clear":
+            try:
+                entry_id = int((query.get("id") or [""])[-1])
+            except ValueError:
+                self.send_json({"error": "id must be an integer"}, status=400)
+                return
+        if action == "restore":
+            entry = clip_history_entry(entry_id)
+            state = clip_store(entry["text"]) if entry is not None else None
+        else:
+            state = clip_history_delete(entry_id)
+        if state is None:
+            self.send_json({"error": "no such clipboard entry"}, status=404)
+            return
+        self.send_json(clip_json(state))
 
     def read_body(self, limit: int = CLIP_MAX_BYTES) -> bytes | None:
         if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():

@@ -42,7 +42,9 @@ the service.
     to the root to an epoch
 - Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
   project is `inbox`.
-- Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`,
+- Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`
+  (current text plus the last `CLIP_HISTORY_MAX` replaced ones, each keeping
+  the TTL it had; Clear does not archive),
   `thumbs/` and the rendered `markdown/`.
 - Settings: `~/.config/sharei/config.toml`, or `$SHAREI_CONFIG`, or
   `--config`. Command-line flags take priority over the file.
@@ -79,7 +81,7 @@ Data:
 
 - `/state`: stamps for the live reload
 - `/recent`: newest items as JSON, used by the skill
-- `/clip/raw`, `/clip/state`
+- `/clip/raw[?n=]`: the clip, or history entry n (1 is the newest), `/clip/state`
 
 POST:
 
@@ -89,6 +91,7 @@ POST:
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
 - `/clip`, `/clip/clear`, `/clip/ttl`
+- `/clip/history/restore?id=`, `/clip/history/delete?id=`, `/clip/history/clear`
 - `/shots/delete/<key>`, `/shots/delete-all[?project=]`
 - `/poub/delete/<project>/<name>`, `/poub/delete-all[?project=]`
 
