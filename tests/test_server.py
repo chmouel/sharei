@@ -174,3 +174,37 @@ def test_clip_history_entries_expire(live_server):
     server.CLIP["history"][0]["updated"] -= 3600
     state = json.loads(get(live_server + "/clip/state")[2])
     assert state["text"] == "new" and state["history"] == []
+
+
+def test_qr_on_reader_pages_and_public_url(live_server, monkeypatch):
+    from sharei import server
+
+    monkeypatch.setattr(server, "PUBLIC_URL", "https://share.example.com/</script>")
+    status, headers, body = get(live_server + "/vendor/qrcode.js")
+    assert status == 200 and b"qrcode" in body
+    upload(live_server, "a.txt", b"hello")
+    status, headers, body = get(live_server + "/view/inbox/a.txt")
+    nonce = headers["Content-Security-Policy"].split("'nonce-")[1].split("'")[0]
+    assert b'<button type="button" data-qr aria-label=' in body
+    assert f'<script nonce="{nonce}">window.shareiPublicUrl = '.encode() in body
+    assert b'"https://share.example.com/<\\/script>"' in body
+    assert b"share.example.com/</script>" not in body
+
+
+@pytest.mark.parametrize(
+    ("host", "loopback"),
+    [
+        ("127.0.0.1", True),
+        ("::1", True),
+        ("[::1]", True),
+        ("localhost", True),
+        ("0.0.0.0", False),
+        ("::", False),
+        ("192.168.1.2", False),
+        ("box.lan", False),
+    ],
+)
+def test_listens_on_loopback(host, loopback):
+    from sharei import server
+
+    assert server.listens_on_loopback(host) is loopback

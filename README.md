@@ -23,7 +23,12 @@ screen, and videos play right in the page. Any file there can be set to expire t
 Clipboard is a shared note. Paste on one device and copy on the other.
 It clears itself after ten minutes unless you change that. The last five
 notes you replaced stay underneath, each on its own timer, so you can copy
-one again or put it back. Clear forgets the current note for good.
+one again or put it back. Clear forgets the current note for good. When the
+note is a web address, it shows up as a link you can tap.
+
+To move a page or a link to another device, press QR: on the clipboard link,
+in the header of a markdown, code or video page, or next to a file in Drop on
+a computer. The phone camera opens it straight away.
 
 Artifacts lists the files your projects build, newest first: Android APKs,
 Python wheels, release archives, whatever you point it at. Tap one on your
@@ -93,6 +98,14 @@ On a home network you fully trust, you can set `host = "0.0.0.0"` instead and
 open `http://<your computer's address>:8000`. Anyone else on that network can
 then use sharei too. [SECURITY.md](SECURITY.md) has more on this.
 
+QR codes use the address in your browser. If you browse sharei on your
+computer as `localhost`, add the address your phone uses so the codes work
+there:
+
+```toml
+public_url = "https://share.example.com"
+```
+
 ## Tell it where your builds are
 
 Add an `[[artifacts]]` entry per project to the config, with the folder and the
@@ -158,5 +171,6 @@ GitHub's hourly limit and needs no permissions.
 
 ## Licence
 
-Apache 2.0. sharei bundles github-markdown-css, mermaid, highlight.js and
-marker.js, with their licences next to them in `src/sharei/vendor/`.
+Apache 2.0. sharei bundles github-markdown-css, mermaid, highlight.js,
+qrcode-generator and marker.js, with their licences next to them in
+`src/sharei/vendor/`.

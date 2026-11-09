@@ -20,7 +20,10 @@ proxy with authentication (see SECURITY.md).
   `/recent` (N is steps back from the newest) and never overwrites a file.
 - `src/sharei/vendor/`: third-party assets served at `/vendor/`:
   github-markdown-css, mermaid, markerjs, highlight.js (common languages
-  bundle). Keep their licence files next to them;
+  bundle), qrcode-generator (`qrcode.js`, loaded lazily by `QR_JS`, which
+  every page includes through `qr_script()`; `[data-qr]` buttons open it,
+  an empty value meaning the current page, and loopback URLs are rebased on
+  `public_url`). Keep their licence files next to them;
   they ship in the wheel. marker.js is linkware: its credit line under the
   editor must stay visible.
 - `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user

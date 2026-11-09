@@ -121,6 +121,8 @@ ARTIFACT_CACHE: dict[str, object] = {"at": 0.0, "items": [], "thread": None}
 ARTIFACT_LOCK = threading.Lock()
 ROOT = Path.home() / "tmp" / "sharei"
 DEFAULT_PROJECT = "inbox"
+# Base URL that QR codes use for sharei's own pages when the browser is on a loopback address.
+PUBLIC_URL = ""
 PROJECT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 CLIP_MAX_BYTES = 1024 * 1024
@@ -186,6 +188,7 @@ VENDOR_TYPES = {
     "markerjs-ui.js": "text/javascript; charset=utf-8",
     "github-markdown.css": "text/css; charset=utf-8",
     "mermaid.min.js": "text/javascript; charset=utf-8",
+    "qrcode.js": "text/javascript; charset=utf-8",
 }
 # Data URL type the browser has to send back per suffix. GIFs are missing on purpose: the canvas would flatten
 # the animation into a still frame and the editor cannot encode GIF again.
@@ -659,6 +662,13 @@ EXTRA_CSS = """
   .file-tools .file-delete { position:static; }
   .file-annotate, .file-expiry { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
   .file-annotate:focus-visible, .file-expiry:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .file-qr { display:none; }
+  @media (min-width:900px) {
+    .file-qr { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; }
+    .file-qr:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+    .file-row .file { padding-right:112px; }
+    .file-row.has-tools .file { padding-right:144px; }
+  }
   .file-expiry { border-color:color-mix(in srgb, var(--warn) 30%, transparent); color:color-mix(in srgb, var(--warn) 70%, var(--muted)); }
   .file-expiry.set, .expiry-button.set { border-color:color-mix(in srgb, var(--warn) 60%, transparent); color:var(--warn); }
   .expires-left { color:var(--warn); }
@@ -1685,6 +1695,8 @@ MARKDOWN_CSS = """
   .bar a:hover { text-decoration:underline; }
   .bar .name { flex:1; min-width:0; overflow:hidden; color:var(--fgColor-muted); text-overflow:ellipsis; white-space:nowrap; }
   .bar nav { display:flex; gap:14px; }
+  .bar nav button { padding:0; border:0; background:none; color:var(--fgColor-accent); font:inherit; font-weight:600; cursor:pointer; }
+  .bar nav button:hover { text-decoration:underline; }
   .page { width:min(100%, 980px); margin:0 auto; padding:24px 16px 64px; }
   .notice { margin:0 0 16px; padding:10px 14px; border:1px solid color-mix(in srgb, var(--borderColor-attention-emphasis) 45%, transparent); border-radius:6px; background:var(--bgColor-attention-muted); color:var(--fgColor-default); font-size:14px; }
   .toc { margin:0 0 20px; padding:8px 14px; border:1px solid var(--borderColor-default); border-radius:6px; font-size:14px; }
@@ -1801,6 +1813,122 @@ if (diagrams.length) {
 """
 
 
+QR_CSS = """
+  .qr-dialog { width:min(100% - 32px, 360px); padding:18px; border:1px solid var(--line, var(--borderColor-default)); border-radius:20px; background:var(--panel, var(--bgColor-default)); color:var(--ink, var(--fgColor-default)); font-family:system-ui,-apple-system,sans-serif; }
+  .qr-dialog::backdrop { background:color-mix(in srgb, var(--base, var(--bgColor-default)) 40%, transparent); backdrop-filter:blur(3px); }
+  .qr-dialog canvas { display:block; width:100%; height:auto; border-radius:12px; image-rendering:pixelated; }
+  .qr-dialog p { margin:12px 0; color:var(--muted, var(--fgColor-muted)); font-size:12px; overflow-wrap:anywhere; }
+  .qr-dialog .qr-actions { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  .qr-dialog .qr-actions > * { display:grid; place-items:center; min-height:40px; border:1px solid var(--edge, var(--borderColor-default)); border-radius:12px; background:var(--field, var(--bgColor-muted)); color:var(--accent, var(--fgColor-accent)); font:inherit; font-size:13px; font-weight:650; text-decoration:none; cursor:pointer; }
+  .qr-dialog .qr-actions > *:focus-visible { outline:3px solid var(--accent, var(--fgColor-accent)); outline-offset:2px; }
+"""
+
+QR_JS = """
+(() => {
+  const nonce = document.currentScript && document.currentScript.nonce;
+  const loopback = /^(localhost|127(\\.\\d+){3}|\\[::1\\])$/.test(location.hostname);
+  let library;
+  let dialog;
+
+  function target(raw) {
+    const url = new URL(raw || location.href, location.href);
+    if (url.origin === location.origin && loopback && window.shareiPublicUrl) {
+      const base = new URL(window.shareiPublicUrl);
+      return base.origin + base.pathname.replace(/\\/$/, '') + url.pathname + url.search + url.hash;
+    }
+    return url.href;
+  }
+
+  function load() {
+    if (window.qrcode) return Promise.resolve();
+    library = library || new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/vendor/qrcode.js';
+      if (nonce) script.nonce = nonce;
+      script.onload = resolve;
+      script.onerror = () => { library = null; reject(new Error('could not load the QR library')); };
+      document.head.append(script);
+    });
+    return library;
+  }
+
+  function draw(text) {
+    qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+    const code = qrcode(0, 'M');
+    code.addData(text);
+    code.make();
+    const count = code.getModuleCount(), quiet = 4;
+    const scale = Math.max(4, Math.floor(320 / (count + quiet * 2)));
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = (count + quiet * 2) * scale;
+    const context = canvas.getContext('2d');
+    // Scanners need dark modules on a light ground whatever the theme, so these two stay fixed.
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#000';
+    for (let row = 0; row < count; row++) {
+      for (let column = 0; column < count; column++) {
+        if (code.isDark(row, column)) context.fillRect((column + quiet) * scale, (row + quiet) * scale, scale, scale);
+      }
+    }
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'QR code for ' + text);
+    return canvas;
+  }
+
+  function open(text) {
+    if (!dialog) {
+      dialog = document.createElement('dialog');
+      dialog.className = 'qr-dialog';
+      dialog.innerHTML = '<div class="qr-code"></div><p></p><div class="qr-actions"><a target="_blank" rel="noopener noreferrer">Open</a><button type="button" data-copy>Copy</button><button type="button" data-close>Close</button></div>';
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog || event.target.closest('[data-close]')) dialog.close();
+      });
+      dialog.querySelector('[data-copy]').addEventListener('click', async (event) => {
+        try {
+          await navigator.clipboard.writeText(dialog.querySelector('p').textContent);
+          event.target.textContent = 'Copied';
+        } catch (error) {
+          event.target.textContent = 'Blocked';
+        }
+      });
+      document.body.append(dialog);
+      const previousBusy = window.liveBusy;
+      window.liveBusy = () => dialog.open || (previousBusy ? previousBusy() : false);
+    }
+    const holder = dialog.querySelector('.qr-code');
+    try {
+      holder.replaceChildren(draw(text));
+    } catch (error) {
+      holder.replaceChildren();
+      text = 'Too long for a QR code: ' + text.slice(0, 120) + '…';
+    }
+    dialog.querySelector('p').textContent = text;
+    const link = dialog.querySelector('a');
+    link.hidden = !/^https?:/i.test(text);
+    link.href = link.hidden ? '#' : text;
+    dialog.querySelector('[data-copy]').textContent = 'Copy';
+    dialog.showModal();
+  }
+
+  window.shareiQr = (raw) => load().then(() => open(target(raw)), (error) => alert(error.message));
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-qr]');
+    if (!button) return;
+    event.preventDefault();
+    window.shareiQr(button.dataset.qr);
+  });
+})();
+"""
+
+
+def qr_script(nonce: str = "") -> str:
+    attribute = f' nonce="{nonce}"' if nonce else ""
+    base = json.dumps(PUBLIC_URL).replace("</", "<\\/")
+    return f"<script{attribute}>window.shareiPublicUrl = {base};{QR_JS}</script>"
+
+
 def markdown_page(
     title: str,
     rendered: str,
@@ -1829,14 +1957,15 @@ def markdown_page(
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
-<style>{MARKDOWN_CSS}{THEME_READER_CSS}</style></head><body>
-<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}</nav></header>
+<style>{MARKDOWN_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
 <main class="page">{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}>
 {rendered}
 </article></main>
 <script nonce="{nonce}">{MARKDOWN_JS}</script>
+{qr_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -1905,13 +2034,14 @@ def code_page(name: str, text: str, links: list[tuple[str, str]]) -> tuple[bytes
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
-<style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav>{actions}</nav></header>
+<style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav>{actions}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
 <main class="page code-page">{notice}
 <div class="code"><div class="gutter">{gutter}</div><div class="scroll"><div class="line-mark" id="line-mark" hidden></div><pre><code id="code"{language}>{html.escape(text)}</code></pre></div></div>
 </main>
 {f'<script nonce="{nonce}" src="/vendor/highlight.min.js"></script>' if highlight else ""}
 <script nonce="{nonce}">{CODE_JS}</script>
+{qr_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -1943,9 +2073,10 @@ def play_page(project: str, name: str) -> tuple[bytes, str]:
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
-<style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a></nav></header>
+<style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a><button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
 <main class="page play-page"><video src="{url}" controls playsinline preload="metadata"></video></main>
+{qr_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -2171,6 +2302,10 @@ CLIP_CSS = """
   .clip-status[data-tone=warn] { color:var(--warn); }
   .clip-note { margin:0; color:var(--faint); font-size:12px; line-height:1.6; }
   .clip-note code { color:var(--soft); overflow-wrap:anywhere; }
+  .clip-link { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--accent-line); border-radius:14px; background:color-mix(in srgb, var(--accent) 8%, var(--field)); }
+  .clip-link[hidden] { display:none; }
+  .clip-link a { flex:1; min-width:0; overflow:hidden; color:var(--accent); font-size:14px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+  .clip-entry pre a { color:var(--accent); }
   .clip-history { margin-top:18px; }
   .clip-history[hidden] { display:none; }
   .clip-history ol { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
@@ -2180,7 +2315,7 @@ CLIP_CSS = """
   .clip-entry .clip-ttl { justify-content:flex-end; }
 """
 
-CLIP_JS = """
+CLIP_JS = r"""
 const field = document.getElementById('clip-text');
 const status = document.getElementById('clip-status');
 const meta = document.getElementById('clip-updated');
@@ -2237,6 +2372,42 @@ async function call(url, body) {
   return response.json();
 }
 
+const linkBar = document.getElementById('clip-link');
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
+
+function singleUrl(text) {
+  const trimmed = text.trim();
+  return /^https?:\/\/\S+$/i.test(trimmed) ? trimmed : null;
+}
+
+function linkify(text) {
+  const fragment = document.createDocumentFragment();
+  let last = 0;
+  for (const match of text.matchAll(URL_PATTERN)) {
+    const url = match[0].replace(/[.,;:!?)\]]+$/, '');
+    fragment.append(text.slice(last, match.index));
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = url;
+    fragment.append(link);
+    last = match.index + url.length;
+  }
+  fragment.append(text.slice(last));
+  return fragment;
+}
+
+function showLink(state) {
+  const url = singleUrl(state.text);
+  linkBar.hidden = !url;
+  if (!url) return;
+  const link = linkBar.querySelector('a');
+  link.href = url;
+  link.textContent = url;
+  linkBar.querySelector('[data-qr]').dataset.qr = url;
+}
+
 const historyBox = document.getElementById('clip-history');
 const historyList = historyBox.querySelector('ol');
 
@@ -2253,11 +2424,19 @@ function renderHistory(state) {
     const row = document.createElement('li');
     row.className = 'clip-entry';
     const text = document.createElement('pre');
-    text.textContent = entry.text;
+    text.append(linkify(entry.text));
     const age = document.createElement('small');
     age.textContent = entryAge(entry);
     const tools = document.createElement('span');
     tools.className = 'clip-ttl';
+    const url = singleUrl(entry.text);
+    if (url) {
+      const qr = document.createElement('button');
+      qr.type = 'button';
+      qr.textContent = 'QR';
+      qr.dataset.qr = url;
+      tools.append(qr);
+    }
     for (const [label, action] of [['Copy', 'copy'], ['Use', 'restore'], ['✕', 'delete']]) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -2278,6 +2457,7 @@ function adopt(state) {
   describe(state);
   markButtons();
   renderHistory(state);
+  showLink(state);
 }
 
 historyList.addEventListener('click', async (event) => {
@@ -2315,6 +2495,7 @@ document.getElementById('history-clear').addEventListener('click', async () => {
 });
 
 renderHistory(latest);
+showLink(latest);
 
 document.getElementById('copy').addEventListener('click', async () => {
   const text = field.value;
@@ -2389,6 +2570,7 @@ setInterval(async () => {
     latest = state;
     known = state.version;
     renderHistory(state);
+    showLink(state);
     if (!textChanged) {
       describe(state);
       markButtons();
@@ -2443,6 +2625,7 @@ def clip_page(state: ClipState, tab_counts: Counts) -> bytes:
   <section class="clip-card">
     <div class="clip-meta"><span id="clip-updated">{updated_label}</span><span id="clip-expiry">{expiry_label}</span></div>
     <div class="clip-ttl"><span>Clear after</span>{choices}</div>
+    <div class="clip-link" id="clip-link" hidden><a target="_blank" rel="noopener noreferrer"></a><span class="clip-ttl"><button type="button" data-qr>QR</button></span></div>
     <textarea id="clip-text" placeholder="Paste or type here, then hit Send." spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Shared clipboard text">{html.escape(text)}</textarea>
     <div class="clip-actions">
       <button id="copy" class="primary" type="button">Copy</button>
@@ -2677,7 +2860,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
               <span class="file-copy"><strong>{name}</strong><small>{entry["size"]} <i>·</i> {entry["date"]}<span class="expires-left" data-expires-left="{expires}" data-prefix=" · expires in " hidden></span></small></span>
               <span class="file-action">{action}</span>
             </a>
-            <span class="file-tools">{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
+            <span class="file-tools"><button class="file-qr" type="button" data-qr="{html.escape(href)}" aria-label="QR code for {name}">▦</button>{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
           </div>""")
     wipe = (
         '<button class="wipe" id="delete-all" type="button">Delete all</button>'
@@ -3292,12 +3475,13 @@ def layout(
   @media (min-width:600px) {{ .wrap {{ padding-top:40px }} .app-section {{ padding:19px }} }}
   @media (prefers-reduced-motion:reduce) {{ *,*::before,*::after {{ transition:none!important; scroll-behavior:auto!important }} }}
 {EXTRA_CSS}
+{QR_CSS}
 {extra_css}
 </style></head><body><main class="wrap{" wide" if wide else ""}">
   <nav class="tabs" aria-label="Sections">{navigation}</nav>
   {theme_picker()}
   {body}
-</main><script>{THEME_PICKER_JS}</script></body></html>"""
+</main><script>{THEME_PICKER_JS}</script>{qr_script()}</body></html>"""
     return document.encode("utf-8")
 
 
@@ -4086,6 +4270,13 @@ def phone_ip() -> str | None:
         return None
 
 
+def listens_on_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"
+
+
 CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "host": str,
     "port": int,
@@ -4098,6 +4289,7 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "github_token": str,
     "github_token_pass": str,
     "theme": str,
+    "public_url": str,
 }
 ARTIFACT_TYPES: dict[str, type] = {
     "name": str,
@@ -4189,7 +4381,7 @@ def parse_artifacts(where: str, entries: list[object]) -> tuple[ArtifactRule, ..
 
 def main() -> None:
     global ARTIFACT_RULES, DEFAULT_PROJECT, ROOT, GITHUB_TOKEN, GITHUB_TOKEN_PASS
-    global THEME_DEFAULT
+    global THEME_DEFAULT, PUBLIC_URL
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -4271,6 +4463,14 @@ def main() -> None:
         os.environ.get("GITHUB_TOKEN") or str(config.get("github_token", "")) or None
     )
     GITHUB_TOKEN_PASS = str(setting("github_token_pass", "")) or None
+    PUBLIC_URL = str(config.get("public_url", "")).rstrip("/")
+    if PUBLIC_URL and urlparse(PUBLIC_URL).scheme not in ("http", "https"):
+        raise SystemExit(
+            f"sharei: public_url {PUBLIC_URL!r} must start with http(s)://"
+        )
+    if not PUBLIC_URL and not listens_on_loopback(host):
+        address = phone_ip()
+        PUBLIC_URL = f"http://{address}:{port}" if address else ""
 
     clip_load()
     if clip_ttl is not None:

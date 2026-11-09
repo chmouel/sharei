@@ -21,6 +21,11 @@
 # or rose-pine-dawn.
 # theme = "auto"
 
+# Address your phone uses to reach sharei, for the QR codes of sharei pages opened on
+# localhost. Without it, sharei uses this machine's network address when host listens
+# beyond localhost, and the address in the browser otherwise.
+# public_url = "https://share.example.com"
+
 # Extra Host headers and browser Origins accepted (added to the built-in local ones).
 # allow_hosts = ["share.example.com"]
 # allow_origins = ["https://share.example.com"]
