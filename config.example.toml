@@ -16,6 +16,11 @@
 # Seconds before the clipboard clears, 0 keeps it. Without this the saved setting is kept.
 # clip_ttl = 600
 
+# Colour theme for browsers that haven't picked one with the theme button: auto
+# (follows the device's light or dark setting), light, dark, dracula, tokyo-night, rose-pine
+# or rose-pine-dawn.
+# theme = "auto"
+
 # Extra Host headers and browser Origins accepted (added to the built-in local ones).
 # allow_hosts = ["share.example.com"]
 # allow_origins = ["https://share.example.com"]

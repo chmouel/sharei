@@ -9,30 +9,36 @@ cables, a cloud drive or emailing yourself.
 
 ## What you get
 
-The page has four tabs.
-
-Artifacts lists the files your projects build, newest first: Android APKs,
-Python wheels, release archives, whatever you point it at. Tap one on your
-phone to download it, or to install it if it is an APK.
+The page has four tabs, along the bottom on a phone and down the left side
+on a computer.
 
 Screenshots shows the screenshots you saved, grouped by project. You can swipe
 through them, draw arrows and notes on them, and set them to disappear after a
 while.
 
-Clipboard is a single shared note. Paste on one device and copy on the other.
-It clears itself after ten minutes unless you change that.
-
 Drop holds files you send either way. Markdown opens formatted the way GitHub
 shows it, code opens with colours and line numbers, and pictures open full
 screen. Any file there can be set to expire too.
 
-| Artifacts | Screenshots | Clipboard |
-|---|---|---|
-| ![Artifacts](docs/screenshots/artifacts.png) | ![Screenshots](docs/screenshots/shots.png) | ![Clipboard](docs/screenshots/clip.png) |
+Clipboard is a single shared note. Paste on one device and copy on the other.
+It clears itself after ten minutes unless you change that.
 
-| Drop | Markdown | Code |
+Artifacts lists the files your projects build, newest first: Android APKs,
+Python wheels, release archives, whatever you point it at. Tap one on your
+phone to download it, or to install it if it is an APK.
+
+| Screenshots | Drop | Clipboard |
 |---|---|---|
-| ![Drop](docs/screenshots/drop.png) | ![Markdown](docs/screenshots/markdown.png) | ![Code](docs/screenshots/code.png) |
+| ![Screenshots](docs/screenshots/shots.png) | ![Drop](docs/screenshots/drop.png) | ![Clipboard](docs/screenshots/clip.png) |
+
+| Artifacts | Markdown | Code |
+|---|---|---|
+| ![Artifacts](docs/screenshots/artifacts.png) | ![Markdown](docs/screenshots/markdown.png) | ![Code](docs/screenshots/code.png) |
+
+The round button at the top right of each page picks a colour theme: light,
+dark, Dracula, Tokyo Night, Rosé Pine or Rosé Pine Dawn. Auto, the default,
+follows your device. Each browser remembers its own choice, and the `theme`
+setting picks the default for browsers that haven't chosen yet.
 
 If you add sharei to your Android home screen, it shows up in the Share menu,
 so you can send a link, some text or a photo from any app to your computer.

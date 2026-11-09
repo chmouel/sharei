@@ -18,7 +18,7 @@ proxy with authentication (see SECURITY.md).
   anything else as is. With no arguments it shows a `gum` menu.
 - `src/sharei/vendor/`: third-party assets served at `/vendor/`:
   github-markdown-css, mermaid, markerjs, highlight.js (common languages
-  bundle, GitHub light/dark themes). Keep their licence files next to them;
+  bundle). Keep their licence files next to them;
   they ship in the wheel. marker.js is linkware: its credit line under the
   editor must stay visible.
 - `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user
@@ -137,10 +137,21 @@ These exist on purpose. Keep them when changing or adding code.
   lazily. Don't add runtime dependencies.
 - Format and lint with `ruff format` and `ruff check`. `subprocess.run` needs
   an explicit `check=`.
-- The UI is mobile first, in a dark theme. Reuse the existing CSS classes and
-  patterns, such as `.clip-ttl`-style pills and absolutely positioned row
+- The UI is mobile first: a bottom tab bar on phones, a left rail from 900px
+  wide. Reuse the existing CSS classes and patterns, such as `.clip-ttl`-style pills and absolutely positioned row
   tools. Pages reload themselves when the `/state` stamp changes.
   `window.liveBusy()` pauses that while a viewer or menu is open.
+- Colours always come from CSS variables, never literals. A theme is an
+  entry in `THEMES` (the `THEME_KEYS` palette plus `light` or `dark` mode),
+  and every theme besides light and dark also needs a `READER_THEMES`
+  entry that overrides GitHub's markdown and syntax variables for `/md`
+  and `/view`.
+  `theme_reader_css()` lifts GitHub's light and dark variables out of the
+  vendored `github-markdown.css` media queries and keys them on
+  `html[data-mode]`; a test guards that extraction. `THEME_JS` runs in the
+  head of every page (with the nonce on `/md` and `/view`), reads the choice
+  from localStorage `sharei-theme`, falls back to the `theme` setting, and
+  sets `data-theme` and `data-mode` on `<html>`.
 - `sharec` uses `gum` for menus and prompts, and `yazi` when present to
   pick files. Its environment variables:
   - `SHAREI_URL`: upload target, default `http://localhost:8000`

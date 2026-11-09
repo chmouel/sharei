@@ -37,6 +37,23 @@ def test_upload_text_gets_viewer_and_escapes(live_server):
     )
 
 
+def test_view_page_themes_under_csp(live_server):
+    result = upload(live_server, "x.go", b"package main\n")
+    _, headers, body = get(live_server + result["view"])
+    nonce = headers["Content-Security-Policy"].split("'nonce-")[1].split("'")[0]
+    assert f'<script nonce="{nonce}">'.encode() in body
+    assert b'data-theme-default="auto"' in body
+
+
+def test_reader_css_covers_both_modes():
+    from sharei.server import THEME_READER_CSS
+
+    for mode in ("dark", "light"):
+        selector = f'html[data-mode="{mode}"] .markdown-body {{'
+        block = THEME_READER_CSS.split(selector, 1)[1].split("}", 1)[0]
+        assert "--bgColor-default" in block
+
+
 def test_binary_has_no_viewer(live_server):
     result = upload(live_server, "blob.bin", b"\x00\x01\x02")
     assert "view" not in result

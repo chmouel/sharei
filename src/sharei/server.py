@@ -166,8 +166,6 @@ VENDOR = SCRIPT_DIR / "vendor"
 # Only these files are reachable under /vendor/, everything else in that folder stays private.
 VENDOR_TYPES = {
     "highlight.min.js": "text/javascript; charset=utf-8",
-    "hljs-github.min.css": "text/css; charset=utf-8",
-    "hljs-github-dark.min.css": "text/css; charset=utf-8",
     "markerjs3.js": "text/javascript; charset=utf-8",
     "markerjs-ui.js": "text/javascript; charset=utf-8",
     "github-markdown.css": "text/css; charset=utf-8",
@@ -224,71 +222,456 @@ class PoubFile(TypedDict):
     expires: float | None
 
 
+THEME_DEFAULT = "auto"
+THEME_KEYS = (
+    "base",
+    "panel",
+    "field",
+    "line",
+    "edge",
+    "ink",
+    "soft",
+    "muted",
+    "faint",
+    "accent",
+    "accent-ink",
+    "danger",
+    "warn",
+)
+# Values follow THEME_KEYS. "dark" comes first: it is also the no-JavaScript fallback.
+THEMES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "dark": (
+        "Dark",
+        "dark",
+        (
+            "#111820",
+            "#19232b",
+            "#1d2931",
+            "#2b3940",
+            "#34434a",
+            "#eff5f3",
+            "#bbc7c8",
+            "#9aa9ad",
+            "#849399",
+            "#a5f2d1",
+            "#10251d",
+            "#ffb4a8",
+            "#ffd68c",
+        ),
+    ),
+    "light": (
+        "Light",
+        "light",
+        (
+            "#f3f5f4",
+            "#ffffff",
+            "#f6f8f7",
+            "#e1e6e4",
+            "#cdd6d3",
+            "#16211d",
+            "#3d4a46",
+            "#5c6a66",
+            "#6c7a76",
+            "#0f7b56",
+            "#ffffff",
+            "#c4372b",
+            "#9a6200",
+        ),
+    ),
+    "dracula": (
+        "Dracula",
+        "dark",
+        (
+            "#21222c",
+            "#282a36",
+            "#2e303e",
+            "#393b4b",
+            "#44475a",
+            "#f8f8f2",
+            "#d4d4e4",
+            "#a3a9cc",
+            "#8890bd",
+            "#bd93f9",
+            "#21222c",
+            "#ff6e6e",
+            "#f1fa8c",
+        ),
+    ),
+    "tokyo-night": (
+        "Tokyo Night",
+        "dark",
+        (
+            "#1a1b26",
+            "#1f2335",
+            "#24283b",
+            "#292e42",
+            "#3b4261",
+            "#c0caf5",
+            "#a9b1d6",
+            "#8a93bd",
+            "#737aa2",
+            "#7aa2f7",
+            "#16161e",
+            "#f7768e",
+            "#e0af68",
+        ),
+    ),
+    "rose-pine": (
+        "Rosé Pine",
+        "dark",
+        (
+            "#191724",
+            "#1f1d2e",
+            "#26233a",
+            "#2a273f",
+            "#403d52",
+            "#e0def4",
+            "#c8c5df",
+            "#908caa",
+            "#7f7b98",
+            "#ebbcba",
+            "#191724",
+            "#eb6f92",
+            "#f6c177",
+        ),
+    ),
+    "rose-pine-dawn": (
+        "Rosé Pine Dawn",
+        "light",
+        (
+            "#faf4ed",
+            "#fffaf3",
+            "#f4ede8",
+            "#e6dfdb",
+            "#cecacd",
+            "#575279",
+            "#625e83",
+            "#797593",
+            "#8e89a0",
+            "#286983",
+            "#fffaf3",
+            "#b4637a",
+            "#b8741a",
+        ),
+    ),
+}
+# The markdown and code readers use GitHub's light or dark palette by mode. These themes
+# recolour the page and the syntax on top of it.
+READER_THEMES: dict[str, dict[str, str]] = {
+    "dracula": {
+        "bgColor-default": "#282a36",
+        "bgColor-muted": "#21222c",
+        "fgColor-default": "#f8f8f2",
+        "fgColor-muted": "#a3a9cc",
+        "fgColor-accent": "#bd93f9",
+        "borderColor-default": "#44475a",
+        "borderColor-muted": "#393b4b",
+        "color-prettylights-syntax-comment": "#6272a4",
+        "color-prettylights-syntax-constant": "#bd93f9",
+        "color-prettylights-syntax-entity": "#50fa7b",
+        "color-prettylights-syntax-entity-tag": "#ff79c6",
+        "color-prettylights-syntax-keyword": "#ff79c6",
+        "color-prettylights-syntax-string": "#f1fa8c",
+        "color-prettylights-syntax-variable": "#ffb86c",
+        "color-prettylights-syntax-storage-modifier-import": "#f8f8f2",
+    },
+    "tokyo-night": {
+        "bgColor-default": "#1a1b26",
+        "bgColor-muted": "#16161e",
+        "fgColor-default": "#c0caf5",
+        "fgColor-muted": "#9aa5ce",
+        "fgColor-accent": "#7aa2f7",
+        "borderColor-default": "#3b4261",
+        "borderColor-muted": "#292e42",
+        "color-prettylights-syntax-comment": "#565f89",
+        "color-prettylights-syntax-constant": "#ff9e64",
+        "color-prettylights-syntax-entity": "#7aa2f7",
+        "color-prettylights-syntax-entity-tag": "#f7768e",
+        "color-prettylights-syntax-keyword": "#bb9af7",
+        "color-prettylights-syntax-string": "#9ece6a",
+        "color-prettylights-syntax-variable": "#2ac3de",
+        "color-prettylights-syntax-storage-modifier-import": "#c0caf5",
+    },
+    "rose-pine": {
+        "bgColor-default": "#191724",
+        "bgColor-muted": "#1f1d2e",
+        "fgColor-default": "#e0def4",
+        "fgColor-muted": "#908caa",
+        "fgColor-accent": "#c4a7e7",
+        "borderColor-default": "#403d52",
+        "borderColor-muted": "#26233a",
+        "color-prettylights-syntax-comment": "#6e6a86",
+        "color-prettylights-syntax-constant": "#c4a7e7",
+        "color-prettylights-syntax-entity": "#ebbcba",
+        "color-prettylights-syntax-entity-tag": "#9ccfd8",
+        "color-prettylights-syntax-keyword": "#31748f",
+        "color-prettylights-syntax-string": "#f6c177",
+        "color-prettylights-syntax-variable": "#eb6f92",
+        "color-prettylights-syntax-storage-modifier-import": "#e0def4",
+    },
+    "rose-pine-dawn": {
+        "bgColor-default": "#faf4ed",
+        "bgColor-muted": "#f2e9e1",
+        "fgColor-default": "#575279",
+        "fgColor-muted": "#797593",
+        "fgColor-accent": "#907aa9",
+        "borderColor-default": "#dfdad9",
+        "borderColor-muted": "#f2e9e1",
+        "color-prettylights-syntax-comment": "#9893a5",
+        "color-prettylights-syntax-constant": "#907aa9",
+        "color-prettylights-syntax-entity": "#d7827e",
+        "color-prettylights-syntax-entity-tag": "#56949f",
+        "color-prettylights-syntax-keyword": "#286983",
+        "color-prettylights-syntax-string": "#ea9d34",
+        "color-prettylights-syntax-variable": "#b4637a",
+        "color-prettylights-syntax-storage-modifier-import": "#575279",
+    },
+}
+
+
+def theme_app_css() -> str:
+    rules = [
+        (
+            "  :root { --chip:color-mix(in srgb, var(--field) 50%, var(--line)); "
+            "--dash:color-mix(in srgb, var(--edge) 70%, var(--muted)); "
+            "--accent-line:color-mix(in srgb, var(--accent) 60%, var(--edge)); }"
+        )
+    ]
+    for index, (name, (_, mode, values)) in enumerate(THEMES.items()):
+        selector = (
+            f':root, html[data-theme="{name}"]'
+            if index == 0
+            else f'html[data-theme="{name}"]'
+        )
+        props = " ".join(
+            f"--{key}:{value};" for key, value in zip(THEME_KEYS, values, strict=True)
+        )
+        rules.append(f"  {selector} {{ color-scheme:{mode}; {props} }}")
+    return "\n".join(rules)
+
+
+HLJS_CSS = """
+  .hljs { color:var(--fgColor-default); }
+  .hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_ { color:var(--color-prettylights-syntax-keyword); }
+  .hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__, .hljs-title.function_ { color:var(--color-prettylights-syntax-entity); }
+  .hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id, .hljs-variable { color:var(--color-prettylights-syntax-constant); }
+  .hljs-meta .hljs-string, .hljs-regexp, .hljs-string { color:var(--color-prettylights-syntax-string); }
+  .hljs-built_in, .hljs-symbol { color:var(--color-prettylights-syntax-variable); }
+  .hljs-code, .hljs-comment, .hljs-formula { color:var(--color-prettylights-syntax-comment); }
+  .hljs-name, .hljs-quote, .hljs-selector-pseudo, .hljs-selector-tag { color:var(--color-prettylights-syntax-entity-tag); }
+  .hljs-subst { color:var(--fgColor-default); }
+  .hljs-section { color:var(--color-prettylights-syntax-markup-heading); font-weight:700; }
+  .hljs-bullet { color:var(--color-prettylights-syntax-markup-list); }
+  .hljs-emphasis { font-style:italic; }
+  .hljs-strong { font-weight:700; }
+  .hljs-addition { color:var(--color-prettylights-syntax-markup-inserted-text); background:var(--color-prettylights-syntax-markup-inserted-bg); }
+  .hljs-deletion { color:var(--color-prettylights-syntax-markup-deleted-text); background:var(--color-prettylights-syntax-markup-deleted-bg); }
+"""
+
+
+def theme_reader_css() -> str:
+    """GitHub's light and dark palettes keyed on the picked theme instead of the OS setting."""
+    try:
+        source = (VENDOR / "github-markdown.css").read_text(encoding="utf-8")
+    except OSError:
+        return HLJS_CSS
+    rules = []
+    for mode, props in re.findall(
+        r"@media \(prefers-color-scheme: (dark|light)\) \{\s*\.markdown-body, \[data-theme=\"\w+\"\] \{(.*?)\n  \}\n\}",
+        source,
+        re.DOTALL,
+    ):
+        rules.append(
+            f'  html[data-mode="{mode}"], html[data-mode="{mode}"] .markdown-body {{{props}\n  }}'
+        )
+    for name, values in READER_THEMES.items():
+        props = " ".join(f"--{key}:{value};" for key, value in values.items())
+        rules.append(
+            f'  html[data-theme="{name}"], html[data-theme="{name}"] .markdown-body {{ {props} }}'
+        )
+    return "\n".join(rules) + HLJS_CSS
+
+
+THEME_READER_CSS = theme_reader_css()
+
+
+THEME_JS = """
+(() => {
+  const root = document.documentElement, key = 'sharei-theme';
+  const themes = %s;
+  const media = matchMedia('(prefers-color-scheme: dark)');
+  function picked() {
+    let saved = null;
+    try { saved = localStorage.getItem(key); } catch (error) {}
+    if (saved === 'auto' || (saved && saved in themes)) return saved;
+    const fallback = root.dataset.themeDefault;
+    return fallback && fallback in themes ? fallback : 'auto';
+  }
+  function apply() {
+    const choice = picked();
+    const theme = choice === 'auto' ? (media.matches ? 'dark' : 'light') : choice;
+    root.dataset.choice = choice;
+    root.dataset.theme = theme;
+    root.dataset.mode = themes[theme][0];
+    const meta = document.querySelector('meta[name=theme-color]');
+    if (meta) meta.content = themes[theme][1];
+  }
+  window.shareiTheme = (name) => {
+    try { localStorage.setItem(key, name); } catch (error) {}
+    apply();
+  };
+  media.addEventListener('change', apply);
+  addEventListener('storage', (event) => { if (event.key === key) apply(); });
+  apply();
+})();
+"""
+
+
+def theme_script(nonce: str = "") -> str:
+    themes = {name: [mode, values[0]] for name, (_, mode, values) in THEMES.items()}
+    attribute = f' nonce="{nonce}"' if nonce else ""
+    return f"<script{attribute}>{THEME_JS % json.dumps(themes)}</script>"
+
+
+THEME_PICKER_JS = """
+(() => {
+  const button = document.getElementById('theme-button');
+  const menu = document.getElementById('theme-menu');
+  function paint() {
+    menu.querySelectorAll('button[data-theme]').forEach((item) => {
+      item.setAttribute('aria-pressed', String(item.dataset.theme === document.documentElement.dataset.choice));
+    });
+  }
+  function toggle(open) {
+    menu.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    if (open) paint();
+  }
+  button.addEventListener('click', (event) => { event.stopPropagation(); toggle(menu.hidden); });
+  menu.addEventListener('click', (event) => {
+    const item = event.target.closest('button[data-theme]');
+    if (!item) return;
+    window.shareiTheme(item.dataset.theme);
+    paint();
+  });
+  document.addEventListener('click', (event) => { if (!menu.hidden && !menu.contains(event.target)) toggle(false); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) { toggle(false); button.focus(); } });
+  const previousBusy = window.liveBusy;
+  window.liveBusy = () => !menu.hidden || (previousBusy ? previousBusy() : false);
+})();
+"""
+
+
+def theme_picker() -> str:
+    items = [
+        '<button type="button" data-theme="auto"><span class="swatch auto" aria-hidden="true"></span>Auto</button>'
+    ]
+    for name, (label, _, values) in THEMES.items():
+        palette = dict(zip(THEME_KEYS, values, strict=True))
+        items.append(
+            f'<button type="button" data-theme="{name}"><span class="swatch" aria-hidden="true" '
+            f'style="background:{palette["base"]};border-color:{palette["edge"]};color:{palette["accent"]}"></span>'
+            f"{html.escape(label)}</button>"
+        )
+    return (
+        '<div class="theme-picker"><button class="theme-button" id="theme-button" type="button" '
+        'aria-label="Theme" title="Theme" aria-haspopup="true" aria-expanded="false">'
+        '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.5" '
+        'fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" '
+        'fill="currentColor"/></svg></button>'
+        f'<div class="theme-menu" id="theme-menu" hidden>{"".join(items)}</div></div>'
+    )
+
+
 EXTRA_CSS = """
-  .tabs { position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:2px; margin:0 -18px 14px; padding:4px 18px; overflow-x:auto; overflow-y:hidden; background:rgba(17,24,32,.92); border-bottom:1px solid rgba(43,57,64,.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); scrollbar-width:none; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity; }
-  .tabs::-webkit-scrollbar { display:none; }
-  .tab { display:inline-flex; flex:0 0 auto; align-items:center; min-height:44px; padding:0 10px; border:1px solid transparent; border-radius:9px; color:var(--muted); text-decoration:none; font-size:13.5px; font-weight:650; letter-spacing:-.01em; line-height:1; white-space:nowrap; scroll-snap-align:start; -webkit-tap-highlight-color:transparent; transition:background .15s ease,color .15s ease,border-color .15s ease; }
-  .tab:hover { background:var(--panel); color:var(--ink); }
-  .tab-icon { margin-right:4px; font-size:12.5px; line-height:1; opacity:.85; }
-  .tab-count { margin-left:5px; padding:2px 5px; border-radius:6px; background:rgba(43,57,64,.55); color:var(--muted); font-size:11px; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
-  .tab[aria-current] { background:var(--mint); border-color:var(--mint); color:var(--mint-ink); }
-  .tab[aria-current] .tab-icon { opacity:1; }
-  .tab[aria-current] .tab-count { background:rgba(16,37,29,.14); color:var(--mint-ink); }
-  .tab:focus-visible { outline:2px solid var(--mint); outline-offset:-2px; }
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:5; display:grid; grid-template-columns:repeat(4, 1fr); padding:6px max(8px, env(safe-area-inset-left)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right)); background:color-mix(in srgb, var(--base) 94%, transparent); border-top:1px solid var(--line); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+  .tab { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-width:0; min-height:52px; padding:4px 2px; border-radius:12px; color:var(--muted); text-decoration:none; font-size:11.5px; font-weight:650; line-height:1; white-space:nowrap; -webkit-tap-highlight-color:transparent; transition:background .15s ease,color .15s ease; }
+  .tab:hover { color:var(--ink); }
+  .tab-icon { display:grid; place-items:center; width:46px; height:26px; border-radius:13px; font-size:15px; line-height:1; transition:background .15s ease; }
+  .tab-count { position:absolute; top:2px; left:calc(50% + 10px); min-width:17px; padding:2px 4px; border-radius:9px; background:var(--line); color:var(--ink); font-size:10px; font-weight:700; line-height:1.1; text-align:center; font-variant-numeric:tabular-nums; }
+  .tab-count:empty { display:none; }
+  .tab[aria-current] { color:var(--accent); }
+  .tab[aria-current] .tab-icon { background:var(--accent); color:var(--accent-ink); }
+  .tab:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .theme-picker { position:absolute; top:18px; right:0; z-index:6; }
+  .theme-button { display:grid; place-items:center; width:36px; height:36px; border:1px solid var(--edge); border-radius:12px; background:var(--field); color:var(--muted); font:inherit; font-size:17px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .theme-button:hover, .theme-button[aria-expanded=true] { color:var(--ink); border-color:var(--accent-line); }
+  .theme-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .theme-menu { position:absolute; top:44px; right:0; display:grid; gap:2px; min-width:196px; padding:6px; white-space:nowrap; border:1px solid var(--edge); border-radius:14px; background:var(--panel); box-shadow:0 12px 32px rgba(0,0,0,.3); }
+  .theme-menu[hidden] { display:none; }
+  .theme-menu button { display:flex; align-items:center; gap:10px; padding:8px 10px; border:0; border-radius:10px; background:none; color:var(--ink); font:inherit; font-size:14px; font-weight:600; text-align:left; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .theme-menu button:hover { background:var(--field); }
+  .theme-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .theme-menu button[aria-pressed=true] { background:color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+  .theme-menu button[aria-pressed=true]::after { content:"✓"; margin-left:auto; color:var(--accent); }
+  .swatch { position:relative; flex:0 0 22px; height:22px; border:1px solid; border-radius:50%; }
+  .swatch::after { content:""; position:absolute; inset:6px; border-radius:50%; background:currentColor; }
+  .swatch.auto { border-color:#8a9590; background:linear-gradient(135deg, #f3f5f4 50%, #111820 50%); color:#0f7b56; }
+  @media (min-width:600px) { .theme-picker { top:37px; } }
+  @media (min-width:900px) {
+    body { padding-left:96px; }
+    .wrap { padding-bottom:48px; }
+    .tabs { top:0; right:auto; width:96px; grid-template-columns:none; grid-auto-rows:min-content; align-content:start; gap:10px; padding:28px 8px; border-top:0; border-right:1px solid var(--line); }
+    .tab { min-height:64px; font-size:12px; gap:6px; }
+    .tab-icon { width:56px; height:32px; border-radius:16px; font-size:17px; }
+    .tab-count { top:0; left:calc(50% + 14px); }
+    .tab:hover .tab-icon { background:var(--field); }
+    .tab[aria-current]:hover .tab-icon { background:var(--accent); }
+  }
   .shelf-actions { display:flex; align-items:center; gap:10px; }
-  .wipe { padding:6px 10px; border:1px solid #4a3a3a; border-radius:9px; background:#241c1c; color:#ffb4a8; font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .wipe:hover { border-color:#8a5a52; background:#2e2222; }
-  .wipe:focus-visible { outline:2px solid #ffb4a8; outline-offset:2px; }
+  .wipe { padding:6px 10px; border:1px solid color-mix(in srgb, var(--danger) 25%, var(--base)); border-radius:9px; background:color-mix(in srgb, var(--danger) 8%, var(--base)); color:var(--danger); font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .wipe:hover { border-color:color-mix(in srgb, var(--danger) 50%, var(--base)); background:color-mix(in srgb, var(--danger) 14%, var(--base)); }
+  .wipe:focus-visible { outline:2px solid var(--danger); outline-offset:2px; }
   .tile-wrap { position:relative; display:grid; min-width:0; }
-  .tile-delete, .file-delete { position:absolute; top:5px; right:5px; display:grid; place-items:center; width:26px; height:26px; border:1px solid rgba(255,180,168,.35); border-radius:8px; background:rgba(17,24,32,.72); color:#ffb4a8; font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .tile-delete:focus-visible, .file-delete:focus-visible { outline:2px solid #ffb4a8; outline-offset:1px; }
-  .annotate { padding:6px 10px; border:1px solid #2f5a48; border-radius:9px; background:#162a22; color:#9fe3bf; font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .annotate:hover { border-color:#4f8f6f; background:#1b382c; }
-  .annotate:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
+  .tile-delete, .file-delete { position:absolute; top:5px; right:5px; display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--danger); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .tile-delete:focus-visible, .file-delete:focus-visible { outline:2px solid var(--danger); outline-offset:1px; }
+  .annotate { padding:6px 10px; border:1px solid color-mix(in srgb, var(--accent) 35%, var(--base)); border-radius:9px; background:color-mix(in srgb, var(--accent) 10%, var(--base)); color:var(--accent); font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .annotate:hover { border-color:color-mix(in srgb, var(--accent) 60%, var(--base)); background:color-mix(in srgb, var(--accent) 16%, var(--base)); }
+  .annotate:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   .annotate[hidden] { display:none; }
-  .annotator { position:fixed; inset:0; z-index:20; display:flex; flex-direction:column; background:#0b1116; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  .annotator { position:fixed; inset:0; z-index:20; display:flex; flex-direction:column; background:var(--base); padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   .annotator-host { flex:1; min-height:0; }
   .annotator-host mjsui-annotation-editor { display:block; width:100%; height:100%; }
-  .annotator-status { margin:0; padding:2px 12px; color:#ffb4a8; font-size:11.5px; text-align:center; }
+  .annotator-status { margin:0; padding:2px 12px; color:var(--danger); font-size:11.5px; text-align:center; }
   .annotator-status:empty { display:none; }
-  .annotator-credit { margin:0; padding:3px 0; color:#7f8f92; font-size:10.5px; line-height:1.4; text-align:center; }
-  .annotator-credit a { color:#8fb7a4; text-decoration:underline; text-underline-offset:2px; }
+  .annotator-credit { margin:0; padding:3px 0; color:var(--faint); font-size:10.5px; line-height:1.4; text-align:center; }
+  .annotator-credit a { color:var(--soft); text-decoration:underline; text-underline-offset:2px; }
   .file-row { position:relative; display:flex; }
   .file-row .file { flex:1; padding-right:80px; }
   .file-row.has-tools .file { padding-right:112px; }
   .file-tools { position:absolute; top:50%; right:10px; transform:translateY(-50%); display:flex; gap:6px; }
   .file-tools .file-delete { position:static; }
-  .file-annotate, .file-expiry { display:grid; place-items:center; width:26px; height:26px; border:1px solid rgba(159,227,191,.35); border-radius:8px; background:rgba(17,24,32,.72); color:#9fe3bf; font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .file-annotate:focus-visible, .file-expiry:focus-visible { outline:2px solid var(--mint); outline-offset:1px; }
-  .file-expiry { border-color:rgba(255,214,140,.3); color:#c9b48a; }
-  .file-expiry.set, .expiry-button.set { border-color:rgba(255,214,140,.6); color:#ffd68c; }
-  .expires-left { color:#ffd68c; }
+  .file-annotate, .file-expiry { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .file-annotate:focus-visible, .file-expiry:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .file-expiry { border-color:color-mix(in srgb, var(--warn) 30%, transparent); color:color-mix(in srgb, var(--warn) 70%, var(--muted)); }
+  .file-expiry.set, .expiry-button.set { border-color:color-mix(in srgb, var(--warn) 60%, transparent); color:var(--warn); }
+  .expires-left { color:var(--warn); }
   .expires-left[hidden] { display:none; }
-  .expiry-button { padding:6px 10px; border:1px solid #4a4434; border-radius:9px; background:#26231a; color:#c9b48a; font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .expiry-button:focus-visible { outline:2px solid var(--mint); outline-offset:2px; }
-  .tile-expiry { position:absolute; top:5px; left:5px; padding:4px 7px; border-radius:8px; background:rgba(17,24,32,.78); color:#ffd68c; font-size:11px; font-weight:650; line-height:1; pointer-events:none; }
-  .expiry-menu { position:fixed; z-index:40; display:grid; gap:8px; padding:10px 12px; border:1px solid #34434a; border-radius:12px; background:#111820; box-shadow:0 12px 32px rgba(0,0,0,.45); color:var(--muted); font-size:12px; }
+  .expiry-button { padding:6px 10px; border:1px solid color-mix(in srgb, var(--warn) 25%, var(--base)); border-radius:9px; background:color-mix(in srgb, var(--warn) 8%, var(--base)); color:color-mix(in srgb, var(--warn) 70%, var(--muted)); font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .expiry-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .tile-expiry { position:absolute; top:5px; left:5px; padding:4px 7px; border-radius:8px; background:color-mix(in srgb, var(--base) 78%, transparent); color:var(--warn); font-size:11px; font-weight:650; line-height:1; pointer-events:none; }
+  .expiry-menu { position:fixed; z-index:40; display:grid; gap:8px; padding:10px 12px; border:1px solid var(--edge); border-radius:12px; background:var(--base); box-shadow:0 12px 32px rgba(0,0,0,.35); color:var(--muted); font-size:12px; }
   .expiry-menu[hidden] { display:none; }
   .expiry-menu div { display:flex; flex-wrap:wrap; gap:6px; }
-  .expiry-menu button { padding:7px 10px; border:1px solid #34434a; border-radius:10px; background:#1d2931; color:var(--muted); font:inherit; font-size:12px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .expiry-menu button[aria-pressed=true] { background:var(--mint); border-color:var(--mint); color:var(--mint-ink); }
-  .expiry-menu button:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
+  .expiry-menu button { padding:7px 10px; border:1px solid var(--edge); border-radius:10px; background:var(--field); color:var(--muted); font:inherit; font-size:12px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .expiry-menu button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .expiry-menu button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .viewer-tools { display:flex; align-items:center; gap:8px; }
   .wrap.wide { width:min(100% - 36px, 1180px); }
   .gallery { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px 10px; }
   .tile { display:grid; gap:6px; min-width:0; color:var(--muted); text-decoration:none; font-size:11px; -webkit-tap-highlight-color:transparent; }
-  .tile img { display:block; width:100%; aspect-ratio:9/16; object-fit:cover; object-position:top; border-radius:12px; border:1px solid #34434a; background:#1d2931; transition:transform .15s ease,border-color .15s ease; }
-  .tile:hover img { border-color:#74bb99; }
+  .tile img { display:block; width:100%; aspect-ratio:9/16; object-fit:cover; object-position:top; border-radius:12px; border:1px solid var(--edge); background:var(--field); transition:transform .15s ease,border-color .15s ease; }
+  .tile:hover img { border-color:var(--accent-line); }
   .tile:active img { transform:scale(.97); }
-  .tile:focus-visible { outline:none; } .tile:focus-visible img { outline:3px solid var(--mint); outline-offset:2px; }
+  .tile:focus-visible { outline:none; } .tile:focus-visible img { outline:3px solid var(--accent); outline-offset:2px; }
   .tile span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 2px; }
   body.viewing { overflow:hidden; }
-  .viewer { position:fixed; inset:0; z-index:10; display:grid; grid-template-rows:auto minmax(0, 1fr) auto; background:rgba(8,12,16,.97); padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  .viewer { position:fixed; inset:0; z-index:10; display:grid; grid-template-rows:auto minmax(0, 1fr) auto; background:color-mix(in srgb, var(--base) 97%, transparent); padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   .viewer[hidden] { display:none; }
   .viewer-bar { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; }
-  .counter { color:#bbc7c8; font-size:13px; font-variant-numeric:tabular-nums; }
+  .counter { color:var(--soft); font-size:13px; font-variant-numeric:tabular-nums; }
   .close, .nav { display:grid; place-items:center; width:42px; height:42px; border:1px solid var(--line); border-radius:12px; background:var(--panel); color:var(--ink); font:inherit; font-size:17px; cursor:pointer; }
-  .close:focus-visible, .nav:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
+  .close:focus-visible, .nav:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .nav { position:absolute; top:50%; z-index:1; transform:translateY(-50%); font-size:28px; }
   .prev { left:16px; } .next { right:16px; }
   .viewer.single .nav { display:none; }
@@ -1273,34 +1656,26 @@ def render_markdown(text: str) -> tuple[str, str | None]:
 MARKDOWN_CSS = """
   * { box-sizing:border-box }
   html { scroll-padding-top:64px; }
-  body { margin:0; background:#fff; color:#1f2328; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; }
-  .bar { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px; padding:10px max(16px, env(safe-area-inset-left)); background:rgba(246,248,250,.92); border-bottom:1px solid #d1d9e0; backdrop-filter:blur(8px); font-size:14px; }
-  .bar a { color:#0969da; text-decoration:none; font-weight:600; white-space:nowrap; }
+  body { margin:0; background:var(--bgColor-default, Canvas); color:var(--fgColor-default, CanvasText); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif; }
+  .bar { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px; padding:10px max(16px, env(safe-area-inset-left)); background:color-mix(in srgb, var(--bgColor-muted) 92%, transparent); border-bottom:1px solid var(--borderColor-default); backdrop-filter:blur(8px); font-size:14px; }
+  .bar a { color:var(--fgColor-accent); text-decoration:none; font-weight:600; white-space:nowrap; }
   .bar a:hover { text-decoration:underline; }
-  .bar .name { flex:1; min-width:0; overflow:hidden; color:#59636e; text-overflow:ellipsis; white-space:nowrap; }
+  .bar .name { flex:1; min-width:0; overflow:hidden; color:var(--fgColor-muted); text-overflow:ellipsis; white-space:nowrap; }
   .bar nav { display:flex; gap:14px; }
   .page { width:min(100%, 980px); margin:0 auto; padding:24px 16px 64px; }
-  .notice { margin:0 0 16px; padding:10px 14px; border:1px solid #d4a72c66; border-radius:6px; background:#fff8c5; color:#3b2300; font-size:14px; }
-  .toc { margin:0 0 20px; padding:8px 14px; border:1px solid #d1d9e0; border-radius:6px; font-size:14px; }
+  .notice { margin:0 0 16px; padding:10px 14px; border:1px solid color-mix(in srgb, var(--borderColor-attention-emphasis) 45%, transparent); border-radius:6px; background:var(--bgColor-attention-muted); color:var(--fgColor-default); font-size:14px; }
+  .toc { margin:0 0 20px; padding:8px 14px; border:1px solid var(--borderColor-default); border-radius:6px; font-size:14px; }
   .toc summary { cursor:pointer; font-weight:600; padding:4px 0; }
   .toc ol { margin:6px 0 6px; padding:0; list-style:none; }
   .toc li { padding:3px 0; }
-  .toc a { color:#0969da; text-decoration:none; }
+  .toc a { color:var(--fgColor-accent); text-decoration:none; }
   .toc a:hover { text-decoration:underline; }
   .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { position:relative; }
-  .markdown-body .anchor { position:absolute; left:-1.1em; padding-right:.3em; color:#59636e; text-decoration:none; opacity:0; }
+  .markdown-body .anchor { position:absolute; left:-1.1em; padding-right:.3em; color:var(--fgColor-muted); text-decoration:none; opacity:0; }
   .markdown-body :is(h1,h2,h3,h4,h5,h6):hover .anchor, .markdown-body .anchor:focus { opacity:1; }
   .mermaid-diagram { margin:0 0 16px; overflow-x:auto; text-align:center; }
   .mermaid-diagram svg { max-width:100%; height:auto; }
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
-  @media (prefers-color-scheme:dark) {
-    body { background:#0d1117; color:#f0f6fc; }
-    .bar { background:rgba(1,4,9,.88); border-color:#3d444d; }
-    .bar a, .toc a { color:#4493f8; }
-    .bar .name, .markdown-body .anchor { color:#9198a1; }
-    .toc { border-color:#3d444d; }
-    .notice { background:#bb800926; border-color:#bb800966; color:#f0f6fc; }
-  }
 """
 
 MARKDOWN_JS = """
@@ -1381,7 +1756,7 @@ if (diagrams.length) {
   const script = document.createElement('script');
   script.src = '/vendor/mermaid.min.js';
   script.onload = async () => {
-    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = document.documentElement.dataset.mode === 'dark';
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
     for (const [index, block] of diagrams.entries()) {
       const id = 'mermaid-' + index;
@@ -1426,11 +1801,12 @@ def markdown_page(
         f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
     )
     document = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark"><title>{html.escape(title)}</title>
+{theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
-<style>{MARKDOWN_CSS}</style></head><body>
+<style>{MARKDOWN_CSS}{THEME_READER_CSS}</style></head><body>
 <header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}</nav></header>
 <main class="page">{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
@@ -1444,24 +1820,17 @@ def markdown_page(
 
 CODE_CSS = """
   .page.code-page { width:min(100%, 1280px); }
-  .code { position:relative; display:grid; grid-template-columns:auto minmax(0, 1fr); border:1px solid #d1d9e0; border-radius:6px; background:#f6f8fa; font:12px/20px ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
-  .gutter { padding:8px 0; border-right:1px solid #d1d9e0; text-align:right; user-select:none; -webkit-user-select:none; }
-  .gutter a { display:block; padding:0 10px 0 14px; color:#8c959f; text-decoration:none; }
-  .gutter a:hover { color:#1f2328; }
-  .gutter a:target { color:#1f2328; font-weight:600; }
+  .code { position:relative; display:grid; grid-template-columns:auto minmax(0, 1fr); border:1px solid var(--borderColor-default); border-radius:6px; background:var(--bgColor-muted); font:12px/20px ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
+  .gutter { padding:8px 0; border-right:1px solid var(--borderColor-default); text-align:right; user-select:none; -webkit-user-select:none; }
+  .gutter a { display:block; padding:0 10px 0 14px; color:var(--fgColor-muted); text-decoration:none; }
+  .gutter a:hover { color:var(--fgColor-default); }
+  .gutter a:target { color:var(--fgColor-default); font-weight:600; }
   .scroll { position:relative; overflow-x:auto; }
   .code pre { position:relative; margin:0; padding:8px 14px; overflow:visible; background:none; }
   .code code { display:block; padding:0; background:none; font:inherit; white-space:pre; tab-size:4; }
   .code code.hljs { padding:0; background:none; overflow:visible; }
-  .line-mark { position:absolute; left:0; right:0; height:20px; background:#fff8c5; pointer-events:none; }
+  .line-mark { position:absolute; left:0; right:0; height:20px; background:var(--bgColor-attention-muted); pointer-events:none; }
   .line-mark[hidden] { display:none; }
-  @media (prefers-color-scheme:dark) {
-    .code { background:#151b23; border-color:#3d444d; }
-    .gutter { border-color:#3d444d; }
-    .gutter a { color:#656c76; }
-    .gutter a:hover, .gutter a:target { color:#f0f6fc; }
-    .line-mark { background:#bb800926; }
-  }
 """
 
 CODE_JS = """
@@ -1509,12 +1878,11 @@ def code_page(name: str, text: str, links: list[tuple[str, str]]) -> tuple[bytes
         f' data-lang="{html.escape(code_language(name, text))}"' if highlight else ""
     )
     document = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
+{theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
-<link rel="stylesheet" href="/vendor/hljs-github.min.css" media="(prefers-color-scheme: light)">
-<link rel="stylesheet" href="/vendor/hljs-github-dark.min.css" media="(prefers-color-scheme: dark)">
-<style>{MARKDOWN_CSS}{CODE_CSS}</style></head><body>
+<style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}</style></head><body>
 <header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav>{actions}</nav></header>
 <main class="page code-page">{notice}
 <div class="code"><div class="gutter">{gutter}</div><div class="scroll"><div class="line-mark" id="line-mark" hidden></div><pre><code id="code"{language}>{html.escape(text)}</code></pre></div></div>
@@ -1637,27 +2005,27 @@ def clip_set_ttl(seconds: int) -> ClipState:
 CLIP_CSS = """
   .clip-card { display:grid; gap:12px; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:20px; }
   .clip-meta { display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
-  .clip-meta strong { color:#bbc7c8; font-weight:600; }
+  .clip-meta strong { color:var(--soft); font-weight:600; }
   .clip-ttl { display:flex; flex-wrap:wrap; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
   .clip-ttl>span { margin-right:2px; }
-  .clip-ttl button { padding:7px 10px; border:1px solid #34434a; border-radius:10px; background:#1d2931; color:var(--muted); font:inherit; font-size:12px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .clip-ttl button[aria-pressed=true] { background:var(--mint); border-color:var(--mint); color:var(--mint-ink); }
-  .clip-ttl button:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
-  textarea { width:100%; min-height:36vh; padding:14px; resize:vertical; border:1px solid #34434a; border-radius:14px; background:#1d2931; color:var(--ink); font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
-  textarea:focus-visible { outline:3px solid var(--mint); outline-offset:1px; }
+  .clip-ttl button { padding:7px 10px; border:1px solid var(--edge); border-radius:10px; background:var(--field); color:var(--muted); font:inherit; font-size:12px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .clip-ttl button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .clip-ttl button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  textarea { width:100%; min-height:36vh; padding:14px; resize:vertical; border:1px solid var(--edge); border-radius:14px; background:var(--field); color:var(--ink); font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  textarea:focus-visible { outline:3px solid var(--accent); outline-offset:1px; }
   .clip-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .clip-actions button { min-height:52px; border:1px solid #34434a; border-radius:14px; background:#1d2931; color:var(--ink); font:inherit; font-size:15px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .clip-actions button.primary { background:var(--mint); border-color:var(--mint); color:var(--mint-ink); }
+  .clip-actions button { min-height:52px; border:1px solid var(--edge); border-radius:14px; background:var(--field); color:var(--ink); font:inherit; font-size:15px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .clip-actions button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
   .clip-actions button.wide, .clip-actions a.wide { grid-column:span 2; }
-  .clip-actions a { display:grid; place-items:center; min-height:44px; border:1px dashed #34434a; border-radius:14px; color:var(--mint); font-size:14px; font-weight:650; text-decoration:none; -webkit-tap-highlight-color:transparent; }
-  .clip-actions a:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
+  .clip-actions a { display:grid; place-items:center; min-height:44px; border:1px dashed var(--edge); border-radius:14px; color:var(--accent); font-size:14px; font-weight:650; text-decoration:none; -webkit-tap-highlight-color:transparent; }
+  .clip-actions a:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .clip-actions button:active { transform:scale(.985); }
-  .clip-actions button:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
+  .clip-actions button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .clip-status { min-height:20px; margin:0; color:var(--muted); font-size:13px; }
-  .clip-status[data-tone=ok] { color:var(--mint); }
-  .clip-status[data-tone=warn] { color:#ffd08a; }
-  .clip-note { margin:0; color:#849399; font-size:12px; line-height:1.6; }
-  .clip-note code { color:#bbc7c8; overflow-wrap:anywhere; }
+  .clip-status[data-tone=ok] { color:var(--accent); }
+  .clip-status[data-tone=warn] { color:var(--warn); }
+  .clip-note { margin:0; color:var(--faint); font-size:12px; line-height:1.6; }
+  .clip-note code { color:var(--soft); overflow-wrap:anywhere; }
 """
 
 CLIP_JS = """
@@ -1752,7 +2120,7 @@ document.getElementById('paste').addEventListener('click', async () => {
     setStatus('Pasted. Hit Send to share it.', 'ok');
   } catch (error) {
     field.focus();
-    setStatus('This browser blocks clipboard reads — long-press the box and choose Paste.', 'warn');
+    setStatus('This browser blocks clipboard reads. Long-press the box and choose Paste.', 'warn');
   }
 });
 
@@ -1851,8 +2219,7 @@ def clip_page(state: ClipState, tab_counts: Counts) -> bytes:
         )
     )
     body = f"""
-  <header><div class="brand"><span class="brand-mark" aria-hidden="true">⎘</span> Clipboard</div>
-    <h1>Last copy,<br>every device.</h1><p class="intro">Text lives in this process only. It clears itself after a while — pick Never to keep it until you clear it.</p></header>
+  <header><h1>Clipboard</h1><p class="intro">Kept in memory only and cleared after the time you pick below.</p></header>
   <div class="shelf-label"><span>Shared clipboard</span><span class="count" id="clip-count">{characters} {"char" if characters == 1 else "chars"}</span></div>
   <section class="clip-card">
     <div class="clip-meta"><span id="clip-updated">{updated_label}</span><span id="clip-expiry">{expiry_label}</span></div>
@@ -1875,37 +2242,43 @@ def clip_page(state: ClipState, tab_counts: Counts) -> bytes:
 
 
 DROP_CSS = """
-  .drop-zone { padding:10px; background:var(--panel); border:2px dashed #405057; border-radius:20px; transition:border-color .15s ease,background .15s ease; }
-  .drop-zone.over { background:#1d2f2a; border-color:var(--mint); }
+  .drop-zone { padding:10px; background:var(--panel); border:2px dashed var(--dash); border-radius:20px; transition:border-color .15s ease,background .15s ease; }
+  .drop-zone.over { background:color-mix(in srgb, var(--accent) 8%, var(--panel)); border-color:var(--accent); }
   .drop-button { display:grid; place-items:center; gap:7px; width:100%; min-height:168px; padding:20px; border:0; border-radius:14px; background:transparent; color:var(--ink); font:inherit; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .drop-button:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
-  .drop-icon { color:var(--mint); font-size:34px; line-height:1; }
+  .drop-button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  .drop-icon { color:var(--accent); font-size:34px; line-height:1; }
   .drop-button strong { font-size:17px; }
   .drop-button small { color:var(--muted); font-size:12px; text-align:center; line-height:1.5; }
+  .drop-zone.compact { padding:4px; border-radius:16px; }
+  .drop-zone.compact .drop-button { display:flex; justify-content:center; gap:10px; min-height:56px; padding:8px 14px; }
+  .drop-zone.compact .drop-icon { font-size:22px; }
+  .drop-zone.compact .drop-button strong { font-size:15px; }
+  .drop-zone.compact .drop-button small { display:none; }
   .upload-queue { display:grid; gap:8px; margin:12px 0 0; padding:0; list-style:none; }
   .upload-row { display:grid; grid-template-columns:1fr auto; align-items:center; gap:6px 12px; padding:10px 12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; font-size:13px; }
   .upload-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .upload-note { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
-  .upload-bar { grid-column:1/-1; height:4px; overflow:hidden; border-radius:2px; background:#26333a; }
-  .upload-bar i { display:block; width:0; height:100%; background:var(--mint); transition:width .15s ease; }
-  .upload-row[data-state=fail] .upload-note, .upload-row[data-state=fail] .upload-name { color:#ff9b8a; }
+  .upload-bar { grid-column:1/-1; height:4px; overflow:hidden; border-radius:2px; background:var(--chip); }
+  .upload-bar i { display:block; width:0; height:100%; background:var(--accent); transition:width .15s ease; }
+  .upload-row[data-state=fail] .upload-note, .upload-row[data-state=fail] .upload-name { color:var(--danger); }
   .file-list { display:grid; gap:8px; margin-top:13px; }
   .file { display:flex; align-items:center; gap:12px; padding:10px 12px; background:var(--panel); border:1px solid var(--line); border-radius:14px; color:inherit; text-decoration:none; -webkit-tap-highlight-color:transparent; transition:transform .15s ease,border-color .15s ease; }
-  .file:active { transform:scale(.985); border-color:#74bb99; }
-  .file:focus-visible { outline:3px solid var(--mint); outline-offset:2px; }
-  .file-thumb { display:grid; place-items:center; flex:0 0 46px; height:46px; overflow:hidden; border-radius:10px; background:#26333a; color:var(--mint); font-size:20px; }
+  .file:active { transform:scale(.985); border-color:var(--accent-line); }
+  .file:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  .file-thumb { display:grid; place-items:center; flex:0 0 46px; height:46px; overflow:hidden; border-radius:10px; background:var(--chip); color:var(--accent); font-size:20px; }
   .file-thumb img { width:100%; height:100%; object-fit:cover; }
-  .file-thumb { position:relative; background:#fff; }
+  .file-thumb { position:relative; }
+  .file-thumb:has(iframe) { background:#fff; }
   .file-thumb iframe { position:absolute; left:0; top:0; width:184px; height:184px; border:0; transform:scale(.25); transform-origin:0 0; pointer-events:none; }
   .file-copy { display:grid; flex:1; gap:3px; min-width:0; }
   .file-copy strong { overflow:hidden; font-size:14px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
   .file-copy small { color:var(--muted); font-size:11px; }
-  .file-action { color:var(--mint); font-size:12px; font-weight:650; }
+  .file-action { color:var(--accent); font-size:12px; font-weight:650; }
   .project-pick { display:flex; align-items:center; gap:8px; margin:0 2px 12px; color:var(--muted); font-size:13px; }
   .project-pick select { flex:1; min-height:40px; padding:0 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font:inherit; font-size:14px; }
-  .project-pick select:focus-visible { outline:2px solid var(--mint); outline-offset:1px; }
+  .project-pick select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   .drop-group + .drop-group { margin-top:14px; }
-  .drop-group h2 { margin:0 4px 8px; color:#bbc7c8; font-size:13px; font-weight:650; }
+  .drop-group h2 { margin:0 4px 8px; color:var(--soft); font-size:13px; font-weight:650; }
 """
 
 DROP_JS = """
@@ -2078,7 +2451,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
             f'<div class="file-list">{"".join(rows)}</div></section>'
             for project, rows in groups.items()
         )
-        or '<div class="empty"><span>▤</span><h2>Nothing dropped yet</h2><p>Files you send land here for every device.</p></div>'
+        or '<div class="empty"><span>▤</span><h2>Nothing dropped yet</h2><p>Files you send from any device show up here.</p></div>'
     )
     options = "".join(
         f'<option value="{html.escape(name)}">{html.escape(name)}</option>'
@@ -2086,11 +2459,10 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
     )
     root = html.escape(pretty_path(ROOT))
     body = f"""
-  <header><div class="brand"><span class="brand-mark" aria-hidden="true">⇪</span> Drop</div>
-    <h1>Drop a file.<br>Grab it anywhere.</h1><p class="intro">Files land in {root}/&lt;project&gt;/drop on this machine; the Share menu uses {html.escape(DEFAULT_PROJECT)}.</p></header>
+  <header><h1>Drop</h1><p class="intro">Saved in {root}/&lt;project&gt;/drop. The Share menu saves to {html.escape(DEFAULT_PROJECT)}.</p></header>
   <div class="shelf-label"><span>Shared files</span><span class="shelf-actions"><span class="count">{len(files)} {"file" if len(files) == 1 else "files"}</span>{wipe}</span></div>
   <label class="project-pick">Save to <select id="project">{options}<option value="__new">New project…</option></select></label>
-  <section class="drop-zone" id="zone">
+  <section class="drop-zone{" compact" if files else ""}" id="zone">
     <input id="file-input" type="file" multiple hidden>
     <button class="drop-button" id="pick" type="button">
       <span class="drop-icon" aria-hidden="true">⇪</span>
@@ -2140,8 +2512,7 @@ def artifacts_page(artifacts: list[dict[str, str]], tab_counts: Counts) -> bytes
     else:
         empty = ""
     body = f"""
-  <header><div class="brand"><span class="brand-mark" aria-hidden="true">↓</span> Artifacts</div>
-    <h1>Fresh builds.<br>One tap away.</h1><p class="intro">Files your projects built on this machine, ready to grab on your phone.</p></header>
+  <header><h1>Artifacts</h1><p class="intro">Builds from the projects in your config. Tap one to download it.</p></header>
   <div class="shelf-label"><span>Latest first</span><span class="count">{len(artifacts)} {"file" if len(artifacts) == 1 else "files"}</span></div>
   {"".join(sections)}{empty}
   <footer>Android may ask you to allow installs from your browser the first time you open an APK.</footer>"""
@@ -2193,9 +2564,8 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
         ]
     )
     body = f"""
-  <header><div class="brand"><span class="brand-mark" aria-hidden="true">▣</span> Screenshots</div>
-    <h1>Every capture,<br>newest first.</h1><p class="intro">Everything under {html.escape(pretty_path(ROOT))}/*/shots. Tap one to flip through them.</p></header>
-  <div class="shelf-label"><span>Your gallery</span><span class="shelf-actions"><span class="count">{len(shots)} {"shot" if len(shots) == 1 else "shots"}</span>{wipe}</span></div>
+  <header><h1>Screenshots</h1><p class="intro">From {html.escape(pretty_path(ROOT))}/*/shots. Tap one to open it.</p></header>
+  <div class="shelf-label"><span>Newest first</span><span class="shelf-actions"><span class="count">{len(shots)} {"shot" if len(shots) == 1 else "shots"}</span>{wipe}</span></div>
   {"".join(sections)}{empty}
   <div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
     <div class="viewer-bar"><span class="counter" id="counter"></span>
@@ -2530,7 +2900,7 @@ ANNOTATE_JS = """
       image.src = button.dataset.url;
       await image.decode();
       const editor = new window.markerjsUI.AnnotationEditor();
-      editor.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      editor.theme = document.documentElement.dataset.mode === 'dark' ? 'dark' : 'light';
       editor.targetImage = image;
       // Natural size keeps an overwrite from downscaling the shot to whatever the phone screen showed.
       editor.settings.rendererSettings.naturalSize = true;
@@ -2616,62 +2986,62 @@ def layout(
         current = ' aria-current="page"' if name == active else ""
         return (
             f'<a class="tab" href="{href}"{current}><span class="tab-icon" aria-hidden="true">{icon}</span>'
-            f'{label}<span class="tab-count">{count}</span></a>'
+            f'{label}<span class="tab-count">{count or ""}</span></a>'
         )
 
     navigation = "".join(
         (
-            tab("artifacts", "/", "Artifacts", tab_counts["artifacts"], "↓"),
             tab("shots", "/shots", "Screenshots", tab_counts["shots"], "▣"),
-            tab("clip", "/clip", "Clipboard", tab_counts["clip"], "⎘"),
             tab("drop", "/drop", "Drop", tab_counts["drop"], "⇪"),
+            tab("clip", "/clip", "Clipboard", 0, "⎘"),
+            tab("artifacts", "/", "Artifacts", tab_counts["artifacts"], "↓"),
         )
     )
 
     document = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#111820"><title>{title}</title>
+{theme_script()}
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" href="/icon-192.png">
 <style>
-  :root {{ color-scheme: dark; --ink:#eff5f3; --muted:#9aa9ad; --base:#111820; --panel:#19232b; --line:#2b3940; --mint:#a5f2d1; --mint-ink:#10251d; }}
+{theme_app_css()}
   * {{ box-sizing:border-box }}
   body {{ margin:0; background:var(--base); color:var(--ink); font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,sans-serif; -webkit-font-smoothing:antialiased; }}
-  .wrap {{ width:min(100% - 36px, 620px); margin:0 auto; padding:32px 0 max(42px, env(safe-area-inset-bottom)); }}
-  header {{ padding:16px 2px 30px; }}
-  .brand {{ display:flex; align-items:center; gap:11px; color:var(--mint); font-weight:700; font-size:14px; letter-spacing:.01em; }}
-  .brand-mark {{ display:grid; place-items:center; width:32px; height:32px; border:1px solid #5c9d80; border-radius:11px 11px 11px 4px; font-size:18px; }}
-  h1 {{ font-size:clamp(36px, 10vw, 52px); letter-spacing:-.055em; line-height:1.02; margin:25px 0 10px; font-weight:730; }}
-  .intro {{ color:var(--muted); margin:0; font-size:16px; line-height:1.55; max-width:390px; }}
-  .shelf-label {{ display:flex; align-items:center; justify-content:space-between; margin:9px 2px 12px; color:#bbc7c8; font-size:13px; }}
+  .wrap {{ position:relative; width:min(100% - 36px, 620px); margin:0 auto; padding:18px 0 calc(90px + env(safe-area-inset-bottom)); }}
+  header {{ padding:4px 2px 18px; }}
+  h1 {{ display:flex; align-items:center; gap:10px; padding-right:48px; font-size:26px; letter-spacing:-.03em; line-height:1.1; margin:0 0 6px; font-weight:720; }}
+  .intro {{ color:var(--muted); margin:0; font-size:14px; line-height:1.5; }}
+  .shelf-label {{ display:flex; align-items:center; justify-content:space-between; margin:9px 2px 12px; color:var(--soft); font-size:13px; }}
   .count {{ color:var(--muted); font-variant-numeric:tabular-nums; }}
   .app-section {{ background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:17px 14px 14px; margin-bottom:13px; }}
   .section-heading {{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 3px 12px; }}
   h2 {{ margin:0; font-size:18px; letter-spacing:-.025em; }}
-  .checkout {{ color:#b8c4c5; background:#26333a; border-radius:20px; padding:5px 9px; font-size:11px; max-width:58%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  .checkout {{ color:var(--soft); background:var(--chip); border-radius:20px; padding:5px 9px; font-size:11px; max-width:58%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
   .downloads {{ display:grid; gap:8px; }}
-  .download {{ display:flex; align-items:center; gap:12px; min-height:72px; padding:11px 12px; border:1px solid #34434a; border-radius:14px; color:inherit; text-decoration:none; background:#1d2931; -webkit-tap-highlight-color:transparent; transition:background .15s ease,border-color .15s ease,transform .15s ease; }}
-  .download:active {{ transform:scale(.985); background:#273a3a; border-color:#74bb99; }}
-  .download:focus-visible {{ outline:3px solid var(--mint); outline-offset:2px; }}
-  .button-icon {{ display:grid; place-items:center; flex:0 0 40px; height:40px; border-radius:12px; background:var(--mint); color:var(--mint-ink); font-size:23px; font-weight:700; }}
+  .download {{ display:flex; align-items:center; gap:12px; min-height:72px; padding:11px 12px; border:1px solid var(--edge); border-radius:14px; color:inherit; text-decoration:none; background:var(--field); -webkit-tap-highlight-color:transparent; transition:background .15s ease,border-color .15s ease,transform .15s ease; }}
+  .download:active {{ transform:scale(.985); background:color-mix(in srgb, var(--accent) 12%, var(--field)); border-color:var(--accent-line); }}
+  .download:focus-visible {{ outline:3px solid var(--accent); outline-offset:2px; }}
+  .button-icon {{ display:grid; place-items:center; flex:0 0 40px; height:40px; border-radius:12px; background:var(--accent); color:var(--accent-ink); font-size:23px; font-weight:700; }}
   .button-copy {{ min-width:0; flex:1; display:grid; gap:4px; }}
   .button-copy strong {{ font-size:15px; font-weight:650; }}
   .button-copy small {{ display:flex; align-items:baseline; min-width:0; color:var(--muted); font-size:11px; }}
   .button-copy .apk-path {{ flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
   .button-copy .apk-meta {{ flex:0 0 auto; white-space:nowrap; }}
   .button-copy i {{ font-style:normal; padding:0 3px; flex:0 0 auto; }}
-  .button-action {{ color:var(--mint); font-size:13px; font-weight:650; padding:0 1px; }}
-  .empty {{ text-align:center; padding:56px 20px; background:var(--panel); border:1px dashed #405057; border-radius:20px; }}
-  .empty>span {{ color:var(--mint); font-size:30px; }} .empty h2 {{ margin:10px 0 7px; }} .empty p {{ margin:0; color:var(--muted); font-size:14px; }}
-  footer {{ color:#849399; font-size:12px; line-height:1.5; padding:14px 3px; }}
-  @media (min-width:600px) {{ .wrap {{ padding-top:56px }} .app-section {{ padding:19px }} }}
+  .button-action {{ color:var(--accent); font-size:13px; font-weight:650; padding:0 1px; }}
+  .empty {{ text-align:center; padding:56px 20px; background:var(--panel); border:1px dashed var(--dash); border-radius:20px; }}
+  .empty>span {{ color:var(--accent); font-size:30px; }} .empty h2 {{ margin:10px 0 7px; }} .empty p {{ margin:0; color:var(--muted); font-size:14px; }}
+  footer {{ color:var(--faint); font-size:12px; line-height:1.5; padding:14px 3px; }}
+  @media (min-width:600px) {{ .wrap {{ padding-top:40px }} .app-section {{ padding:19px }} }}
   @media (prefers-reduced-motion:reduce) {{ *,*::before,*::after {{ transition:none!important; scroll-behavior:auto!important }} }}
 {EXTRA_CSS}
 {extra_css}
 </style></head><body><main class="wrap{" wide" if wide else ""}">
   <nav class="tabs" aria-label="Sections">{navigation}</nav>
+  {theme_picker()}
   {body}
-</main></body></html>"""
+</main><script>{THEME_PICKER_JS}</script></body></html>"""
     return document.encode("utf-8")
 
 
@@ -3409,6 +3779,7 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "artifacts": list,
     "github_token": str,
     "github_token_pass": str,
+    "theme": str,
 }
 ARTIFACT_TYPES: dict[str, type] = {
     "name": str,
@@ -3500,6 +3871,7 @@ def parse_artifacts(where: str, entries: list[object]) -> tuple[ArtifactRule, ..
 
 def main() -> None:
     global ARTIFACT_RULES, DEFAULT_PROJECT, ROOT, GITHUB_TOKEN, GITHUB_TOKEN_PASS
+    global THEME_DEFAULT
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -3569,6 +3941,11 @@ def main() -> None:
     if not valid_project(DEFAULT_PROJECT):
         raise SystemExit(
             f"sharei: default project {DEFAULT_PROJECT!r} must match {PROJECT_NAME.pattern}"
+        )
+    THEME_DEFAULT = str(config.get("theme", THEME_DEFAULT))
+    if THEME_DEFAULT != "auto" and THEME_DEFAULT not in THEMES:
+        raise SystemExit(
+            f"sharei: theme {THEME_DEFAULT!r} must be one of auto, {', '.join(THEMES)}"
         )
     ARTIFACT_RULES = parse_artifacts(str(path), config.get("artifacts", []))  # type: ignore[arg-type]
     clip_ttl = setting("clip_ttl", None)
