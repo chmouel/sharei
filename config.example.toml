@@ -1,0 +1,48 @@
+# Copy to ~/.config/sharei/config.toml (or point --config / $SHAREI_CONFIG at it).
+# Every key is optional; command-line flags win over this file.
+
+# Only this machine can reach sharei by default. "0.0.0.0" opens it to your network,
+# where anyone can use it without a password; prefer a reverse proxy with a login.
+# host = "127.0.0.1"
+# port = 8000
+
+# Screenshots go in <root>/<project>/shots, dropped files in <root>/<project>/drop.
+# The systemd unit can only write under ~/tmp; widen ReadWritePaths if you move it.
+# root = "~/tmp/sharei"
+
+# Project for uploads without ?project= and for files from the Android Share menu.
+# default_project = "inbox"
+
+# Seconds before the clipboard clears, 0 keeps it. Without this the saved setting is kept.
+# clip_ttl = 600
+
+# Extra Host headers and browser Origins accepted (added to the built-in local ones).
+# allow_hosts = ["share.example.com"]
+# allow_origins = ["https://share.example.com"]
+
+# Dropped .md files open at /md/<project>/<name>, rendered by GitHub's markdown API, so their
+# text is sent to api.github.com. A token only lifts the rate limit from 60 to 5000 renders
+# an hour; it needs no scopes (a fine-grained token with public read-only access and no
+# permissions is enough). $GITHUB_TOKEN wins over github_token, which wins over the pass entry
+# (first line, read on first render; --github-token-pass on the command line).
+# github_token = "github_pat_..."
+# github_token_pass = "github/sharei-markdown"
+
+# Build artifacts listed on the Artifacts page. Each entry is a repo (root) and the
+# files to offer from it (patterns, relative to the repo; ** matches any number of
+# folders). Git worktrees of a repo are scanned too. Hidden folders, node_modules and
+# symlinks pointing outside the repo are ignored.
+#
+# A single repo. name defaults to the folder name, and project (also the Drop
+# project) to the lowercased folder name.
+# [[artifacts]]
+# name = "Liseur"
+# project = "liseur"
+# root = "~/src/liseur"
+# patterns = ["app/build/outputs/apk/**/*.apk"]
+#
+# Every git repo matching a glob. name and project cannot be set here; each repo
+# uses its folder name. An entry for a single repo above wins over this one.
+# [[artifacts]]
+# root = "~/src/*"
+# patterns = ["**/build/outputs/apk/**/*.apk", "dist/*.whl", "target/release/*.tar.gz"]

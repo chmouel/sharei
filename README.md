@@ -1,0 +1,141 @@
+# sharei
+
+sharei is a small web page that runs on your computer and that you open on
+your phone. Use it to grab the app you just built, look at your screenshots,
+pass text back and forth or drop a file from one device to the other, without
+cables, a cloud drive or emailing yourself.
+
+![sharei on a phone](docs/screenshots/hero.png)
+
+## What you get
+
+The page has four tabs.
+
+Artifacts lists the files your projects build, newest first: Android APKs,
+Python wheels, release archives, whatever you point it at. Tap one on your
+phone to download it, or to install it if it is an APK.
+
+Screenshots shows the screenshots you saved, grouped by project. You can swipe
+through them, draw arrows and notes on them, and set them to disappear after a
+while.
+
+Clipboard is a single shared note. Paste on one device and copy on the other.
+It clears itself after ten minutes unless you change that.
+
+Drop holds files you send either way. Markdown opens formatted the way GitHub
+shows it, code opens with colours and line numbers, and pictures open full
+screen. Any file there can be set to expire too.
+
+| Artifacts | Screenshots | Clipboard |
+|---|---|---|
+| ![Artifacts](docs/screenshots/artifacts.png) | ![Screenshots](docs/screenshots/shots.png) | ![Clipboard](docs/screenshots/clip.png) |
+
+| Drop | Markdown | Code |
+|---|---|---|
+| ![Drop](docs/screenshots/drop.png) | ![Markdown](docs/screenshots/markdown.png) | ![Code](docs/screenshots/code.png) |
+
+If you add sharei to your Android home screen, it shows up in the Share menu,
+so you can send a link, some text or a photo from any app to your computer.
+
+## Install
+
+You need Python 3.12 or newer and [uv](https://docs.astral.sh/uv/).
+
+```sh
+uv tool install git+https://github.com/chmouel/sharei
+sharei
+```
+
+Open <http://localhost:8000> to check that it runs. For small thumbnails of
+big screenshots, install `'sharei[thumbnails] @ git+https://github.com/chmouel/sharei'`
+instead.
+
+To start it with your session on Linux, copy
+[`contrib/sharei.service`](contrib/sharei.service) to
+`~/.config/systemd/user/` and run:
+
+```sh
+systemctl --user enable --now sharei
+```
+
+## Open it on your phone
+
+sharei has no password of its own, and by default only your computer can reach
+it. To use it from your phone, put it behind a reverse proxy that asks for a
+password, such as Caddy or nginx with basic auth. Then tell sharei the address
+you use, in `~/.config/sharei/config.toml`:
+
+```toml
+allow_hosts = ["share.example.com"]
+allow_origins = ["https://share.example.com"]
+```
+
+A minimal Caddy setup:
+
+```caddy
+share.example.com {
+    basic_auth {
+        me <hash from `caddy hash-password`>
+    }
+    reverse_proxy localhost:8000
+}
+```
+
+On a home network you fully trust, you can set `host = "0.0.0.0"` instead and
+open `http://<your computer's address>:8000`. Anyone else on that network can
+then use sharei too. [SECURITY.md](SECURITY.md) has more on this.
+
+## Tell it where your builds are
+
+Add an `[[artifacts]]` entry per project to the config, with the folder and the
+files to show:
+
+```toml
+[[artifacts]]
+name = "My app"
+root = "~/src/my-app"
+patterns = ["app/build/outputs/apk/**/*.apk"]
+```
+
+`**` stands for any number of folders. To cover every project in a folder at
+once, give a wildcard as the root:
+
+```toml
+[[artifacts]]
+root = "~/src/*"
+patterns = ["dist/*.whl", "target/release/*.tar.gz"]
+```
+
+Precise patterns like `dist/*.whl` keep the page fast. A pattern starting with
+`**` has to look through the whole project. sharei also picks up builds in your
+git worktrees. [`config.example.toml`](config.example.toml) lists every other
+setting.
+
+## Share from the terminal
+
+`sharec` comes with sharei and sends things to it:
+
+```sh
+sharec notes.md          # formatted markdown, with the pictures it uses
+sharec main.go           # code, with colours and line numbers
+sharec -s                # take a screenshot and send it
+sharec -c                # send the clipboard text as a markdown note
+sharec                   # pick from a menu
+```
+
+It prints the link to open on your phone. Set `SHAREI_PUBLIC_URL` to your
+public address (for example `https://share.example.com`) so those links work
+away from home. The menu needs [gum](https://github.com/charmbracelet/gum). Zsh
+completion lives in [`contrib/_sharec`](contrib/_sharec).
+
+## Privacy
+
+Everything stays on your computer except markdown: sharei asks GitHub to format
+it, the same way github.com shows a README. Keep that in mind before opening a
+private document in the markdown view. A GitHub token in the config raises
+GitHub's hourly limit and needs no permissions.
+
+## Licence
+
+Apache 2.0. sharei bundles github-markdown-css, mermaid, highlight.js and
+marker.js, with their licences next to them in `src/sharei/vendor/`.

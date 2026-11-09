@@ -1,0 +1,178 @@
+# sharei
+
+A small self-hosted service to move things between a computer and a phone:
+build artifacts from local repos, screenshots, dropped files, rendered
+markdown, highlighted source and a throwaway clipboard. It has no login of its
+own; it binds to 127.0.0.1 by default and is meant to sit behind a reverse
+proxy with authentication (see SECURITY.md).
+
+## Files
+
+- `src/sharei/server.py`: the server, one Python file (stdlib `http.server`,
+  Pillow optional for thumbnails). It holds all the HTML, CSS and JS as inline
+  strings. There is no build step and no frontend toolchain. Entry point
+  `sharei` (`main`).
+- `src/sharei/client.py`: the CLI uploader, entry point `sharec` (`run`). It
+  shares a screenshot, the clipboard, a markdown file with its local images,
+  or any file. A FILE ending in `.md` or `.markdown` is shared as markdown,
+  anything else as is. With no arguments it shows a `gum` menu.
+- `src/sharei/vendor/`: third-party assets served at `/vendor/`:
+  github-markdown-css, mermaid, markerjs, highlight.js (common languages
+  bundle, GitHub light/dark themes). Keep their licence files next to them;
+  they ship in the wheel. marker.js is linkware: its credit line under the
+  editor must stay visible.
+- `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user
+  unit, expecting `~/.local/bin/sharei` from `uv tool install`.
+- `config.example.toml`: every setting, with comments. Keep it in sync when you
+  add a setting.
+- `tests/`: pytest. `conftest.py` has a `live_server` fixture that runs the
+  real handler on a random port against a temporary root.
+- `README.md` is for users, in plain language with screenshots from
+  `docs/screenshots/`. Keep internals out of it; they belong here.
+
+For development, `uv tool install -e .` makes edits live after a restart of
+the service.
+
+## Data layout
+
+- Root: `~/tmp/sharei` (`root` setting or `--root`).
+  - `<root>/<project>/shots/**`: screenshots
+  - `<root>/<project>/drop/*`: dropped files
+  - `<root>/.expiry.json`: expiries set from the UI, mapping a path relative
+    to the root to an epoch
+- Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
+  project is `inbox`.
+- Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`,
+  `thumbs/` and the rendered `markdown/`.
+- Settings: `~/.config/sharei/config.toml`, or `$SHAREI_CONFIG`, or
+  `--config`. Command-line flags take priority over the file.
+- The systemd unit can only write under `~/tmp`. Don't move the root elsewhere
+  without widening `ReadWritePaths`.
+
+## Routes
+
+Pages:
+
+- `/`: Artifacts, from the `[[artifacts]]` config entries
+- `/shots`: screenshots
+- `/clip`: clipboard
+- `/drop`: dropped files
+- `/md/<project>/<name>`: a dropped markdown file, rendered
+- `/view/<project>/<name>`: a dropped text file with line numbers and
+  highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
+  has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
+  skipped above 512 KB. Anything else returns 404 and downloads from `/poub`.
+- `/clip/md`: the clipboard, rendered as markdown
+
+Files:
+
+- `/shot/<key>`, `/thumb/<key>`
+- `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
+- `/download/...` for APKs
+- `/vendor/...`
+
+Data:
+
+- `/state`: stamps for the live reload
+- `/recent`: newest items as JSON, used by the skill
+- `/clip/raw`, `/clip/state`
+
+POST:
+
+- `/upload?project=&name=`: raw body. Collisions are renamed `name-1.ext`.
+  Returns `{project, name, size, url, view?}`.
+- `/share`: Android share target
+- `/annotate`
+- `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
+- `/clip`, `/clip/clear`, `/clip/ttl`
+- `/shots/delete/<key>`, `/shots/delete-all`
+- `/poub/delete/<project>/<name>`, `/poub/delete-all`
+
+"poub" is the internal name for the drop folder.
+
+## Security rules
+
+These exist on purpose. Keep them when changing or adding code.
+
+- Every request goes through `request_allowed()`. It checks the Host header
+  (local names, non-global IPs and `allow_hosts`) and, for POSTs, the Origin
+  (same origin or `allow_origins`). New routes must stay inside `do_GET` or
+  `do_POST` after that check.
+- Resolve user-supplied paths only through `shot_path()` / `poub_path()`, or
+  the same pattern: `resolve()`, then `relative_to(ROOT)`, plus
+  `under_root()`. Hidden names (leading `.`) are never listed or served.
+- Expired files must return None from those helpers, so every route returns
+  404 before the sweeper deletes them. A delete or a publish under the same
+  name must call `expiry_forget()` so a new file never inherits an old expiry.
+- Uploads are written to `.part-*` and published with a hard link (no
+  overwrite). The limit is `UPLOAD_MAX_BYTES`.
+- Artifacts: `/download/<key>` only serves a path found by the last scan
+  (`available_artifacts()`), never a path from the request. The scanner
+  (`artifact_files`) keeps only regular files whose resolved path stays
+  inside the checkout, skips hidden parts, `node_modules`, `__pycache__` and
+  `venv`, caps visits per walk (`ARTIFACT_MAX_VISITS`) and files per repo
+  (`ARTIFACT_MAX_FILES`). Config patterns must be relative with no `.`/`..`
+  parts. Scans run in a background thread and are cached
+  (`ARTIFACT_CACHE_SECONDS`); a page waits at most `ARTIFACT_FIRST_WAIT`.
+  A glob root only picks git repos whose `.git` is a folder, so linked
+  worktrees appear once, under their main checkout.
+- `/md` pages use a nonce-based CSP, and GitHub's rendered HTML is treated as
+  untrusted. Don't add inline handlers or unnonced scripts there. `/view`
+  pages use a nonce-only `script-src` (no `'self'`, so an uploaded `.js` can
+  never run) and the file text is HTML-escaped on the server.
+- Markdown text is sent to api.github.com. The token is optional and needs no
+  scopes. Its order of precedence is `$GITHUB_TOKEN`, then `github_token`,
+  then `github_token_pass` (a `pass` entry). Never log or print it.
+- `sharec` checks a markdown file's local images before uploading them:
+  - inside the git toplevel, or the file's directory, checked after realpath
+  - no hidden path parts and no symlink escapes
+  - an image extension and matching magic bytes
+  - size limits per image and in total
+  - a confirmation prompt
+  Loosening any of these needs a good reason.
+
+## Conventions
+
+- Python 3.12+, stdlib first. Pillow is the only optional import, loaded
+  lazily. Don't add runtime dependencies.
+- Format and lint with `ruff format` and `ruff check`. `subprocess.run` needs
+  an explicit `check=`.
+- The UI is mobile first, in a dark theme. Reuse the existing CSS classes and
+  patterns, such as `.clip-ttl`-style pills and absolutely positioned row
+  tools. Pages reload themselves when the `/state` stamp changes.
+  `window.liveBusy()` pauses that while a viewer or menu is open.
+- `sharec` uses `gum` for menus and prompts, and `yazi` when present to
+  pick files. Its environment variables:
+  - `SHAREI_URL`: upload target, default `http://localhost:8000`
+  - `SHAREI_PUBLIC_URL`: base for printed links, default `SHAREI_URL`
+  - `SHAREI_PROJECT`: default project
+
+## Testing
+
+Run `uv run pytest`, `uv run ruff format .` and `uv run ruff check .`; CI runs
+the same on Python 3.12 to 3.14. Add tests for new behaviour, preferably
+through the `live_server` fixture.
+
+For manual checks use a throwaway instance, never a live one:
+
+```sh
+XDG_CACHE_HOME=/tmp/x/cache XDG_CONFIG_HOME=/tmp/x/cfg \
+  uv run sharei --port 8791 --root /tmp/x/root
+```
+
+Exercise the routes with `curl`, including the 400/403/404 cases. For UI
+changes, load the pages in headless Chrome:
+
+```sh
+google-chrome-stable --headless=new --window-size=430,900 --screenshot=out.png URL
+```
+
+If you need clicks, drive Chrome over CDP. Check the console for errors and
+CSP violations.
+
+For `sharec`, point `SHAREI_URL` at the throwaway server.
+
+## Running
+
+The service is `systemctl --user restart sharei`. Restart only when asked,
+since it drops the in-memory state of open pages.

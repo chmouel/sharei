@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sharei"
+version = "0.1.0"
+description = "Move builds, screenshots, files and text between your computer and your phone"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "src/sharei/vendor/LICENSE.*"]
+requires-python = ">=3.12"
+authors = [{ name = "Chmouel Boudjnah", email = "chmouel@chmouel.com" }]
+keywords = ["share", "phone", "screenshots", "apk", "markdown", "self-hosted"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+thumbnails = ["Pillow>=10"]
+
+[project.urls]
+Homepage = "https://github.com/chmouel/sharei"
+Issues = "https://github.com/chmouel/sharei/issues"
+Security = "https://github.com/chmouel/sharei/security/policy"
+
+[project.scripts]
+sharei = "sharei.server:main"
+sharec = "sharei.client:run"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "contrib", "tests", "config.example.toml", "README.md", "SECURITY.md", "LICENSE"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+extend-select = ["B", "I", "UP", "PLW1510"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

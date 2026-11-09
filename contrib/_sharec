@@ -1,0 +1,28 @@
+#compdef sharec
+
+__sharei_shot_projects() {
+    local root=${SHAREI_ROOT:-$HOME/tmp/sharei}
+    local -a projects
+    projects=( $root/*(N/:t) )
+    _wanted projects expl 'sharei project' compadd -a projects
+}
+
+__sharei_shot_files() {
+    if (( $words[(I)-m|--markdown] )); then
+        _files -g '*.(#i)(md|markdown|txt)(-.)'
+    else
+        _files
+    fi
+}
+
+_arguments -s -S \
+    '(- *)'{-h,--help}'[show help]' \
+    '(-s --screenshot -c --clipboard -m --markdown -f --file *)'{-s,--screenshot}'[capture the screen and upload it]' \
+    '(-s --screenshot -c --clipboard -m --markdown -f --file *)'{-c,--clipboard}'[share the clipboard text as markdown]' \
+    '(-s --screenshot -c --clipboard -m --markdown -f --file)'{-m,--markdown}'[share FILE as markdown whatever its name]' \
+    '(-s --screenshot -c --clipboard -m --markdown -f --file)'{-f,--file}'[upload FILE as is, even a markdown file]' \
+    '(-n --name)'{-n+,--name=}'[name to upload under]:name: ' \
+    '(-p --project)'{-p+,--project=}'[sharei project]:project:__sharei_shot_projects' \
+    '1:file to share (.md/.markdown is shown as markdown, text files highlighted):__sharei_shot_files'
+
+# vim: ft=zsh

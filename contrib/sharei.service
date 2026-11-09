@@ -1,0 +1,27 @@
+[Unit]
+Description=sharei - share builds, screenshots, files and text with your phone
+Documentation=https://github.com/chmouel/sharei
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=500
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+CacheDirectory=sharei
+# Settings come from ~/.config/sharei/config.toml. Adjust the path if sharei is
+# not installed with `uv tool install`.
+ExecStart=%h/.local/bin/desktop/sharei
+Restart=on-failure
+RestartSec=5s
+# Reads your repos, writes only under ~/tmp (the default root ~/tmp/sharei).
+# Widen ReadWritePaths if you move the root elsewhere.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%t %h/tmp
+
+[Install]
+WantedBy=default.target
