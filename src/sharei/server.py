@@ -17,6 +17,8 @@ import functools
 import glob
 import hashlib
 import html
+import http.client
+import http.cookies
 import importlib
 import io
 import ipaddress
@@ -38,7 +40,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import NamedTuple, TypedDict
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
+
+from sharei import push
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 HTML_SUFFIXES = {".html", ".htm"}
@@ -222,6 +226,7 @@ def cache_root() -> Path:
 
 THUMBS = cache_root() / "thumbs"
 CLIP_FILE = cache_root() / "clip.json"
+PUSH_DIR = cache_root() / "push"
 MARKDOWN_CACHE = cache_root() / "markdown"
 
 # Markdown is rendered by GitHub's API so it looks exactly like on github.com. A token only raises the
@@ -604,13 +609,18 @@ def theme_picker() -> str:
             f'style="background:{palette["base"]};border-color:{palette["edge"]};color:{palette["accent"]}"></span>'
             f"{html.escape(label)}</button>"
         )
+    push_item = (
+        '<hr hidden><button type="button" data-push hidden><span>Notifications<small></small></span></button>'
+        if PUSH_ENABLED
+        else ""
+    )
     return (
         '<div class="theme-picker"><button class="theme-button" id="theme-button" type="button" '
         'aria-label="Theme" title="Theme" aria-haspopup="true" aria-expanded="false">'
         '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.5" '
         'fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" '
         'fill="currentColor"/></svg></button>'
-        f'<div class="theme-menu" id="theme-menu" hidden>{"".join(items)}</div></div>'
+        f'<div class="theme-menu" id="theme-menu" hidden>{"".join(items)}{push_item}</div></div>'
     )
 
 
@@ -635,6 +645,10 @@ EXTRA_CSS = """
   .theme-menu button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
   .theme-menu button[aria-pressed=true] { background:color-mix(in srgb, var(--accent) 16%, var(--panel)); }
   .theme-menu button[aria-pressed=true]::after { content:"✓"; margin-left:auto; color:var(--accent); }
+  .theme-menu hr { width:100%; margin:4px 0; border:0; border-top:1px solid var(--line); }
+  .theme-menu [data-push] span { display:grid; gap:2px; }
+  .theme-menu [data-push] small { color:var(--muted); font-size:11.5px; font-weight:500; }
+  .theme-menu [data-push] small:empty { display:none; }
   .swatch { position:relative; flex:0 0 22px; height:22px; border:1px solid; border-radius:50%; }
   .swatch::after { content:""; position:absolute; inset:6px; border-radius:50%; background:currentColor; }
   .swatch.auto { border-color:#8a9590; background:linear-gradient(135deg, #f3f5f4 50%, #111820 50%); color:#0f7b56; }
@@ -3601,8 +3615,305 @@ def layout(
   <nav class="tabs" aria-label="Sections">{navigation}</nav>
   {theme_picker()}
   {body}
-</main><script>{THEME_PICKER_JS}</script>{qr_script()}</body></html>"""
+</main><script>{THEME_PICKER_JS}{PUSH_JS if PUSH_ENABLED else ""}</script>{qr_script()}</body></html>"""
     return document.encode("utf-8")
+
+
+# Web Push. Enabled when the optional cryptography package is installed (the push extra);
+# subscriptions and the VAPID key live in PUSH_DIR.
+PUSH_ENABLED = False
+PUSH_SUBJECT = "mailto:sharei@localhost"
+PUSH_SUBS_MAX = 20
+# Events of one kind arriving within this many seconds go out as a single notification.
+PUSH_DELAY = 2.0
+PUSH_SHOT_POLL = 10.0
+PUSH_COOKIE = "sharei-push"
+PUSH_ID = re.compile(r"[0-9a-f]{24}")
+PUSH_PAGES = {"drop": "/drop", "shots": "/shots", "clip": "/clip"}
+PUSH_LOCK = threading.Lock()
+PUSH_WAKE = threading.Condition(PUSH_LOCK)
+PUSH_KEY: list[object] = []
+
+
+class PushNote(TypedDict):
+    title: str
+    many: str
+    body: str
+    url: str
+    count: int
+    skip: str | None
+    due: float
+
+
+PUSH_PENDING: dict[str, PushNote] = {}
+
+
+def push_id(endpoint: str) -> str:
+    return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()[:24]
+
+
+def push_subs_locked() -> dict[str, dict]:
+    try:
+        subs = json.loads((PUSH_DIR / "subs.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return subs if isinstance(subs, dict) else {}
+
+
+def push_save_locked(subs: dict[str, dict]) -> None:
+    target = PUSH_DIR / "subs.json"
+    temporary = PUSH_DIR / f".subs-{secrets.token_hex(4)}.part"
+    try:
+        PUSH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(subs, stream)
+        os.replace(temporary, target)
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        print(f"cannot save push subscriptions: {error}")
+
+
+def push_key():
+    with PUSH_LOCK:
+        if not PUSH_KEY:
+            PUSH_KEY.append(push.load_key(PUSH_DIR / "vapid.pem"))
+        return PUSH_KEY[0]
+
+
+def push_subscribe(data: object) -> str | None:
+    """Store a browser's PushSubscription JSON; returns its id, or None if invalid."""
+    if not isinstance(data, dict) or not isinstance(data.get("keys"), dict):
+        return None
+    endpoint, keys = data.get("endpoint"), data["keys"]
+    p256dh, auth = keys.get("p256dh"), keys.get("auth")
+    if not isinstance(p256dh, str) or not isinstance(auth, str):
+        return None
+    if not push.valid_keys(p256dh, auth) or not push.endpoint_allowed(endpoint):
+        return None
+    sub_id = push_id(endpoint)
+    with PUSH_LOCK:
+        subs = push_subs_locked()
+        subs.pop(sub_id, None)
+        subs[sub_id] = {
+            "endpoint": endpoint,
+            "keys": {"p256dh": p256dh, "auth": auth},
+            "created": time.time(),
+        }
+        while len(subs) > PUSH_SUBS_MAX:
+            subs.pop(next(iter(subs)))
+        push_save_locked(subs)
+    return sub_id
+
+
+def push_forget(sub_ids: list[str]) -> bool:
+    with PUSH_LOCK:
+        subs = push_subs_locked()
+        found = [sub_id for sub_id in sub_ids if subs.pop(sub_id, None) is not None]
+        if found:
+            push_save_locked(subs)
+    return bool(found)
+
+
+def push_notify(
+    tag: str,
+    title: str,
+    many: str,
+    body: str,
+    skip: str | None = None,
+    url: str = "",
+    count: int = 1,
+) -> None:
+    """Queue a notification. `many` is the title once several events of this tag are
+    folded together, with {count} for their number; `skip` is the sender's own id."""
+    if not PUSH_ENABLED:
+        return
+    with PUSH_WAKE:
+        previous = PUSH_PENDING.get(tag)
+        if previous:
+            count += previous["count"]
+            if previous["skip"] != skip:
+                skip = None
+        PUSH_PENDING[tag] = PushNote(
+            title=title,
+            many=many,
+            body=body,
+            url=url or PUSH_PAGES[tag],
+            count=count,
+            skip=skip,
+            due=time.monotonic() + PUSH_DELAY,
+        )
+        PUSH_WAKE.notify()
+
+
+def push_take_due(now: float) -> list[tuple[str, PushNote]]:
+    with PUSH_LOCK:
+        due = [(tag, note) for tag, note in PUSH_PENDING.items() if note["due"] <= now]
+        for tag, _ in due:
+            del PUSH_PENDING[tag]
+    return due
+
+
+def push_payload(tag: str, note: PushNote) -> bytes:
+    several = note["count"] > 1
+    return json.dumps(
+        {
+            "title": note["many"].format(count=note["count"])
+            if several
+            else note["title"],
+            "body": note["body"][:120],
+            "url": PUSH_PAGES[tag] if several else note["url"],
+            "tag": tag,
+        }
+    ).encode("utf-8")
+
+
+def push_deliver(tag: str, note: PushNote) -> None:
+    with PUSH_LOCK:
+        subs = push_subs_locked()
+    if not subs:
+        return
+    key, payload, gone = push_key(), push_payload(tag, note), []
+    for sub_id, sub in subs.items():
+        if sub_id == note["skip"]:
+            continue
+        host = urlsplit(str(sub.get("endpoint"))).hostname
+        try:
+            status = push.send(sub, payload, key, PUSH_SUBJECT, topic=tag)
+        except (OSError, ValueError, KeyError, http.client.HTTPException) as error:
+            print(f"push to {host} failed: {error}")
+            continue
+        if status in (404, 410):
+            gone.append(sub_id)
+        elif status >= 400:
+            print(f"push service {host} answered {status}")
+    if gone:
+        push_forget(gone)
+
+
+def push_worker() -> None:
+    seen = set(shot_files())
+    next_scan = time.monotonic() + PUSH_SHOT_POLL
+    while True:
+        with PUSH_WAKE:
+            wake = min([note["due"] for note in PUSH_PENDING.values()] + [next_scan])
+            delay = wake - time.monotonic()
+            if delay > 0:
+                PUSH_WAKE.wait(delay)
+        now = time.monotonic()
+        try:
+            if now >= next_scan:
+                next_scan = now + PUSH_SHOT_POLL
+                current = set(shot_files())
+                for path in sorted(current - seen):
+                    push_notify(
+                        "shots", "New screenshot", "{count} new screenshots", path.name
+                    )
+                seen = current
+            for tag, note in push_take_due(now):
+                push_deliver(tag, note)
+        except Exception as error:  # noqa: BLE001 - keep the worker alive
+            print(f"push failed: {error}")
+
+
+def clip_preview(text: str) -> str:
+    return " ".join(text.split())[:80]
+
+
+SW_JS = """
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (error) { data = {}; }
+  event.waitUntil(self.registration.showNotification(data.title || 'sharei', {
+    body: data.body || '',
+    tag: data.tag || 'sharei',
+    renotify: true,
+    icon: '/icon-192.png',
+    data: { url: data.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data.url, self.location.origin);
+  if (url.origin !== self.location.origin) return;
+  event.waitUntil((async () => {
+    for (const client of await clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+      if (new URL(client.url).pathname === url.pathname && 'focus' in client) return client.focus();
+    }
+    return clients.openWindow(url.href);
+  })());
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  const options = event.oldSubscription && event.oldSubscription.options;
+  if (!options) return;
+  event.waitUntil(self.registration.pushManager.subscribe(options).then((subscription) =>
+    fetch('/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(subscription.toJSON()),
+    })));
+});
+"""
+
+PUSH_JS = """
+(() => {
+  const item = document.querySelector('#theme-menu [data-push]');
+  if (!item || !('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) return;
+  item.hidden = false;
+  item.previousElementSibling.hidden = false;
+
+  function paint(on, note) {
+    item.setAttribute('aria-pressed', String(on));
+    item.querySelector('small').textContent = note || '';
+  }
+  async function current() {
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    return registration ? registration.pushManager.getSubscription() : null;
+  }
+  async function post(path, body) {
+    const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!response.ok) throw new Error(`${path}: ${response.status}`);
+  }
+  function bytes(text) {
+    const raw = atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - text.length % 4) % 4));
+    return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+  }
+
+  current().then((subscription) => paint(Boolean(subscription))).catch(() => paint(false));
+  if (Notification.permission === 'denied') paint(false, 'Blocked in the browser settings');
+
+  item.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    item.disabled = true;
+    try {
+      const existing = await current();
+      if (existing) {
+        await post('/push/unsubscribe', { endpoint: existing.endpoint }).catch(() => {});
+        await existing.unsubscribe();
+        paint(false);
+        return;
+      }
+      if (await Notification.requestPermission() !== 'granted') {
+        paint(false, 'Blocked in the browser settings');
+        return;
+      }
+      const { key } = await (await fetch('/push/key')).json();
+      await navigator.serviceWorker.register('/sw.js');
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(key) });
+      await post('/push/subscribe', subscription.toJSON());
+      paint(true);
+    } catch (error) {
+      console.error(error);
+      paint(false, 'Could not turn them on');
+    } finally {
+      item.disabled = false;
+    }
+  });
+})();
+"""
 
 
 def local_host_names() -> set[str]:
@@ -3808,6 +4119,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(recent_payload(limit, project))
             return
 
+        if PUSH_ENABLED and parsed.path == "/sw.js":
+            self.send_bytes(
+                SW_JS.encode("utf-8"),
+                "text/javascript; charset=utf-8",
+                {"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
+            )
+            return
+
+        if PUSH_ENABLED and parsed.path == "/push/key":
+            self.send_json({"key": push.b64url(push.public_bytes(push_key()))})
+            return
+
         if parsed.path == "/manifest.webmanifest":
             body = json.dumps(MANIFEST).encode("utf-8")
             self.send_bytes(
@@ -3923,6 +4246,10 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_share()
             return
 
+        if PUSH_ENABLED and parsed.path in ("/push/subscribe", "/push/unsubscribe"):
+            self.handle_push(parsed.path.removeprefix("/push/"))
+            return
+
         if parsed.path == "/clip/clear":
             self.send_json(clip_json(clip_store("")))
             return
@@ -3973,7 +4300,49 @@ class Handler(BaseHTTPRequestHandler):
             text = fields["text"][-1]
         else:
             text = raw.decode("utf-8", "replace")
-        self.send_json(clip_json(clip_store(text)))
+        state = clip_store(text)
+        if text:
+            push_notify(
+                "clip", "Clipboard", "Clipboard", clip_preview(text), self.push_sender()
+            )
+        self.send_json(clip_json(state))
+
+    def push_sender(self) -> str | None:
+        """The push subscription of the browser making this request, so it is not
+        notified about its own action."""
+        cookies = http.cookies.SimpleCookie()
+        try:
+            cookies.load(self.headers.get("Cookie") or "")
+        except http.cookies.CookieError:
+            return None
+        morsel = cookies.get(PUSH_COOKIE)
+        return morsel.value if morsel and PUSH_ID.fullmatch(morsel.value) else None
+
+    def handle_push(self, action: str) -> None:
+        raw = self.read_body(8192)
+        try:
+            data = json.loads(raw or b"")
+        except ValueError:
+            data = None
+        if action == "subscribe":
+            sub_id = push_subscribe(data)
+            if sub_id is None:
+                self.send_json({"error": "invalid push subscription"}, status=400)
+                return
+            cookie = f"{PUSH_COOKIE}={sub_id}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict"
+            self.send_json({"id": sub_id}, headers={"Set-Cookie": cookie})
+            return
+        endpoint = data.get("endpoint") if isinstance(data, dict) else None
+        ids = [push_id(endpoint)] if isinstance(endpoint, str) else []
+        sender = self.push_sender()
+        if sender:
+            ids.append(sender)
+        self.send_json(
+            {"removed": push_forget(ids)},
+            headers={
+                "Set-Cookie": f"{PUSH_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict"
+            },
+        )
 
     def handle_annotate(self) -> None:
         query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
@@ -4132,13 +4501,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, status=500)
             return
 
+        view = view_url(project, path)
+        push_notify(
+            "drop",
+            "New file",
+            "{count} new files",
+            path.name,
+            self.push_sender(),
+            view or "",
+        )
         self.send_json(
             {
                 "project": project,
                 "name": path.name,
                 "size": length,
                 "url": f"/poub/{quote(project)}/{quote(path.name)}",
-                **({"view": view} if (view := view_url(project, path)) else {}),
+                **({"view": view} if view else {}),
             }
         )
 
@@ -4168,8 +4546,20 @@ class Handler(BaseHTTPRequestHandler):
         shared = "\n".join(
             value for value in (text, url if url not in text else "") if value
         )
+        sender = self.push_sender()
+        if saved:
+            push_notify(
+                "drop",
+                "New file",
+                "{count} new files",
+                "From the Share menu",
+                sender,
+                count=saved,
+            )
         if shared or (not saved and fields.get("title")):
-            clip_store(shared or fields["title"])
+            text = shared or fields["title"]
+            clip_store(text)
+            push_notify("clip", "Clipboard", "Clipboard", clip_preview(text), sender)
 
         self.send_response(303)
         self.send_header("Location", "/drop" if saved else "/clip")
@@ -4292,12 +4682,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_json(self, payload: dict[str, object], status: int = 200) -> None:
+    def send_json(
+        self,
+        payload: dict[str, object],
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -4419,6 +4816,7 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "github_token_pass": str,
     "theme": str,
     "public_url": str,
+    "push_subject": str,
 }
 ARTIFACT_TYPES: dict[str, type] = {
     "name": str,
@@ -4510,7 +4908,7 @@ def parse_artifacts(where: str, entries: list[object]) -> tuple[ArtifactRule, ..
 
 def main() -> None:
     global ARTIFACT_RULES, DEFAULT_PROJECT, ROOT, GITHUB_TOKEN, GITHUB_TOKEN_PASS
-    global THEME_DEFAULT, PUBLIC_URL
+    global THEME_DEFAULT, PUBLIC_URL, PUSH_ENABLED, PUSH_SUBJECT
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -4601,6 +4999,16 @@ def main() -> None:
         address = phone_ip()
         PUBLIC_URL = f"http://{address}:{port}" if address else ""
 
+    PUSH_ENABLED = push.available()
+    PUSH_SUBJECT = str(
+        config.get("push_subject")
+        or (PUBLIC_URL if PUBLIC_URL.startswith("https://") else PUSH_SUBJECT)
+    )
+    if not PUSH_SUBJECT.startswith(("mailto:", "https://")):
+        raise SystemExit(
+            f"sharei: push_subject {PUSH_SUBJECT!r} must be a mailto: or https:// URL"
+        )
+
     clip_load()
     if clip_ttl is not None:
         CLIP["ttl"] = max(0, min(int(clip_ttl), CLIP_MAX_TTL))  # type: ignore[call-overload]
@@ -4616,6 +5024,8 @@ def main() -> None:
     expiry_load()
     sweep_expired()
     threading.Thread(target=expiry_sweeper, daemon=True).start()
+    if PUSH_ENABLED:
+        threading.Thread(target=push_worker, daemon=True).start()
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Config: {path if config else 'built-in defaults'}; files under {ROOT}")
     print(
@@ -4624,6 +5034,8 @@ def main() -> None:
     address = phone_ip()
     if host == "0.0.0.0" and address:
         print(f"On your phone: http://{address}:{port}")
+    if not PUSH_ENABLED:
+        print("Phone notifications are off: install sharei with the push extra.")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()

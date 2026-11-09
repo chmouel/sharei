@@ -12,6 +12,9 @@ proxy with authentication (see SECURITY.md).
   Pillow optional for thumbnails). It holds all the HTML, CSS and JS as inline
   strings. There is no build step and no frontend toolchain. Entry point
   `sharei` (`main`).
+- `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
+  VAPID) on top of `cryptography`, the optional `push` extra. Without it
+  `PUSH_ENABLED` stays false and every push route is a 404.
 - `src/sharei/client.py`: the CLI uploader, entry point `sharec` (`run`). It
   shares a screenshot, the clipboard, a markdown file with its local images,
   or any file. A FILE ending in `.md` or `.markdown` is shared as markdown,
@@ -51,7 +54,8 @@ the service.
 - Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`
   (current text plus the last `CLIP_HISTORY_MAX` replaced ones, each keeping
   the TTL it had; Clear does not archive),
-  `thumbs/` and the rendered `markdown/`.
+  `thumbs/`, the rendered `markdown/` and `push/` (`vapid.pem` and
+  `subs.json`, both 0600).
 - Settings: `~/.config/sharei/config.toml`, or `$SHAREI_CONFIG`, or
   `--config`. Command-line flags take priority over the file.
 - The systemd unit can only write under `~/tmp`. Don't move the root elsewhere
@@ -93,6 +97,7 @@ Data:
 
 - `/state`: stamps for the live reload
 - `/recent`: newest items as JSON, used by the skill
+- `/sw.js` (service worker), `/push/key` (VAPID public key): push only
 - `/clip/raw[?n=]`: the clip, or history entry n (1 is the newest), `/clip/state`
 
 POST:
@@ -103,6 +108,7 @@ POST:
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
 - `/clip`, `/clip/clear`, `/clip/ttl`
+- `/push/subscribe`, `/push/unsubscribe`: push only, JSON subscription body
 - `/clip/history/restore?id=`, `/clip/history/delete?id=`, `/clip/history/clear`
 - `/shots/delete/<key>`, `/shots/delete-all[?project=]`
 - `/poub/delete/<project>/<name>`, `/poub/delete-all[?project=]`
@@ -142,6 +148,13 @@ These exist on purpose. Keep them when changing or adding code.
 - Markdown text is sent to api.github.com. The token is optional and needs no
   scopes. Its order of precedence is `$GITHUB_TOKEN`, then `github_token`,
   then `github_token_pass` (a `pass` entry). Never log or print it.
+- Push sends outbound requests only to subscription endpoints that pass
+  `push.endpoint_allowed()`: https, port 443, a hostname (no IP literal, no
+  userinfo) whose every address is global. Redirects are never followed, at
+  most `PUSH_SUBS_MAX` subscriptions are kept, and 404/410 drops one. The
+  `sharei-push` cookie (HttpOnly, SameSite=Strict) only names the sender's
+  own subscription so it is skipped; it grants nothing. The service worker's
+  notification click opens same-origin URLs only.
 - `sharec` checks a markdown file's local images before uploading them:
   - inside the git toplevel, or the file's directory, checked after realpath
   - no hidden path parts and no symlink escapes

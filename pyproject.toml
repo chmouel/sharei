@@ -26,6 +26,7 @@ dependencies = []
 
 [project.optional-dependencies]
 thumbnails = ["Pillow>=10"]
+push = ["cryptography>=42"]
 
 [project.urls]
 Homepage = "https://github.com/chmouel/sharei"
@@ -37,7 +38,7 @@ sharei = "sharei.server:main"
 sharec = "sharei.client:run"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["cryptography>=42", "pytest>=8", "ruff>=0.6"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "contrib", "tests", "config.example.toml", "README.md", "SECURITY.md", "LICENSE"]

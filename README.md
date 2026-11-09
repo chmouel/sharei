@@ -72,6 +72,24 @@ To start it with your session on Linux, copy
 systemctl --user enable --now sharei
 ```
 
+## Notifications
+
+sharei can tell your phone when a file, a screenshot or new clipboard text
+arrives. Install it with the push extra:
+
+```sh
+uv tool install 'sharei[push] @ git+https://github.com/chmouel/sharei'
+```
+
+Then open sharei on the phone, tap the theme button and pick
+**Notifications**. Browsers only allow this on an HTTPS address (or
+`localhost`), so it works through your reverse proxy. On an iPhone, add sharei
+to the home screen first and turn notifications on from there. Set
+`push_subject` in the config to your email address.
+
+Whatever you send from a device doesn't notify that same device. Several
+uploads close together arrive as one notification.
+
 ## Open it on your phone
 
 sharei has no password of its own, and by default only your computer can reach
@@ -169,6 +187,10 @@ Everything stays on your computer except markdown: sharei asks GitHub to format
 it, the same way github.com shows a README. Keep that in mind before opening a
 private document in the markdown view. A GitHub token in the config raises
 GitHub's hourly limit and needs no permissions.
+
+With notifications on, each notification (a file name or the start of the
+clipboard text) travels through your browser maker's push service (Google,
+Mozilla, Apple). It is encrypted for your browser, so the service can't read it.
 
 ## Licence
 

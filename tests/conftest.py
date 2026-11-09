@@ -36,6 +36,9 @@ def sharei_root(tmp_path, monkeypatch):
         "CLIP",
         {"text": "", "version": 0, "updated": 0.0, "ttl": 600, "history": []},
     )
+    monkeypatch.setattr(server, "PUSH_DIR", tmp_path / "cache" / "push")
+    monkeypatch.setattr(server, "PUSH_KEY", [])
+    monkeypatch.setattr(server, "PUSH_PENDING", {})
     return root
 
 

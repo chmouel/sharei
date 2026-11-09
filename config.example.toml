@@ -26,6 +26,11 @@
 # beyond localhost, and the address in the browser otherwise.
 # public_url = "https://share.example.com"
 
+# Contact sent to the browser's push service with phone notifications (needs the push
+# extra). A mailto: or https: address; defaults to public_url when it is https. Apple
+# rejects placeholder addresses, so set a real one if you use an iPhone.
+# push_subject = "mailto:you@example.com"
+
 # Extra Host headers and browser Origins accepted (added to the built-in local ones).
 # allow_hosts = ["share.example.com"]
 # allow_origins = ["https://share.example.com"]
