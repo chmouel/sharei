@@ -186,10 +186,11 @@ def send(
     timeout: float = 10,
 ) -> int:
     """POST one encrypted message to the subscription's push service; returns the
-    HTTP status. Redirects are not followed."""
+    HTTP status. Redirects are not followed. A refused endpoint raises OSError
+    rather than looking like a 410, since a DNS hiccup must not drop it."""
     endpoint = subscription["endpoint"]
     if not endpoint_allowed(endpoint):
-        return 410
+        raise OSError("push endpoint refused or not resolvable")
     keys = subscription["keys"]
     body = encrypt(payload, b64url_decode(keys["p256dh"]), b64url_decode(keys["auth"]))
     parts = urlsplit(endpoint)

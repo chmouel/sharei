@@ -207,3 +207,13 @@ def test_subscriptions_are_capped(push_server, monkeypatch):
     assert sorted(server.push_subs_locked()) == sorted(
         server.push_id(f"https://p.example/{name}") for name in ("two", "three")
     )
+
+
+def test_unresolvable_endpoint_keeps_subscription(push_server, monkeypatch):
+    sub = subscription("https://push.example.net/one")
+    post_json(push_server + "/push/subscribe", sub)
+    monkeypatch.setattr(push, "host_is_public", lambda host: False)
+    server.push_notify("clip", "Clipboard", "Clipboard", "hi")
+    ((tag, note),) = server.push_take_due(float("inf"))
+    server.push_deliver(tag, note)
+    assert list(server.push_subs_locked()) == [server.push_id(sub["endpoint"])]
