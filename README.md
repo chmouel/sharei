@@ -173,13 +173,18 @@ It can fetch things back too:
 ```sh
 sharec get               # print the shared clipboard
 sharec get clip 1 -c     # put the previous clipboard note on this clipboard
-sharec get drop          # download the newest dropped file here
-sharec get shot          # same for the newest screenshot
-sharec get drop 2 -o -   # the third newest file, to stdout
+sharec get shot          # show the newest screenshot in the terminal
+sharec get drop          # show the newest dropped file, image or text
+sharec get drop -f       # download it here instead
+sharec get shot 1 -o a.png  # save the previous screenshot as a.png
 sharec get list          # what is on sharei right now
 ```
 
-Downloads never overwrite a file; they become `name-1.ext` instead.
+Images show up right in terminals that speak the kitty graphics protocol
+(kitty, Ghostty, WezTerm, Konsole). JPEG, GIF and WebP need the thumbnails
+extra; files that can't be shown are saved in the current folder. When the
+output goes to a pipe or a file, you get the file itself. Downloads never
+overwrite a file; they become `name-1.ext` instead.
 
 ## Privacy
 

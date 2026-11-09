@@ -32,7 +32,7 @@ def test_get_drop_never_overwrites(sharec, tmp_path, monkeypatch, capsys):
     sharec.upload("old.txt", b"old", "")
     sharec.upload("note.txt", b"new", "")
     (tmp_path / "note.txt").write_text("mine")
-    sharec.get_main(["drop"])
+    sharec.get_main(["drop", "-f"])
     assert (tmp_path / "note.txt").read_text() == "mine"
     assert (tmp_path / "note-1.txt").read_bytes() == b"new"
     sharec.get_main(["drop", "1", "-o", str(tmp_path / "sub.txt")])
@@ -46,3 +46,32 @@ def test_get_drop_never_overwrites(sharec, tmp_path, monkeypatch, capsys):
 def test_free_name_ignores_hidden_and_paths(tmp_path):
     assert client.free_name(tmp_path, "../../.bashrc") == tmp_path / "bashrc"
     assert client.free_name(tmp_path, "...") == tmp_path / "download"
+
+
+def test_get_shows_in_terminal(sharec, tmp_path, monkeypatch, capsysbinary):
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    monkeypatch.setattr(sharec.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sharec, "terminal_cell_width", lambda: (80, 10))
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x04\x00\x00\x00\x00\x01"
+        + b"\x00" * 6000
+    )
+    sharec.upload("wide.png", png, "")
+    sharec.get_main(["drop"])
+    out = capsysbinary.readouterr().out
+    assert out.startswith(b"\x1b_Ga=T,f=100,q=2,c=80,m=1;")
+    assert out.count(b"\x1b_G") == 2 and b"\x1b_Gm=0;" in out
+    assert b"".join(
+        part.split(b";", 1)[1] for part in out.rstrip(b"\n").split(b"\x1b\\")[:-1]
+    ) == sharec.base64.standard_b64encode(png)
+
+    sharec.upload("note.txt", b"hi\x1b]0;pwned\x07 there", "")
+    sharec.get_main(["drop"])
+    assert capsysbinary.readouterr().out == b"hi]0;pwned there\n"
+
+    sharec.upload("blob.bin", b"\x00\x01binary", "")
+    sharec.get_main(["drop"])
+    assert (work / "blob.bin").read_bytes() == b"\x00\x01binary"
+    assert list(work.iterdir()) == [work / "blob.bin"]

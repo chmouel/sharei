@@ -21,7 +21,8 @@ if [[ $words[2] == get ]]; then
     _arguments -s -S \
         '(- *)'{-h,--help}'[show help]' \
         '(-c --copy)'{-c,--copy}'[clip: put it on this clipboard]' \
-        '(-o --output)'{-o+,--output=}'[drop/shot: file or folder to save to, - for stdout]:output:_files' \
+        '(-f --file -o --output)'{-f,--file}'[drop/shot: save to the current folder instead of showing it]' \
+        '(-f --file -o --output)'{-o+,--output=}'[drop/shot: file or folder to save to, - for stdout]:output:_files' \
         '(-p --project)'{-p+,--project=}'[sharei project]:project:__sharei_shot_projects' \
         '1:what:((clip\:"the shared clipboard" drop\:"the newest dropped file" shot\:"the newest screenshot" list\:"what sharei holds"))' \
         '2:steps back from the newest: '

@@ -14,11 +14,14 @@ SHAREI_PROJECT (default project).
 """
 
 import argparse
+import base64
+import io
 import json
 import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -184,7 +187,83 @@ def get_clip(back: int, copy: bool) -> None:
     sys.stdout.flush()
 
 
-def get_file(kind: str, back: int, project: str, output: str | None) -> None:
+KITTY_CHUNK = 4096
+# Control characters other than tab and newline, so a dropped file cannot send
+# escape sequences to the terminal.
+TERMINAL_UNSAFE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def terminal_cell_width() -> tuple[int, int]:
+    """Terminal width in columns and the pixel width of one cell (0 if unknown)."""
+    columns = shutil.get_terminal_size().columns
+    try:
+        import fcntl
+        import termios
+
+        packed = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
+        _, cols, xpixel, _ = struct.unpack("HHHH", packed)
+    except (ImportError, OSError):
+        return columns, 0
+    return cols or columns, xpixel // cols if cols and xpixel else 0
+
+
+def as_png(data: bytes) -> tuple[bytes, int] | None:
+    """The image as PNG with its pixel width, converting with Pillow when it is
+    installed; None when it cannot be shown."""
+    if image_kind(data) == "png" and data[12:16] == b"IHDR":
+        return data, struct.unpack(">I", data[16:20])[0]
+    if image_kind(data) not in ("jpeg", "gif", "webp"):
+        return None
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            out = io.BytesIO()
+            image.save(out, "PNG")
+            return out.getvalue(), image.width
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+
+
+def kitty_image(png: bytes, width: int) -> bytes:
+    """Kitty graphics protocol escapes drawing png at the cursor, scaled down
+    to the terminal width."""
+    columns, cell = terminal_cell_width()
+    fit = f",c={columns}" if width > columns * (cell or 8) else ""
+    encoded = base64.standard_b64encode(png)
+    chunks = [
+        encoded[i : i + KITTY_CHUNK] for i in range(0, len(encoded), KITTY_CHUNK)
+    ] or [b""]
+    out = []
+    for index, chunk in enumerate(chunks):
+        more = int(index < len(chunks) - 1)
+        control = f"a=T,f=100,q=2{fit},m={more}" if index == 0 else f"m={more}"
+        out.append(b"\x1b_G" + control.encode() + b";" + chunk + b"\x1b\\")
+    return b"".join(out) + b"\n"
+
+
+def show_in_terminal(data: bytes) -> bool:
+    """Draw an image or print a text file; False when neither fits a terminal."""
+    image = as_png(data)
+    if image:
+        sys.stdout.buffer.write(kitty_image(*image))
+    elif b"\0" not in data[:65536]:
+        try:
+            text = TERMINAL_UNSAFE.sub("", data.decode())
+        except UnicodeDecodeError:
+            return False
+        sys.stdout.write(text if text.endswith("\n") else text + "\n")
+    else:
+        return False
+    sys.stdout.flush()
+    return True
+
+
+def get_file(
+    kind: str, back: int, project: str, output: str | None, save: bool = True
+) -> None:
     items = recent(back + 1, project)[kind]
     label = "dropped file" if kind == "drop" else "screenshot"
     if len(items) <= back:
@@ -194,6 +273,13 @@ def get_file(kind: str, back: int, project: str, output: str | None) -> None:
         )
     item = items[back]
     data = fetch(item["url"])
+    if not save and not output:
+        if not sys.stdout.isatty():
+            output = "-"
+        elif show_in_terminal(data):
+            return
+        else:
+            print(f"{item['name']} can't be shown here, saving it.", file=sys.stderr)
     if output == "-":
         sys.stdout.buffer.write(data)
         sys.stdout.flush()
@@ -250,11 +336,18 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "-c", "--copy", action="store_true", help="clip: put it on this clipboard"
     )
-    parser.add_argument(
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
+        "-f",
+        "--file",
+        action="store_true",
+        help="drop/shot: save to the current folder, never overwriting "
+        "(default: show images and text in the terminal)",
+    )
+    where.add_argument(
         "-o",
         "--output",
-        help="drop/shot: file or folder to save to, - for stdout "
-        "(default: the current folder, never overwriting)",
+        help="drop/shot: file or folder to save to, - for stdout",
     )
     parser.add_argument(
         "-p",
@@ -267,8 +360,8 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
         parser.error("N must be 0 or more")
     if args.copy and args.what != "clip":
         parser.error("--copy only works with clip")
-    if args.output and args.what not in ("drop", "shot"):
-        parser.error("--output only works with drop or shot")
+    if (args.output or args.file) and args.what not in ("drop", "shot"):
+        parser.error("--file and --output only work with drop or shot")
     return args
 
 
@@ -284,6 +377,7 @@ def get_main(argv: list[str]) -> int:
             args.back,
             args.project,
             args.output,
+            save=args.file,
         )
     return 0
 
