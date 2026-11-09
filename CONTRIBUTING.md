@@ -14,6 +14,15 @@ uv run ruff format .
 uv run ruff check .
 ```
 
+The same three commands run before every push if you install the hook:
+
+```sh
+uvx pre-commit install --hook-type pre-push
+```
+
+`.pre-commit-config.yaml` runs them at the pre-push stage only, so commits
+stay instant.
+
 sharei has no runtime dependencies on purpose (Pillow is optional, for
 thumbnails). Please keep it that way. The server and the uploader are each a
 single file, with the web pages written inline, and there is no frontend build

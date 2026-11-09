@@ -203,7 +203,9 @@ These exist on purpose. Keep them when changing or adding code.
 
 Run `uv run pytest`, `uv run ruff format .` and `uv run ruff check .`; CI runs
 the same on Python 3.12 to 3.14. Add tests for new behaviour, preferably
-through the `live_server` fixture.
+through the `live_server` fixture. `.pre-commit-config.yaml` runs the same
+three checks at the pre-push stage (`uvx pre-commit install --hook-type
+pre-push`), never at commit time.
 
 For manual checks use a throwaway instance, never a live one:
 
