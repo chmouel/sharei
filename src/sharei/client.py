@@ -193,25 +193,28 @@ KITTY_CHUNK = 4096
 TERMINAL_UNSAFE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
-def terminal_cell_width() -> tuple[int, int]:
-    """Terminal width in columns and the pixel width of one cell (0 if unknown)."""
-    columns = shutil.get_terminal_size().columns
+def terminal_size() -> tuple[int, int, int, int]:
+    """Terminal columns and rows, and the pixel size of one cell (0 if unknown)."""
+    columns, rows = shutil.get_terminal_size()
     try:
         import fcntl
         import termios
 
         packed = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
-        _, cols, xpixel, _ = struct.unpack("HHHH", packed)
+        rows, columns, xpixel, ypixel = struct.unpack("HHHH", packed)
     except (ImportError, OSError):
-        return columns, 0
-    return cols or columns, xpixel // cols if cols and xpixel else 0
+        return columns, rows, 0, 0
+    if not columns or not rows:
+        return *shutil.get_terminal_size(), 0, 0
+    return columns, rows, xpixel // columns, ypixel // rows
 
 
-def as_png(data: bytes) -> tuple[bytes, int] | None:
-    """The image as PNG with its pixel width, converting with Pillow when it is
+def as_png(data: bytes) -> tuple[bytes, int, int] | None:
+    """The image as PNG with its pixel size, converting with Pillow when it is
     installed; None when it cannot be shown."""
     if image_kind(data) == "png" and data[12:16] == b"IHDR":
-        return data, struct.unpack(">I", data[16:20])[0]
+        width, height = struct.unpack(">II", data[16:24])
+        return data, width, height
     if image_kind(data) not in ("jpeg", "gif", "webp"):
         return None
     try:
@@ -222,16 +225,23 @@ def as_png(data: bytes) -> tuple[bytes, int] | None:
         with Image.open(io.BytesIO(data)) as image:
             out = io.BytesIO()
             image.save(out, "PNG")
-            return out.getvalue(), image.width
+            return out.getvalue(), image.width, image.height
     except (OSError, ValueError, Image.DecompressionBombError):
         return None
 
 
-def kitty_image(png: bytes, width: int) -> bytes:
+def kitty_image(
+    png: bytes, width: int, height: int, max_rows: int = 0, image_id: int = 0
+) -> bytes:
     """Kitty graphics protocol escapes drawing png at the cursor, scaled down
-    to the terminal width."""
-    columns, cell = terminal_cell_width()
-    fit = f",c={columns}" if width > columns * (cell or 8) else ""
+    to the terminal width and, with max_rows, to that many rows."""
+    columns, _, cell_width, cell_height = terminal_size()
+    cell_width, cell_height = cell_width or 8, cell_height or 16
+    scale = min(1, columns * cell_width / max(width, 1))
+    if max_rows:
+        scale = min(scale, max_rows * cell_height / max(height, 1))
+    fit = f",c={max(1, int(width * scale / cell_width))}" if scale < 1 else ""
+    fit += f",i={image_id}" if image_id else ""
     encoded = base64.standard_b64encode(png)
     chunks = [
         encoded[i : i + KITTY_CHUNK] for i in range(0, len(encoded), KITTY_CHUNK)
@@ -241,14 +251,52 @@ def kitty_image(png: bytes, width: int) -> bytes:
         more = int(index < len(chunks) - 1)
         control = f"a=T,f=100,q=2{fit},m={more}" if index == 0 else f"m={more}"
         out.append(b"\x1b_G" + control.encode() + b";" + chunk + b"\x1b\\")
-    return b"".join(out) + b"\n"
+    return b"".join(out)
 
 
-def show_in_terminal(data: bytes) -> bool:
+def wait_key() -> None:
+    """Wait for one key press on the terminal without echoing it."""
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        os.read(fd, 32)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def show_image(png: bytes, width: int, height: int, name: str) -> None:
+    """Draw the image; on an interactive terminal show it full screen until a
+    key is pressed, then put the terminal back as it was."""
+    out = sys.stdout.buffer
+    if not sys.stdin.isatty():
+        out.write(kitty_image(png, width, height) + b"\n")
+        return
+    rows = terminal_size()[1]
+    image_id = int.from_bytes(os.urandom(3)) | 1
+    out.write(b"\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J")
+    try:
+        out.write(kitty_image(png, width, height, max(rows - 1, 1), image_id))
+        hint = TERMINAL_UNSAFE.sub("", f"{name}: press any key")
+        out.write(f"\x1b[{rows};1H\x1b[2m{hint}\x1b[0m".encode())
+        out.flush()
+        wait_key()
+    finally:
+        out.write(f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\".encode())
+        out.write(b"\x1b[?25h\x1b[?1049l")
+        out.flush()
+
+
+def show_in_terminal(data: bytes, name: str) -> bool:
     """Draw an image or print a text file; False when neither fits a terminal."""
     image = as_png(data)
     if image:
-        sys.stdout.buffer.write(kitty_image(*image))
+        show_image(*image, name)
     elif b"\0" not in data[:65536]:
         try:
             text = TERMINAL_UNSAFE.sub("", data.decode())
@@ -276,7 +324,7 @@ def get_file(
     if not save and not output:
         if not sys.stdout.isatty():
             output = "-"
-        elif show_in_terminal(data):
+        elif show_in_terminal(data, item["name"]):
             return
         else:
             print(f"{item['name']} can't be shown here, saving it.", file=sys.stderr)

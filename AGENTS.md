@@ -22,7 +22,9 @@ proxy with authentication (see SECURITY.md).
   `sharec get [clip|drop|shot|list] [N]` reads back through `/clip/raw` and
   `/recent` (N is steps back from the newest) and never overwrites a file.
   On a terminal, `drop`/`shot` draw images with the kitty graphics protocol
-  (PNG as is, other raster formats through Pillow) and print text files with
+  (PNG as is, other raster formats through Pillow) on the alternate screen,
+  sized to the window, until a key is pressed, then delete the image by id
+  (inline when stdin is not a terminal), and print text files with
   control characters stripped; anything else, `-f` or `-o` saves a file.
 - `src/sharei/vendor/`: third-party assets served at `/vendor/`:
   github-markdown-css, mermaid, markerjs, highlight.js (common languages

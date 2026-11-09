@@ -181,7 +181,8 @@ sharec get list          # what is on sharei right now
 ```
 
 Images show up right in terminals that speak the kitty graphics protocol
-(kitty, Ghostty, WezTerm, Konsole). JPEG, GIF and WebP need the thumbnails
+(kitty, Ghostty, WezTerm, Konsole). The image fills the window until you
+press a key, then the terminal goes back to how it was. JPEG, GIF and WebP need the thumbnails
 extra; files that can't be shown are saved in the current folder. When the
 output goes to a pipe or a file, you get the file itself. Downloads never
 overwrite a file; they become `name-1.ext` instead.
