@@ -89,8 +89,8 @@ POST:
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
 - `/clip`, `/clip/clear`, `/clip/ttl`
-- `/shots/delete/<key>`, `/shots/delete-all`
-- `/poub/delete/<project>/<name>`, `/poub/delete-all`
+- `/shots/delete/<key>`, `/shots/delete-all[?project=]`
+- `/poub/delete/<project>/<name>`, `/poub/delete-all[?project=]`
 
 "poub" is the internal name for the drop folder.
 

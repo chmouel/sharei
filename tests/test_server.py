@@ -100,3 +100,19 @@ def test_video_plays_inline_and_seeks(live_server):
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(request)
     assert error.value.code == 416
+
+
+def test_delete_shots_of_one_project(live_server, sharei_root):
+    for project in ("alpha", "beta"):
+        shot = sharei_root / project / "shots" / "a.png"
+        shot.parent.mkdir(parents=True)
+        shot.write_bytes(b"\x89PNG\r\n\x1a\n")
+    _, _, body = get(live_server + "/shots")
+    assert b'data-wipe-project="alpha"' in body
+    request = urllib.request.Request(
+        live_server + "/shots/delete-all?project=alpha", data=b"", method="POST"
+    )
+    with urllib.request.urlopen(request) as response:
+        assert json.load(response) == {"deleted": 1}
+    assert not (sharei_root / "alpha/shots/a.png").exists()
+    assert (sharei_root / "beta/shots/a.png").exists()

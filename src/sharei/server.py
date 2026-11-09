@@ -877,6 +877,10 @@ CAROUSEL_JS = """
   });
   const wipe = $("delete-all");
   if (wipe) wipe.addEventListener("click", () => remove("/shots/delete-all", `Delete ALL ${shots.length} screenshots? This cannot be undone.`));
+  document.querySelectorAll("[data-wipe-project]").forEach((button) => button.addEventListener("click", () => {
+    const project = button.dataset.wipeProject;
+    remove("/shots/delete-all?project=" + encodeURIComponent(project), `Delete ${button.dataset.count === "1" ? "the screenshot" : "all " + button.dataset.count + " screenshots"} in ${project}? This cannot be undone.`);
+  }));
 
   let startX = null, startY = 0, deltaX = 0;
   stage.addEventListener("pointerdown", (event) => {
@@ -1217,9 +1221,9 @@ def delete_shot(encoded: str) -> bool:
     return True
 
 
-def delete_all_shots() -> int:
+def delete_all_shots(project: str | None = None) -> int:
     deleted = 0
-    for path in shot_files():
+    for path in shot_files(project):
         try:
             forget_thumbnail(path)
             path.unlink()
@@ -1227,7 +1231,8 @@ def delete_all_shots() -> int:
             continue
         expiry_forget(path)
         deleted += 1
-    clear_thumbnails()
+    if project is None:
+        clear_thumbnails()
     return deleted
 
 
@@ -2317,7 +2322,8 @@ DROP_CSS = """
   .project-pick select { flex:1; min-height:40px; padding:0 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font:inherit; font-size:14px; }
   .project-pick select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   .drop-group + .drop-group { margin-top:14px; }
-  .drop-group h2 { margin:0 4px 8px; color:var(--soft); font-size:13px; font-weight:650; }
+  .drop-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 4px 8px; }
+  .drop-group h2 { margin:0; color:var(--soft); font-size:13px; font-weight:650; }
 """
 
 DROP_JS = """
@@ -2426,6 +2432,11 @@ for (const button of document.querySelectorAll('.file-delete')) {
   button.addEventListener('click', () => remove('/poub/delete/' + button.dataset.url, 'Delete this file?'));
 }
 
+for (const button of document.querySelectorAll('[data-wipe-project]')) {
+  const project = button.dataset.wipeProject;
+  button.addEventListener('click', () => remove('/poub/delete-all?project=' + encodeURIComponent(project), `Delete ${button.dataset.count === '1' ? 'the file' : 'all ' + button.dataset.count + ' files'} in ${project}? This cannot be undone.`));
+}
+
 const wipe = document.getElementById('delete-all');
 if (wipe) wipe.addEventListener('click', () => remove('/poub/delete-all', 'Delete ALL dropped files in every project? This cannot be undone.'));
 """
@@ -2494,7 +2505,8 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
     )
     listing = (
         "".join(
-            f'<section class="drop-group"><h2>{html.escape(project)} <span class="checkout">{len(rows)}</span></h2>'
+            f'<section class="drop-group"><div class="drop-head"><h2>{html.escape(project)} <span class="checkout">{len(rows)}</span></h2>'
+            f"{wipe_project(project, len(rows)) if len(groups) > 1 else ''}</div>"
             f'<div class="file-list">{"".join(rows)}</div></section>'
             for project, rows in groups.items()
         )
@@ -2566,6 +2578,14 @@ def artifacts_page(artifacts: list[dict[str, str]], tab_counts: Counts) -> bytes
     return layout("Artifacts", "artifacts", tab_counts, body)
 
 
+def wipe_project(project: str, count: int) -> str:
+    name = html.escape(project)
+    return (
+        f'<button class="wipe" type="button" data-wipe-project="{name}" data-count="{count}" '
+        f'aria-label="Delete everything in {name}">Delete</button>'
+    )
+
+
 def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
     sections = []
     groups: dict[str, list[tuple[int, dict[str, str]]]] = {}
@@ -2585,7 +2605,7 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
         )
         sections.append(f"""
           <section class="app-section">
-            <div class="section-heading"><h2>{html.escape(project)}</h2><span class="checkout">{len(items)}</span></div>
+            <div class="section-heading"><h2>{html.escape(project)}</h2><span class="shelf-actions"><span class="checkout">{len(items)}</span>{wipe_project(project, len(items)) if len(groups) > 1 else ""}</span></div>
             <div class="gallery">{tiles}</div>
           </section>""")
 
@@ -3357,7 +3377,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urlparse(self.path)
         if parsed.path == "/shots/delete-all":
-            self.send_json({"deleted": delete_all_shots()})
+            project = self.query_project(parse_qs(parsed.query))
+            if project is not False:
+                self.send_json({"deleted": delete_all_shots(project)})
             return
 
         if parsed.path.startswith("/shots/delete/"):
