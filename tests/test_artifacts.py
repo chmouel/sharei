@@ -124,7 +124,7 @@ def test_download_serves_only_scanned_files(tmp_path, live_server, monkeypatch):
         )
         assert response.headers["Content-Disposition"].startswith("attachment")
         assert response.read() == b"apk"
-    with urllib.request.urlopen(f"{live_server}/") as response:
+    with urllib.request.urlopen(f"{live_server}/artifacts") as response:
         page = response.read().decode()
     assert "tool.whl" in page and "Install" in page and "Download" in page
 

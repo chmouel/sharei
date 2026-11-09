@@ -73,7 +73,8 @@ the service.
 
 Pages:
 
-- `/`: Artifacts, from the `[[artifacts]]` config entries
+- `/`: redirects to `/shots`
+- `/artifacts`: Artifacts, from the `[[artifacts]]` config entries
 - `/shots`: screenshots
 - `/clip`: clipboard
 - `/drop`: dropped files
