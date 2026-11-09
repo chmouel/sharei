@@ -208,3 +208,24 @@ def test_listens_on_loopback(host, loopback):
     from sharei import server
 
     assert server.listens_on_loopback(host) is loopback
+
+
+def test_audio_and_pdf_previews(live_server):
+    assert upload(live_server, "song.opus", b"OggS")["view"] == "/play/inbox/song.opus"
+    assert upload(live_server, "doc.pdf", b"%PDF-1.4")["view"] == "/pdf/inbox/doc.pdf"
+    _, headers, _ = get(live_server + "/poub/inbox/song.opus")
+    assert headers["Content-Type"] == "audio/ogg"
+    assert "Content-Disposition" not in headers
+    _, headers, body = get(live_server + "/play/inbox/song.opus")
+    assert b'<audio src="/poub/inbox/song.opus"' in body and b"<video" not in body
+    _, headers, body = get(live_server + "/pdf/inbox/doc.pdf")
+    csp = headers["Content-Security-Policy"]
+    nonce = csp.split("'nonce-")[1].split("'")[0]
+    assert f"script-src 'nonce-{nonce}';" in csp and "worker-src 'self'" in csp
+    assert f'<script type="module" nonce="{nonce}">'.encode() in body
+    assert b'data-url="/poub/inbox/doc.pdf"' in body
+    assert get(live_server + "/vendor/pdf.worker.min.mjs")[0] == 200
+    for path in ("/pdf/inbox/song.opus", "/play/inbox/doc.pdf", "/pdf/inbox/x.pdf"):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            get(live_server + path)
+        assert error.value.code == 404

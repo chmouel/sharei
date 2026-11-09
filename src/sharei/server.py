@@ -43,6 +43,16 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 HTML_SUFFIXES = {".html", ".htm"}
 VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".webm", ".ogv"}
+# Spelled out because mimetypes misses some of these on a few systems.
+AUDIO_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+}
+MEDIA_SUFFIXES = VIDEO_SUFFIXES | AUDIO_TYPES.keys()
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
 TEXT_MAX_BYTES = 2 * 1024**2
 HIGHLIGHT_MAX_BYTES = 512 * 1024
@@ -189,6 +199,8 @@ VENDOR_TYPES = {
     "github-markdown.css": "text/css; charset=utf-8",
     "mermaid.min.js": "text/javascript; charset=utf-8",
     "qrcode.js": "text/javascript; charset=utf-8",
+    "pdf.min.mjs": "text/javascript; charset=utf-8",
+    "pdf.worker.min.mjs": "text/javascript; charset=utf-8",
 }
 # Data URL type the browser has to send back per suffix. GIFs are missing on purpose: the canvas would flatten
 # the animation into a still frame and the editor cannot encode GIF again.
@@ -1587,9 +1599,12 @@ def read_text_file(path: Path) -> str | None:
 
 
 def view_url(project: str, path: Path) -> str | None:
-    """Reader page for a dropped file: /md for markdown, /play for video, /view for other text."""
-    if path.suffix.lower() in VIDEO_SUFFIXES:
+    """Reader page for a dropped file: /md for markdown, /play for audio and video, /pdf for
+    PDFs, /view for other text."""
+    if path.suffix.lower() in MEDIA_SUFFIXES:
         return f"/play/{quote(project)}/{quote(path.name)}"
+    if path.suffix.lower() == ".pdf":
+        return f"/pdf/{quote(project)}/{quote(path.name)}"
     if is_markdown(path.name):
         return f"/md/{quote(project)}/{quote(path.name)}"
     if path.suffix.lower() not in IMAGE_SUFFIXES and looks_like_text(path):
@@ -2061,13 +2076,18 @@ def code_headers(nonce: str) -> dict[str, str]:
 PLAY_CSS = """
   .page.play-page { display:grid; place-items:center; width:min(100%, 1280px); min-height:calc(100vh - 120px); }
   .play-page video { display:block; width:100%; max-height:calc(100vh - 120px); border-radius:6px; background:#000; }
+  .play-page audio { display:block; width:min(100%, 640px); }
 """
 
 
 def play_page(project: str, name: str) -> tuple[bytes, str]:
-    """A dropped video in the browser's own player, streamed from /poub."""
+    """A dropped video or audio file in the browser's own player, streamed from /poub."""
     nonce = secrets.token_urlsafe(16)
     url = html.escape(f"/poub/{quote(project)}/{quote(name)}")
+    if Path(name).suffix.lower() in AUDIO_TYPES:
+        player = f'<audio src="{url}" controls preload="metadata"></audio>'
+    else:
+        player = f'<video src="{url}" controls playsinline preload="metadata"></video>'
     document = f"""<!doctype html>
 <html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
@@ -2075,7 +2095,7 @@ def play_page(project: str, name: str) -> tuple[bytes, str]:
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
 <header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a><button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
-<main class="page play-page"><video src="{url}" controls playsinline preload="metadata"></video></main>
+<main class="page play-page">{player}</main>
 {qr_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
@@ -2088,6 +2108,95 @@ def play_headers(nonce: str) -> dict[str, str]:
         "Content-Security-Policy": (
             "default-src 'none'; img-src 'self'; media-src 'self'; "
             f"style-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+        ),
+    }
+
+
+PDF_CSS = """
+  .page.pdf-page { display:grid; gap:14px; justify-items:center; width:min(100%, 1000px); }
+  .pdf-page canvas { display:block; width:100%; height:auto; border-radius:4px; box-shadow:0 0 0 1px var(--borderColor-default); }
+  .pdf-page .pdf-status { color:var(--fgColor-muted); font-size:14px; }
+"""
+
+PDF_JS = """
+import * as pdfjs from '/vendor/pdf.min.mjs';
+
+const main = document.querySelector('.pdf-page');
+const status = main.querySelector('.pdf-status');
+pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
+
+async function draw(page, canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(main.clientWidth / base.width, 3) * ratio;
+  const viewport = page.getViewport({ scale });
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  await page.render({ canvas, viewport }).promise;
+}
+
+try {
+  const pdf = await pdfjs.getDocument({ url: main.dataset.url }).promise;
+  status.textContent = pdf.numPages === 1 ? '1 page' : `${pdf.numPages} pages`;
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      pdf.getPage(Number(entry.target.dataset.page)).then((page) => draw(page, entry.target));
+    }
+  }, { rootMargin: '600px 0px' });
+  for (let number = 1; number <= pdf.numPages; number++) {
+    const page = number === 1 ? await pdf.getPage(1) : null;
+    const canvas = document.createElement('canvas');
+    canvas.dataset.page = number;
+    canvas.setAttribute('aria-label', `Page ${number}`);
+    if (page) {
+      const view = page.getViewport({ scale: 1 });
+      canvas.width = view.width;
+      canvas.height = view.height;
+    } else {
+      const first = main.querySelector('canvas');
+      canvas.width = first.width;
+      canvas.height = first.height;
+    }
+    main.append(canvas);
+    observer.observe(canvas);
+  }
+} catch (error) {
+  status.textContent = 'This PDF could not be shown. Download it instead.';
+  console.error(error);
+}
+"""
+
+
+def pdf_page(project: str, name: str) -> tuple[bytes, str]:
+    """A dropped PDF drawn page by page with pdf.js, fetched from /poub."""
+    nonce = secrets.token_urlsafe(16)
+    url = html.escape(f"/poub/{quote(project)}/{quote(name)}")
+    document = f"""<!doctype html>
+<html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
+{theme_script(nonce)}
+<link rel="icon" href="/icon-192.png">
+<style>{MARKDOWN_CSS}{PDF_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a><button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<main class="page pdf-page" data-url="{url}"><p class="pdf-status">Loading…</p></main>
+<script type="module" nonce="{nonce}">{PDF_JS}</script>
+{qr_script(nonce)}
+</body></html>"""
+    return document.encode("utf-8"), nonce
+
+
+def pdf_headers(nonce: str) -> dict[str, str]:
+    # The worker has to be a URL, so worker-src allows 'self'; scripts stay nonce-only,
+    # which the module imports inherit, so an uploaded .js still cannot run here.
+    return {
+        "Cache-Control": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": (
+            "default-src 'none'; img-src 'self' blob: data:; connect-src 'self'; "
+            f"worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
         ),
     }
@@ -2676,6 +2785,7 @@ DROP_CSS = """
   .file-thumb video { position:absolute; inset:0; pointer-events:none; }
   .play-mark { position:relative; display:grid; place-items:center; width:24px; height:24px; padding-left:2px; border-radius:50%; background:rgba(0,0,0,.55); color:#fff; font-size:10px; }
   .file-thumb { position:relative; }
+  .file-thumb .pdf-mark { font-size:12px; font-weight:800; letter-spacing:.04em; }
   .file-thumb:has(iframe) { background:#fff; }
   .file-thumb iframe { position:absolute; left:0; top:0; width:184px; height:184px; border:0; transform:scale(.25); transform-origin:0 0; pointer-events:none; }
   .file-copy { display:grid; flex:1; gap:3px; min-width:0; }
@@ -2824,6 +2934,16 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
             action = "Play"
             download = ""
             href = f"/play/{entry['url']}"
+        elif Path(entry["name"]).suffix.lower() in AUDIO_TYPES:
+            thumb = '<span aria-hidden="true">♪</span>'
+            action = "Play"
+            download = ""
+            href = f"/play/{entry['url']}"
+        elif Path(entry["name"]).suffix.lower() == ".pdf":
+            thumb = '<span class="pdf-mark" aria-hidden="true">PDF</span>'
+            action = "Read"
+            download = ""
+            href = f"/pdf/{entry['url']}"
         elif is_markdown(entry["name"]):
             thumb = '<span aria-hidden="true">¶</span>'
             action = "Read"
@@ -3608,9 +3728,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/play/"):
             path = poub_path(parsed.path.removeprefix("/play/"))
-            if path is not None and path.suffix.lower() in VIDEO_SUFFIXES:
+            if path is not None and path.suffix.lower() in MEDIA_SUFFIXES:
                 body, nonce = play_page(path.parent.parent.name, path.name)
                 self.send_html(body, play_headers(nonce))
+                return
+
+        if parsed.path.startswith("/pdf/"):
+            path = poub_path(parsed.path.removeprefix("/pdf/"))
+            if path is not None and path.suffix.lower() == ".pdf":
+                body, nonce = pdf_page(path.parent.parent.name, path.name)
+                self.send_html(body, pdf_headers(nonce))
                 return
 
         if parsed.path == "/clip/md":
@@ -3637,7 +3764,9 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 suffix = path.suffix.lower()
                 content_type = (
-                    mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+                    AUDIO_TYPES.get(suffix)
+                    or mimetypes.guess_type(path.name)[0]
+                    or "application/octet-stream"
                 )
                 if "raw" in parse_qs(parsed.query) and (
                     suffix in MARKDOWN_SUFFIXES or looks_like_text(path)
@@ -3649,7 +3778,7 @@ class Handler(BaseHTTPRequestHandler):
                     headers["Content-Security-Policy"] = (
                         "sandbox allow-scripts allow-forms"
                     )
-                elif suffix not in IMAGE_SUFFIXES and suffix not in VIDEO_SUFFIXES:
+                elif suffix not in IMAGE_SUFFIXES and suffix not in MEDIA_SUFFIXES:
                     headers["Content-Disposition"] = (
                         f"attachment; filename*=UTF-8''{quote(path.name)}"
                     )

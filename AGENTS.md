@@ -23,7 +23,8 @@ proxy with authentication (see SECURITY.md).
   bundle), qrcode-generator (`qrcode.js`, loaded lazily by `QR_JS`, which
   every page includes through `qr_script()`; `[data-qr]` buttons open it,
   an empty value meaning the current page, and loopback URLs are rebased on
-  `public_url`). Keep their licence files next to them;
+  `public_url`), pdf.js (`pdf.min.mjs` and `pdf.worker.min.mjs`, the
+  modern build of pdfjs-dist, Apache-2.0). Keep their licence files next to them;
   they ship in the wheel. marker.js is linkware: its credit line under the
   editor must stay visible.
 - `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user
@@ -69,15 +70,21 @@ Pages:
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
   skipped above 512 KB. Anything else returns 404 and downloads from `/poub`.
-- `/play/<project>/<name>`: a dropped video (`VIDEO_SUFFIXES`) in the
-  browser's player, under a nonce-only CSP with `media-src 'self'`
+- `/play/<project>/<name>`: a dropped video (`VIDEO_SUFFIXES`) or audio
+  file (`AUDIO_TYPES`) in the browser's player, under a nonce-only CSP with
+  `media-src 'self'`
+- `/pdf/<project>/<name>`: a dropped PDF drawn by pdf.js on canvases. The
+  CSP keeps `script-src` nonce-only (module imports inherit the nonce) and
+  allows `worker-src 'self'` and `connect-src 'self'` for the worker and
+  the fetch of `/poub`
 - `/clip/md`: the clipboard, rendered as markdown
 
 Files:
 
 - `/shot/<key>`, `/thumb/<key>`
 - `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
-  Images and videos are served inline, everything else as an attachment.
+  Images, videos and audio are served inline, everything else as an
+  attachment.
   `send_file` answers a single `Range` with 206, so players can seek.
 - `/download/...` for APKs
 - `/vendor/...`

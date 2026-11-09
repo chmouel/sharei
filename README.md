@@ -18,7 +18,8 @@ while.
 
 Drop holds files you send either way. Markdown opens formatted the way GitHub
 shows it, code opens with colours and line numbers, pictures open full
-screen, and videos play right in the page. Any file there can be set to expire too.
+screen, videos and audio play right in the page, and PDFs open page by page
+even on phones that would otherwise only download them. Any file there can be set to expire too.
 
 Clipboard is a shared note. Paste on one device and copy on the other.
 It clears itself after ten minutes unless you change that. The last five
@@ -172,5 +173,5 @@ GitHub's hourly limit and needs no permissions.
 ## Licence
 
 Apache 2.0. sharei bundles github-markdown-css, mermaid, highlight.js,
-qrcode-generator and marker.js, with their licences next to them in
+qrcode-generator, pdf.js and marker.js, with their licences next to them in
 `src/sharei/vendor/`.
