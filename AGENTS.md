@@ -21,6 +21,8 @@ proxy with authentication (see SECURITY.md).
   anything else as is. With no arguments it shows a `gum` menu.
   `sharec get [clip|drop|shot|list] [N]` reads back through `/clip/raw` and
   `/recent` (N is steps back from the newest) and never overwrites a file.
+  `sharec clip [TEXT|-] [--ttl S] [--clear]` writes `/clip`, `/clip/ttl` and
+  `/clip/clear`; with `--ttl` and no TEXT only the expiry changes.
   On a terminal, `drop`/`shot` draw images with the kitty graphics protocol
   (PNG as is, other raster formats through Pillow) on the alternate screen,
   sized to the window (`browse`: j/space/right and k/backspace/delete/left
@@ -195,9 +197,16 @@ These exist on purpose. Keep them when changing or adding code.
   sets `data-theme` and `data-mode` on `<html>`.
 - `sharec` uses `gum` for menus and prompts, and `yazi` when present to
   pick files. Its environment variables:
-  - `SHAREI_URL`: upload target, default `http://localhost:8000`
+  - `SHAREI_URL`: server for every request. Unset, `target()` uses
+    `http://localhost:8000`, or `SHAREI_PUBLIC_URL` when that is set and
+    nothing listens on port 8000.
   - `SHAREI_PUBLIC_URL`: base for printed links, default `SHAREI_URL`
-  - `SHAREI_PROJECT`: default project
+  - `SHAREI_PROJECT`: default project. Uploads otherwise use the current
+    git repository's name (`repo_project()`), then the server's default.
+  - `SHAREI_PASS_ENTRY`: pass entry for basic auth on https servers
+    (password on line 1, optional `user:` line). Without it `~/.netrc` is
+    read. All requests go through `request()`, which sends the header
+    unredirected so a redirect cannot carry it to another host.
 
 ## Testing
 

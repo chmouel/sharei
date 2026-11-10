@@ -163,10 +163,28 @@ sharec -c                # send the clipboard text as a markdown note
 sharec                   # pick from a menu
 ```
 
-It prints the link to open on your phone. Set `SHAREI_PUBLIC_URL` to your
-public address (for example `https://share.example.com`) so those links work
-away from home. The menu needs [gum](https://github.com/charmbracelet/gum). Zsh
-completion lives in [`contrib/_sharec`](contrib/_sharec).
+It prints the link to open on your phone, or the details as JSON with
+`--json`. Inside a git repository, files go to a project named after it;
+`-p` or `SHAREI_PROJECT` picks another. A markdown file's pictures are only
+sent after you say yes, or straight away with `-y`.
+
+Set `SHAREI_PUBLIC_URL` to your public address (for example
+`https://share.example.com`) so those links work away from home. On a machine
+where sharei is not running, `sharec` then talks to that address. If it sits
+behind a password, put it in `~/.netrc`, or name a
+[pass](https://www.passwordstore.org/) entry in `SHAREI_PASS_ENTRY` (password
+on the first line, `user: NAME` on a later one). The menu needs
+[gum](https://github.com/charmbracelet/gum). Zsh completion lives in
+[`contrib/_sharec`](contrib/_sharec).
+
+To set the shared clipboard:
+
+```sh
+sharec clip 'some text'  # share a line of text
+git diff | sharec clip   # or whatever comes in on a pipe
+sharec clip --ttl 3600   # keep it an hour (0 keeps it until replaced)
+sharec clip --clear      # empty it
+```
 
 It can fetch things back too:
 
@@ -178,6 +196,7 @@ sharec get drop          # show the newest dropped file, image or text
 sharec get drop -f       # download it here instead
 sharec get shot 1 -o a.png  # save the previous screenshot as a.png
 sharec get list          # what is on sharei right now
+sharec get list --json   # the same, for scripts
 ```
 
 Images show up right in terminals that speak the kitty graphics protocol

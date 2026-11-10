@@ -1,4 +1,11 @@
+import base64
+import io
+import json
+import os
 import re
+import subprocess
+import sys
+import urllib.error
 import urllib.request
 
 import pytest
@@ -121,3 +128,93 @@ def test_get_browse_deletes_after_confirming(sharec, monkeypatch, capsysbinary):
     assert b"Delete a.png from sharei? y to confirm" in out
     assert out.endswith(b"\x1b[?1049l")
     assert [item["name"] for item in sharec.recent(10, "")["drop"]] == ["note.txt"]
+
+
+def test_clip_sets_text_ttl_and_clears(sharec, capsys):
+    sharec.clip_main(["first"])
+    sharec.clip_main(["second", "--ttl", "0"])
+    assert "never expires" in capsys.readouterr().err
+    assert sharec.fetch("/clip/raw") == b"second"
+    assert sharec.fetch("/clip/raw?n=1") == b"first"
+    sharec.clip_main(["--ttl", "60"])
+    assert sharec.fetch("/clip/raw") == b"second"
+    assert "expires in" in capsys.readouterr().err
+    sharec.clip_main(["--clear"])
+    assert sharec.fetch("/clip/raw") == b""
+    with pytest.raises(SystemExit):
+        sharec.clip_main([""])
+
+
+def test_upload_json_defaults_to_repo_project(sharec, tmp_path, monkeypatch, capsys):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:me/My.Repo.git",
+        ],
+        check=True,
+    )
+    (tmp_path / "notes.md").write_text("# hi\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sharec, "PUBLIC_URL", "https://share.example.com")
+    monkeypatch.setattr(sys, "argv", ["sharec", "notes.md", "--json"])
+    sharec.main()
+    response = json.loads(capsys.readouterr().out)
+    assert response["project"] == "My.Repo"
+    assert response["url"] == "https://share.example.com/poub/My.Repo/notes.md"
+    assert response["view"] == "https://share.example.com/md/My.Repo/notes.md"
+
+
+def test_https_requests_send_basic_auth(sharec, tmp_path, monkeypatch):
+    seen = []
+
+    def fake_urlopen(req, timeout):
+        seen.append(req)
+        return io.BytesIO(b"ok")
+
+    monkeypatch.setattr(sharec, "SHAREI_URL", "https://share.example.com")
+    monkeypatch.setattr(sharec, "AUTH", {})
+    monkeypatch.setattr(sharec.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("SHAREI_PASS_ENTRY", raising=False)
+    netrc_file = tmp_path / ".netrc"
+    netrc_file.write_text("machine share.example.com login me password secret\n")
+    netrc_file.chmod(0o600)
+    assert sharec.fetch("/clip/raw") == b"ok"
+    expected = "Basic " + base64.b64encode(b"me:secret").decode()
+    assert seen[0].unredirected_hdrs["Authorization"] == expected
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pass").write_text("#!/bin/sh\nprintf 'p4ss\\nuser: you\\n'\n")
+    (bin_dir / "pass").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("SHAREI_PASS_ENTRY", "web/share")
+    monkeypatch.setattr(sharec, "AUTH", {})
+    sharec.fetch("/clip/raw")
+    expected = "Basic " + base64.b64encode(b"you:p4ss").decode()
+    assert seen[1].unredirected_hdrs["Authorization"] == expected
+
+
+def test_falls_back_to_public_url_without_local_service(sharec, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise OSError("refused")
+
+    monkeypatch.setattr(sharec, "SHAREI_URL", "")
+    monkeypatch.setattr(sharec, "PUBLIC_URL", "https://share.example.com")
+    monkeypatch.setattr(sharec.socket, "create_connection", refuse)
+    assert sharec.target() == "https://share.example.com"
+
+
+def test_unauthorized_explains_how_to_log_in(sharec, monkeypatch):
+    def deny(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(sharec.urllib.request, "urlopen", deny)
+    with pytest.raises(sharec.Abort, match="SHAREI_PASS_ENTRY"):
+        sharec.fetch("/recent")

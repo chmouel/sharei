@@ -6,20 +6,26 @@ or .markdown is shared as markdown along with its local images; any other file
 is uploaded as is, and text files get a syntax-highlighted page.
 
 "sharec get" fetches the shared clipboard, the newest dropped file or
-screenshot, or lists what is there; see "sharec get --help".
+screenshot, or lists what is there; see "sharec get --help". "sharec clip"
+sets the shared clipboard; see "sharec clip --help".
 
-Environment: SHAREI_URL (upload target, default http://localhost:8000),
-SHAREI_PUBLIC_URL (base of the printed links, default SHAREI_URL),
-SHAREI_PROJECT (default project).
+Environment: SHAREI_URL (server to talk to; default http://localhost:8000,
+or SHAREI_PUBLIC_URL when nothing listens there), SHAREI_PUBLIC_URL (base of
+the printed links, default SHAREI_URL), SHAREI_PROJECT (default project),
+SHAREI_PASS_ENTRY (pass entry holding the basic auth password on its first
+line and an optional "user: NAME" line; without it, ~/.netrc is used for
+https servers).
 """
 
 import argparse
 import base64
 import io
 import json
+import netrc
 import os
 import re
 import shutil
+import socket
 import stat
 import struct
 import subprocess
@@ -29,11 +35,14 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import quote, unquote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlsplit
 
-SHAREI_URL = os.environ.get("SHAREI_URL", "http://localhost:8000").rstrip("/")
-# Base for the links printed for other devices; uploads still go to SHAREI_URL.
-PUBLIC_URL = (os.environ.get("SHAREI_PUBLIC_URL") or SHAREI_URL).rstrip("/")
+LOCAL_URL = "http://localhost:8000"
+# Empty until target() resolves it, so importing the module never touches the network.
+SHAREI_URL = os.environ.get("SHAREI_URL", "").rstrip("/")
+# Base for the links printed for other devices; requests still go to SHAREI_URL.
+PUBLIC_URL = os.environ.get("SHAREI_PUBLIC_URL", "").rstrip("/")
+PROJECT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 UPLOAD_FILE = "Upload a file"
 SCREENSHOT = "Capture and upload screenshot"
@@ -103,36 +112,113 @@ def confirm(question: str) -> bool:
     return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
 
 
-def upload(name: str, data: bytes, project: str) -> dict:
-    params = {"name": name, **({"project": project} if project else {})}
-    request = urllib.request.Request(
-        f"{SHAREI_URL}/upload?{urlencode(params)}", data=data, method="POST"
-    )
+def target() -> str:
+    """The server to talk to: SHAREI_URL, else the local service, else the public URL."""
+    global SHAREI_URL
+    if not SHAREI_URL:
+        SHAREI_URL = LOCAL_URL
+        if PUBLIC_URL:
+            try:
+                socket.create_connection(("localhost", 8000), timeout=0.5).close()
+            except OSError:
+                SHAREI_URL = PUBLIC_URL
+    return SHAREI_URL
+
+
+def public_url() -> str:
+    return PUBLIC_URL or target()
+
+
+def credentials(host: str) -> tuple[str, str] | None:
+    """Basic auth user and password for host, from SHAREI_PASS_ENTRY or ~/.netrc."""
+    entry = os.environ.get("SHAREI_PASS_ENTRY")
+    if entry:
+        try:
+            secret = subprocess.run(
+                ["pass", "show", entry],
+                capture_output=True,
+                text=True,
+                check=True,
+                stdin=subprocess.DEVNULL,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise Abort(f"Cannot read pass entry {entry}.") from error
+        lines = secret.splitlines()
+        user = next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in lines[1:]
+                if line.lower().startswith("user:")
+            ),
+            os.environ.get("USER", ""),
+        )
+        return user, lines[0] if lines else ""
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as error:
+        found = netrc.netrc().authenticators(host)
+    except (OSError, netrc.NetrcParseError):
+        return None
+    return (found[0] or "", found[2] or "") if found else None
+
+
+AUTH: dict[str, str | None] = {}
+
+
+def request(
+    path: str,
+    data: bytes | None = None,
+    headers: dict | None = None,
+    timeout: int = 300,
+):
+    """Open path on the sharei server, adding basic auth for https servers."""
+    url = f"{target()}{path}"
+    req = urllib.request.Request(url, data=data, headers=headers or {})
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        if parts.hostname not in AUTH:
+            found = credentials(parts.hostname or "")
+            AUTH[parts.hostname] = (
+                base64.b64encode(f"{found[0]}:{found[1]}".encode()).decode()
+                if found
+                else None
+            )
+        if AUTH[parts.hostname]:
+            # Unredirected so a redirect to another host cannot carry the password.
+            req.add_unredirected_header(
+                "Authorization", f"Basic {AUTH[parts.hostname]}"
+            )
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def failure(action: str, error: Exception) -> Abort:
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code == 401:
+            return Abort(
+                f"{action} failed: {target()} wants a login; set SHAREI_PASS_ENTRY "
+                "or add it to ~/.netrc."
+            )
         try:
             detail = json.load(error).get("error", error.reason)
-        except ValueError:
+        except (ValueError, AttributeError):
             detail = error.reason
-        raise Abort(f"Uploading {name} failed: {detail}") from error
+        return Abort(f"{action} failed: {detail}")
+    return Abort(f"{action} failed: {error}")
+
+
+def upload(name: str, data: bytes, project: str) -> dict:
+    params = {"name": name, **({"project": project} if project else {})}
+    try:
+        with request(f"/upload?{urlencode(params)}", data) as response:
+            return json.load(response)
     except (urllib.error.URLError, OSError, ValueError) as error:
-        raise Abort(f"Uploading {name} failed: {error}") from error
+        raise failure(f"Uploading {name}", error) from error
 
 
 def fetch(path: str) -> bytes:
     try:
-        with urllib.request.urlopen(f"{SHAREI_URL}{path}", timeout=300) as response:
+        with request(path) as response:
             return response.read()
-    except urllib.error.HTTPError as error:
-        try:
-            detail = json.load(error).get("error", error.reason)
-        except ValueError:
-            detail = error.reason
-        raise Abort(f"Fetching {path} failed: {detail}") from error
     except (urllib.error.URLError, OSError) as error:
-        raise Abort(f"Fetching {path} failed: {error}") from error
+        raise failure(f"Fetching {path}", error) from error
 
 
 def recent(limit: int, project: str) -> dict:
@@ -140,7 +226,30 @@ def recent(limit: int, project: str) -> dict:
     try:
         return json.loads(fetch(f"/recent?{urlencode(params)}"))
     except ValueError as error:
-        raise Abort(f"Unexpected answer from {SHAREI_URL}/recent") from error
+        raise Abort(f"Unexpected answer from {target()}/recent") from error
+
+
+def repo_project() -> str:
+    """The current git repository's name as a sharei project, or "" outside one."""
+    for command in (
+        ["git", "remote", "get-url", "origin"],
+        ["git", "rev-parse", "--show-toplevel"],
+    ):
+        try:
+            name = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True,
+                stdin=subprocess.DEVNULL,
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        name = re.split(r"[/:]", name.rstrip("/").removesuffix(".git"))[-1]
+        name = re.sub(r"[^A-Za-z0-9._-]", "-", name).lstrip("._-")[:64]
+        if PROJECT_NAME.fullmatch(name):
+            return name
+    return ""
 
 
 def write_clipboard(data: bytes) -> None:
@@ -267,11 +376,10 @@ def delete_item(item: dict) -> None:
         path = "/shots/delete/" + url.removeprefix("/shot/")
     else:
         path = "/poub/delete/" + url.removeprefix("/poub/")
-    request = urllib.request.Request(f"{SHAREI_URL}{path}", data=b"", method="POST")
     try:
-        urllib.request.urlopen(request, timeout=30).close()
+        request(path, b"", timeout=30).close()
     except (urllib.error.URLError, OSError) as error:
-        raise Abort(f"Deleting {item['name']} failed: {error}") from error
+        raise failure(f"Deleting {item['name']}", error) from error
 
 
 def wait_key() -> bytes:
@@ -423,8 +531,11 @@ def get_file(
     print(f"Saved {item['project']}/{item['name']} to {target} ({human(len(data))})")
 
 
-def get_list(limit: int, project: str) -> None:
+def get_list(limit: int, project: str, as_json: bool = False) -> None:
     payload = recent(limit, project)
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return
     clip = payload["clip"]
     if clip["chars"]:
         print(f"clip   {clip['chars']} chars, {ago(clip['age_seconds'])}")
@@ -483,6 +594,9 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
         default=os.environ.get("SHAREI_PROJECT", ""),
         help="drop/shot/list: only this project (default: $SHAREI_PROJECT)",
     )
+    parser.add_argument(
+        "--json", action="store_true", help="list: print the raw /recent JSON"
+    )
     args = parser.parse_args(argv)
     if args.back < 0:
         parser.error("N must be 0 or more")
@@ -490,6 +604,8 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--copy only works with clip")
     if (args.output or args.file) and args.what not in ("drop", "shot"):
         parser.error("--file and --output only work with drop or shot")
+    if args.json and args.what != "list":
+        parser.error("--json only works with list")
     return args
 
 
@@ -498,7 +614,7 @@ def get_main(argv: list[str]) -> int:
     if args.what == "clip":
         get_clip(args.back, args.copy)
     elif args.what == "list":
-        get_list(args.back or 5, args.project)
+        get_list(args.back or 5, args.project, args.json)
     else:
         get_file(
             "drop" if args.what == "drop" else "shots",
@@ -506,6 +622,72 @@ def get_main(argv: list[str]) -> int:
             args.project,
             args.output,
             save=args.file,
+        )
+    return 0
+
+
+def post_clip(path: str, data: bytes, headers: dict | None = None) -> dict:
+    try:
+        with request(path, data, headers, timeout=30) as response:
+            return json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise failure("Setting the clipboard", error) from error
+
+
+def clip_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sharec clip",
+        description="Set the shared clipboard, clear it, or change how long it "
+        "lasts. The text it replaces moves to the history.",
+    )
+    what = parser.add_mutually_exclusive_group()
+    what.add_argument(
+        "text",
+        nargs="?",
+        metavar="TEXT",
+        help="text to share; - reads standard input, as does no TEXT without --ttl",
+    )
+    what.add_argument("--clear", action="store_true", help="empty the clipboard")
+    parser.add_argument(
+        "--ttl",
+        type=int,
+        metavar="SECONDS",
+        help="expire after SECONDS, 0 for never (the server caps it at 7 days); "
+        "without TEXT only the expiry changes",
+    )
+    args = parser.parse_args(argv)
+    if args.ttl is not None and args.ttl < 0:
+        parser.error("--ttl must be 0 or more")
+    text = args.text
+    if text == "-" or (text is None and args.ttl is None and not args.clear):
+        if sys.stdin.isatty():
+            parser.error("give TEXT or pipe it in")
+        text = sys.stdin.buffer.read().decode("utf-8", "replace")
+        if not text:
+            parser.error("standard input is empty; use --clear to empty the clipboard")
+    if text == "":
+        parser.error("TEXT is empty; use --clear to empty the clipboard")
+    state = None
+    if args.clear:
+        state = post_clip("/clip/clear", b"")
+    elif text is not None:
+        state = post_clip(
+            "/clip", text.encode(), {"Content-Type": "text/plain; charset=utf-8"}
+        )
+    if args.ttl is not None:
+        state = post_clip(f"/clip/ttl?seconds={args.ttl}", b"")
+    if not state["chars"]:
+        print("The shared clipboard is empty.", file=sys.stderr)
+    elif not state["expires_at"]:
+        print(
+            f"Shared clipboard: {state['chars']} chars, never expires.", file=sys.stderr
+        )
+    else:
+        left = max(0, int(state["expires_at"] - time.time()))
+        print(
+            f"Shared clipboard: {state['chars']} chars, expires in "
+            f"{ago(left).removesuffix(' ago')}.",
+            file=sys.stderr,
         )
     return 0
 
@@ -723,28 +905,30 @@ def scan_images(document: Path, text: str) -> tuple[dict, list, dict, Path]:
     return images, spans, skipped, root
 
 
-def share_markdown_file(document: Path, name: str, project: str) -> bytes:
+def share_markdown_file(
+    document: Path, name: str, project: str, assume_yes: bool = False
+) -> bytes:
     """Upload the document's local images and return the markdown pointing at them."""
     document = Path(os.path.realpath(document))
     text = document.read_text(encoding="utf-8", errors="replace")
     images, spans, skipped, root = scan_images(document, text)
     if images:
-        print(f"Local images to upload (from {root}):")
+        print(f"Local images to upload (from {root}):", file=sys.stderr)
         for image in images.values():
-            print(f"  {image['label']}  {human(len(image['data']))}")
+            print(f"  {image['label']}  {human(len(image['data']))}", file=sys.stderr)
     if skipped:
-        print("Image references left as is:")
+        print("Image references left as is:", file=sys.stderr)
         for raw, reason in skipped.items():
-            print(f"  {raw}  ({reason})")
+            print(f"  {raw}  ({reason})", file=sys.stderr)
     if not images:
         return text.encode()
-    if not confirm(f"Upload these images with {name}?"):
+    if not assume_yes and not confirm(f"Upload these images with {name}?"):
         raise SystemExit(0)
     urls = {}
     for key, image in images.items():
         url = upload(image["name"], image["data"], project)["url"]
         urls[key] = quote(url, safe="/%")
-        print(f"Uploaded {image['label']} -> {url}")
+        print(f"Uploaded {image['label']} -> {url}", file=sys.stderr)
     for start, end, key in sorted(spans, reverse=True):
         text = text[:start] + urls[key] + text[end:]
     return text.encode()
@@ -792,7 +976,19 @@ def parse_args() -> argparse.Namespace:
         "-p",
         "--project",
         default=os.environ.get("SHAREI_PROJECT", ""),
-        help="sharei project (default: $SHAREI_PROJECT or the server's inbox)",
+        help="sharei project (default: $SHAREI_PROJECT, else the current git "
+        "repository's name, else the server's inbox)",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="upload a markdown file's local images without asking",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the upload's JSON, with absolute url and view links",
     )
     parser.add_argument("file", nargs="?", type=Path, metavar="FILE")
     args = parser.parse_args()
@@ -810,6 +1006,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     if sys.argv[1:2] == ["get"]:
         return get_main(sys.argv[2:])
+    if sys.argv[1:2] == ["clip"]:
+        return clip_main(sys.argv[2:])
     args = parse_args()
     action = args.action or gum("choose", *ACTIONS)
     if not action:
@@ -820,6 +1018,7 @@ def main() -> int:
     if action == GET_DROP:
         get_file("drop", 0, args.project, None)
         return 0
+    project = args.project or repo_project()
     with tempfile.TemporaryDirectory() as workdir:
         if action == UPLOAD_FILE:
             file = args.file or pick_file()
@@ -833,7 +1032,7 @@ def main() -> int:
         elif action == MARKDOWN_FILE:
             file = args.file or pick_file()
             name = markdown_name(args.name or file.name)
-            data = share_markdown_file(file, name, args.project)
+            data = share_markdown_file(file, name, project, args.yes)
         else:
             data = read_clipboard()
             name = args.name or gum(
@@ -846,11 +1045,17 @@ def main() -> int:
             if name is None:
                 return 0
             name = markdown_name(Path(name or "note.md").name)
-    response = upload(name, data, args.project)
+    response = upload(name, data, project)
+    for key in ("url", "view"):
+        if response.get(key):
+            response[key] = f"{public_url()}{response[key]}"
+    if args.json:
+        print(json.dumps(response, indent=2))
+        return 0
     print(f"Uploaded {response.get('name', name)} ({human(response.get('size', 0))})")
-    print(f"Download: {PUBLIC_URL}{response['url']}")
+    print(f"Download: {response['url']}")
     if response.get("view"):
-        print(f"Open it:  {PUBLIC_URL}{response['view']}")
+        print(f"Open it:  {response['view']}")
     return 0
 
 
