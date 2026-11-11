@@ -8,11 +8,19 @@ proxy with authentication (see SECURITY.md).
 
 ## Files
 
-- `src/sharei/server.py`: the server, one Python file (stdlib `http.server`;
-  Pillow optional for thumbnails, pillow-heif optional for turning HEIC
-  uploads into JPEG). It holds all the HTML, CSS and JS as inline
-  strings. There is no build step and no frontend toolchain. Entry point
-  `sharei` (`main`).
+- `src/sharei/server.py`: the server (stdlib `http.server`; Pillow optional
+  for thumbnails, pillow-heif optional for turning HEIC uploads into JPEG):
+  settings, storage, the page builders, the request handler and `main`.
+  Entry point `sharei` (`main`). HTML, CSS and JS are inline Python strings;
+  there is no build step and no frontend toolchain. The static ones live in
+  their own modules, which server.py imports by name:
+  - `src/sharei/themes.py`: `THEMES`, `READER_THEMES` and the theme CSS/JS
+  - `src/sharei/reader.py`: the markdown reader's CSS and `MARKDOWN_JS`
+  - `src/sharei/assets.py`: CSS/JS for the app pages and the code, PDF and
+    player viewers
+  Code that reads a setting `main()` assigns (`ROOT`, `PUBLIC_URL`,
+  `PUSH_ENABLED`, `QR_ENABLED`, `THEME_DEFAULT`...) stays in server.py, so
+  tests can keep monkeypatching `server.*`.
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
   `PUSH_ENABLED` stays false and every push route is a 404.
