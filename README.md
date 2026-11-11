@@ -221,10 +221,10 @@ overwrite a file; they become `name-1.ext` instead.
 
 ## Privacy
 
-Everything stays on your computer except markdown: sharei asks GitHub to format
-it, the same way github.com shows a README. Keep that in mind before opening a
-private document in the markdown view. A GitHub token in the config raises
-GitHub's hourly limit and needs no permissions.
+Everything stays on your computer. Markdown is formatted by your own browser,
+so even a private document never leaves it. The GitHub button on a markdown
+page is the one exception: pressing it sends that document to GitHub to be
+formatted their way.
 
 With notifications on, each notification (a file name or the start of the
 clipboard text) travels through your browser maker's push service (Google,
@@ -232,6 +232,7 @@ Mozilla, Apple). It is encrypted for your browser, so the service can't read it.
 
 ## Licence
 
-Apache 2.0. sharei bundles github-markdown-css, mermaid, highlight.js,
-qrcode-generator, pdf.js and marker.js, with their licences next to them in
+Apache 2.0. sharei bundles github-markdown-css, markdown-it, DOMPurify,
+mermaid, highlight.js, qrcode-generator, pdf.js and marker.js, with their
+licences next to them in
 `src/sharei/vendor/`.

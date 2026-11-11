@@ -1,5 +1,6 @@
 import io
 import json
+import threading
 import urllib.error
 import urllib.request
 
@@ -53,6 +54,64 @@ def test_view_page_themes_under_csp(live_server):
     nonce = headers["Content-Security-Policy"].split("'nonce-")[1].split("'")[0]
     assert f'<script nonce="{nonce}">'.encode() in body
     assert b'data-theme-default="auto"' in body
+
+
+def test_markdown_source_is_embedded_for_the_browser(live_server):
+    text = "# Hi\n\n</script><script>alert(1)</script> & <b>\n"
+    result = upload(live_server, "notes.md", text.encode())
+    _, headers, body = get(live_server + result["view"])
+    assert b"<script>alert(1)" not in body
+    page = body.decode()
+    block = page.split('<script type="application/json" id="markdown-source">')[1]
+    assert json.loads(block.split("</script>", 1)[0]) == text
+    nonce = headers["Content-Security-Policy"].split("'nonce-")[1].split("'")[0]
+    for name in ("markdown-it.min.js", "purify.min.js"):
+        assert f'<script nonce="{nonce}" src="/vendor/{name}"></script>' in page
+        assert get(f"{live_server}/vendor/{name}")[0] == 200
+
+
+def test_github_rendering_is_proxied_on_demand(live_server, tmp_path, monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from sharei import server
+
+    calls = []
+
+    class FakeGitHub(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            calls.append(body)
+            status = 200 if body["text"] == "# hi" else 422
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b"<h1>hi</h1>")
+
+        def log_message(self, *args):
+            pass
+
+    github = ThreadingHTTPServer(("127.0.0.1", 0), FakeGitHub)
+    threading.Thread(target=github.serve_forever, daemon=True).start()
+    monkeypatch.setattr(server, "GITHUB_API", f"http://127.0.0.1:{github.server_port}")
+    monkeypatch.setattr(server, "MARKDOWN_CACHE", tmp_path / "markdown")
+    monkeypatch.setattr(server, "GITHUB_TOKEN", None)
+    try:
+        upload(live_server, "notes.md", b"# hi")
+        get(live_server + "/md/inbox/notes.md")
+        assert calls == []
+        for _ in range(2):
+            assert post(live_server + "/markdown/github", b"# hi") == {
+                "html": "<h1>hi</h1>"
+            }
+        assert calls == [{"text": "# hi", "mode": "gfm"}]
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(live_server + "/markdown/github", b"bad")
+        assert error.value.code == 502
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(live_server + "/markdown/github", b"x" * (400 * 1024 + 1))
+        assert error.value.code == 413
+    finally:
+        github.shutdown()
+        github.server_close()
 
 
 def test_reader_css_covers_both_modes():

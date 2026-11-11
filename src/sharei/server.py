@@ -220,6 +220,10 @@ VENDOR = SCRIPT_DIR / "vendor"
 # Only these files are reachable under /vendor/, everything else in that folder stays private.
 VENDOR_TYPES = {
     "highlight.min.js": "text/javascript; charset=utf-8",
+    "markdown-it.min.js": "text/javascript; charset=utf-8",
+    "markdown-it-emoji.min.js": "text/javascript; charset=utf-8",
+    "markdown-it-footnote.min.js": "text/javascript; charset=utf-8",
+    "purify.min.js": "text/javascript; charset=utf-8",
     "markerjs3.js": "text/javascript; charset=utf-8",
     "markerjs-ui.js": "text/javascript; charset=utf-8",
     "github-markdown.css": "text/css; charset=utf-8",
@@ -251,8 +255,7 @@ CLIP_FILE = cache_root() / "clip.json"
 PUSH_DIR = cache_root() / "push"
 MARKDOWN_CACHE = cache_root() / "markdown"
 
-# Markdown is rendered by GitHub's API so it looks exactly like on github.com. A token only raises the
-# rate limit (60/h per IP without, 5000/h with); it needs no scopes.
+# Only used when the reader asks for GitHub's rendering; the default is local.
 GITHUB_API = os.environ.get("SHAREI_GITHUB_API", "https://api.github.com").rstrip("/")
 GITHUB_MARKDOWN_MAX_BYTES = 400 * 1024
 GITHUB_TOKEN: str | None = None
@@ -1857,12 +1860,9 @@ def github_token() -> str | None:
         return GITHUB_TOKEN
 
 
-def render_markdown(text: str) -> tuple[str, str | None]:
-    """GitHub's HTML for text, or escaped source and the reason when GitHub cannot render it."""
+def github_markdown(text: str) -> tuple[str | None, str | None]:
+    """GitHub's HTML for text, or None and the reason GitHub could not render it."""
     data = text.encode("utf-8")
-    fallback = f"<pre>{html.escape(text)}</pre>"
-    if len(data) > GITHUB_MARKDOWN_MAX_BYTES:
-        return fallback, "Too large for GitHub's renderer (400 KB), showing the source."
     cached = MARKDOWN_CACHE / f"{hashlib.sha256(data).hexdigest()}.html"
     try:
         return cached.read_text("utf-8"), None
@@ -1888,13 +1888,10 @@ def render_markdown(text: str) -> tuple[str, str | None]:
             rendered = response.read().decode("utf-8")
     except urllib.error.HTTPError as error:
         print(f"GitHub markdown API answered {error.code}: {error.reason}")
-        return (
-            fallback,
-            f"GitHub could not render it ({error.code} {error.reason}), showing the source.",
-        )
+        return None, f"GitHub could not render it ({error.code} {error.reason})."
     except (OSError, ValueError) as error:
         print(f"GitHub markdown API unreachable: {error}")
-        return fallback, "GitHub is unreachable, showing the source."
+        return None, "GitHub is unreachable."
     try:
         MARKDOWN_CACHE.mkdir(parents=True, exist_ok=True)
         temporary = cached.with_name(f"{cached.name}.{secrets.token_hex(4)}.part")
@@ -1916,6 +1913,12 @@ MARKDOWN_CSS = """
   .bar nav { display:flex; gap:14px; }
   .bar nav button { padding:0; border:0; background:none; color:var(--fgColor-accent); font:inherit; font-weight:600; cursor:pointer; }
   .bar nav button:hover { text-decoration:underline; }
+  .bar nav .renderer { display:inline-flex; align-items:center; gap:3px; margin:-4px 0; padding:4px 6px; border-radius:6px; color:var(--fgColor-muted); }
+  .bar nav .renderer:hover { color:var(--fgColor-default); text-decoration:none; }
+  .bar nav .renderer[aria-pressed="true"] { color:var(--fgColor-accent); background:color-mix(in srgb, var(--fgColor-accent) 18%, transparent); }
+  .bar nav .renderer:disabled { opacity:.5; cursor:progress; }
+  .bar nav .renderer[hidden] { display:none; }
+  .renderer svg { display:block; fill:currentColor; }
   .page { width:min(100%, 980px); margin:0 auto; padding:24px 16px 64px; }
   .notice { margin:0 0 16px; padding:10px 14px; border:1px solid color-mix(in srgb, var(--borderColor-attention-emphasis) 45%, transparent); border-radius:6px; background:var(--bgColor-attention-muted); color:var(--fgColor-default); font-size:14px; }
   .toc { margin:0 0 20px; padding:8px 14px; border:1px solid var(--borderColor-default); border-radius:6px; font-size:14px; }
@@ -1927,18 +1930,157 @@ MARKDOWN_CSS = """
   .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { position:relative; }
   .markdown-body .anchor { position:absolute; left:-1.1em; padding-right:.3em; color:var(--fgColor-muted); text-decoration:none; opacity:0; }
   .markdown-body :is(h1,h2,h3,h4,h5,h6):hover .anchor, .markdown-body .anchor:focus { opacity:1; }
+  .markdown-body .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .mermaid-diagram { margin:0 0 16px; overflow-x:auto; text-align:center; }
   .mermaid-diagram svg { max-width:100%; height:auto; }
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
 """
 
+# Octicons mark-github and markdown.
+RENDERER_BUTTON = (
+    '<button type="button" class="renderer" id="renderer" aria-pressed="false" '
+    'aria-label="Render with GitHub" title="Render with GitHub" hidden>'
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>'
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M14.85 3c.63 0 1.15.52 1.14 1.15v7.7c0 .63-.51 1.15-1.15 1.15H1.15C.52 13 0 12.48 0 11.84V4.15C0 3.52.52 3 1.15 3ZM9 11V5H7L5.5 7 4 5H2v6h2V8l1.5 1.92L7 8v3Zm2.99.5L14.5 8H13V5h-2v3H9.5Z"></path></svg>'
+    "</button>"
+)
+
+MARKDOWN_SCRIPTS = (
+    "highlight.min.js",
+    "markdown-it.min.js",
+    "markdown-it-footnote.min.js",
+    "markdown-it-emoji.min.js",
+    "purify.min.js",
+)
+
 MARKDOWN_JS = """
 (() => {
 const article = document.querySelector('article.markdown-body');
+const toc = document.getElementById('toc');
+const source = JSON.parse(document.getElementById('markdown-source').textContent);
 const poub = article.dataset.poub || '';
 const md = article.dataset.md || '';
 const outside = /^(?:[a-z][a-z0-9+.-]*:|#|\\/)/i;
 const markdownName = /\\.(?:md|markdown)$/i;
+
+// GitHub's alert titles and octicons, so github-markdown.css styles them as on github.com.
+const ALERTS = {
+  note: ['Note', 'info', 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'],
+  tip: ['Tip', 'light-bulb', 'M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z'],
+  important: ['Important', 'report', 'M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'],
+  warning: ['Warning', 'alert', 'M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'],
+  caution: ['Caution', 'stop', 'M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'],
+};
+const ALERT_MARK = /^\\[!(note|tip|important|warning|caution)\\][ \\t]*(?:\\n|$)/i;
+const TASK_MARK = /^\\[([ xX])\\][ \\t]+/;
+
+// Task lists, alerts and table alignment, written the way GitHub's renderer writes them.
+function githubFlavour(markdown) {
+  markdown.core.ruler.push('sharei_github', (state) => {
+    const tokens = state.tokens;
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index];
+      if ((token.type === 'th_open' || token.type === 'td_open') && token.attrGet('style')) {
+        const align = /text-align:(left|right|center)/.exec(token.attrGet('style'));
+        token.attrs = token.attrs.filter((attr) => attr[0] !== 'style');
+        if (align) token.attrSet('align', align[1]);
+      }
+      const inline = tokens[index + 2];
+      if (!inline || inline.type !== 'inline' || tokens[index + 1].type !== 'paragraph_open') continue;
+      const children = inline.children || [];
+      if (token.type === 'blockquote_open') {
+        const match = ALERT_MARK.exec(inline.content);
+        if (!match) continue;
+        const kind = match[1].toLowerCase();
+        let depth = 0, close = index;
+        for (; close < tokens.length; close++) {
+          if (tokens[close].type === 'blockquote_open') depth++;
+          else if (tokens[close].type === 'blockquote_close' && --depth === 0) break;
+        }
+        token.meta = { alert: kind };
+        tokens[close].meta = { alert: kind };
+        const marker = match[0].trim();
+        let consumed = '';
+        while (children.length && children[0].type === 'text' && consumed.length < marker.length) consumed += children.shift().content;
+        if (children.length && /^(soft|hard)break$/.test(children[0].type)) children.shift();
+        if (!children.length) tokens[index + 1].hidden = tokens[index + 3].hidden = true;
+      } else if (token.type === 'list_item_open') {
+        const match = TASK_MARK.exec(inline.content);
+        if (!match || !children.length || children[0].type !== 'text' || !children[0].content.startsWith(match[0])) continue;
+        children[0].content = children[0].content.slice(match[0].length);
+        const box = new state.Token('html_inline', '', 0);
+        box.content = '<input type="checkbox" class="task-list-item-checkbox" disabled' + (match[1] === ' ' ? '' : ' checked') + '> ';
+        children.unshift(box);
+        token.attrJoin('class', 'task-list-item');
+        for (let back = index - 1; back >= 0; back--) {
+          const list = tokens[back];
+          if (list.level === token.level - 1 && /^(bullet|ordered)_list_open$/.test(list.type)) {
+            if (!(list.attrGet('class') || '').includes('contains-task-list')) list.attrJoin('class', 'contains-task-list');
+            break;
+          }
+        }
+      }
+    }
+  });
+  const rules = markdown.renderer.rules;
+  rules.blockquote_open = (tokens, index, options, env, self) => {
+    const kind = tokens[index].meta && tokens[index].meta.alert;
+    if (!kind) return self.renderToken(tokens, index, options);
+    const [title, icon, path] = ALERTS[kind];
+    return '<div class="markdown-alert markdown-alert-' + kind + '"><p class="markdown-alert-title"><svg class="octicon octicon-' + icon + ' mr-2" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="' + path + '"></path></svg>' + title + '</p>\\n';
+  };
+  rules.blockquote_close = (tokens, index, options, env, self) =>
+    tokens[index].meta && tokens[index].meta.alert ? '</div>\\n' : self.renderToken(tokens, index, options);
+  rules.fence = (tokens, index) => {
+    const token = tokens[index];
+    const text = token.content.replace(/\\n$/, '');
+    const language = (token.info.trim().split(/\\s+/)[0] || '').toLowerCase().replace(/[^a-z0-9_+#.-]/g, '');
+    if (!language) return '<pre class="notranslate"><code>' + markdown.utils.escapeHtml(text) + '</code></pre>\\n';
+    const body = language !== 'mermaid' && window.hljs && hljs.getLanguage(language)
+      ? hljs.highlight(text, { language: language, ignoreIllegals: true }).value
+      : markdown.utils.escapeHtml(text);
+    // The highlight-source-* wrapper is what the mermaid step below looks for.
+    return '<div class="highlight highlight-source-' + language + '"><pre class="notranslate">' + body + '</pre></div>\\n';
+  };
+  if (rules.footnote_ref) {
+    rules.footnote_caption = (tokens, index) => String(tokens[index].meta.id + 1);
+    const footnoteRef = rules.footnote_ref;
+    rules.footnote_ref = (...args) => footnoteRef(...args).replace('<a ', '<a data-footnote-ref aria-describedby="footnote-label" ');
+    rules.footnote_block_open = () => '<section class="footnotes" data-footnotes>\\n<h2 id="footnote-label" class="sr-only">Footnotes</h2>\\n<ol>\\n';
+    rules.footnote_block_close = () => '</ol>\\n</section>\\n';
+  }
+}
+
+// Raw HTML in the file, and whatever GitHub sends back, is untrusted: DOMPurify drops scripts,
+// handlers and javascript: URLs, and the fragment stays in its inert document until its links
+// are rewritten below.
+function sanitize(markup) {
+  return DOMPurify.sanitize(markup, {
+    RETURN_DOM_FRAGMENT: true,
+    FORBID_TAGS: ['style', 'form', 'button', 'textarea', 'select'],
+    FORBID_ATTR: ['style'],
+  });
+}
+
+let markdown = null;
+function renderLocal() {
+  try {
+    if (!markdown) {
+      markdown = window.markdownit({ html: true, linkify: true });
+      if (window.markdownitFootnote) markdown.use(window.markdownitFootnote);
+      if (window.markdownitEmoji) markdown.use(window.markdownitEmoji);
+      githubFlavour(markdown);
+    }
+    return sanitize(markdown.render(source));
+  } catch (error) {
+    console.error('markdown rendering failed', error);
+    const pre = document.createElement('pre');
+    pre.textContent = source;
+    const fragment = document.createDocumentFragment();
+    fragment.append(pre);
+    return fragment;
+  }
+}
 
 // Files are flat in the drop folder, so a relative ./img/a.png is looked up as a.png next to this file.
 function local(value) {
@@ -1950,70 +2092,15 @@ function local(value) {
   return name ? { name: name, hash: match[2] || '' } : null;
 }
 
-if (poub) {
-  for (const image of article.querySelectorAll('img[src]')) {
-    const found = local(image.getAttribute('src'));
-    if (found) image.src = poub + encodeURIComponent(found.name);
-  }
-  for (const link of article.querySelectorAll('a[href]')) {
-    const found = local(link.getAttribute('href'));
-    if (!found) continue;
-    link.href = markdownName.test(found.name)
-      ? md + encodeURIComponent(found.name) + found.hash
-      : poub + encodeURIComponent(found.name);
-  }
-}
-
-const seen = new Map();
-const entries = [];
-for (const heading of article.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
-  const text = heading.textContent.trim();
-  let slug = text.toLowerCase().replace(/[^\\p{L}\\p{N}\\s_-]/gu, '').replace(/\\s/g, '-') || 'section';
-  const used = seen.get(slug) || 0;
-  seen.set(slug, used + 1);
-  if (used) slug += '-' + used;
-  heading.id = slug;
-  const anchor = document.createElement('a');
-  anchor.className = 'anchor';
-  anchor.href = '#' + slug;
-  anchor.textContent = '#';
-  anchor.setAttribute('aria-label', 'Link to ' + text);
-  heading.prepend(anchor);
-  const level = Number(heading.tagName[1]);
-  if (level <= 3) entries.push({ slug: slug, text: text, level: level });
-}
-
-const toc = document.getElementById('toc');
-if (toc && entries.length >= 3) {
-  const top = Math.min(...entries.map((entry) => entry.level));
-  const list = toc.querySelector('ol');
-  for (const entry of entries) {
-    const item = document.createElement('li');
-    item.style.paddingLeft = (entry.level - top) * 16 + 'px';
-    const link = document.createElement('a');
-    link.href = '#' + entry.slug;
-    link.textContent = entry.text;
-    item.append(link);
-    list.append(item);
-  }
-  toc.hidden = false;
-}
-
-if (location.hash) {
-  let target = null;
-  try { target = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (error) { /* bad hash */ }
-  if (target) target.scrollIntoView();
-}
-
-const diagrams = [...article.querySelectorAll('.highlight-source-mermaid')];
-if (diagrams.length) {
-  const script = document.createElement('script');
-  script.src = '/vendor/mermaid.min.js';
-  script.onload = async () => {
+let diagramCount = 0;
+function drawDiagrams() {
+  const diagrams = [...article.querySelectorAll('.highlight-source-mermaid')];
+  if (!diagrams.length) return;
+  const draw = async () => {
     const dark = document.documentElement.dataset.mode === 'dark';
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
-    for (const [index, block] of diagrams.entries()) {
-      const id = 'mermaid-' + index;
+    for (const block of diagrams) {
+      const id = 'mermaid-' + diagramCount++;
       try {
         const result = await mermaid.render(id, block.textContent);
         const holder = document.createElement('div');
@@ -2026,7 +2113,117 @@ if (diagrams.length) {
       }
     }
   };
+  if (window.mermaid) {
+    draw();
+    return;
+  }
+  const script = document.createElement('script');
+  script.src = '/vendor/mermaid.min.js';
+  script.onload = draw;
   document.head.append(script);
+}
+
+function show(content) {
+  if (poub) {
+    for (const image of content.querySelectorAll('img[src]')) {
+      const found = local(image.getAttribute('src'));
+      if (found) image.src = poub + encodeURIComponent(found.name);
+    }
+    for (const link of content.querySelectorAll('a[href]')) {
+      const found = local(link.getAttribute('href'));
+      if (!found) continue;
+      link.href = markdownName.test(found.name)
+        ? md + encodeURIComponent(found.name) + found.hash
+        : poub + encodeURIComponent(found.name);
+    }
+  }
+  article.replaceChildren(content);
+
+  const seen = new Map();
+  const entries = [];
+  for (const heading of article.querySelectorAll(':is(h1, h2, h3, h4, h5, h6):not(.sr-only)')) {
+    const text = heading.textContent.trim();
+    let slug = text.toLowerCase().replace(/[^\\p{L}\\p{N}\\s_-]/gu, '').replace(/\\s/g, '-') || 'section';
+    const used = seen.get(slug) || 0;
+    seen.set(slug, used + 1);
+    if (used) slug += '-' + used;
+    heading.id = slug;
+    const anchor = document.createElement('a');
+    anchor.className = 'anchor';
+    anchor.href = '#' + slug;
+    anchor.textContent = '#';
+    anchor.setAttribute('aria-label', 'Link to ' + text);
+    heading.prepend(anchor);
+    const level = Number(heading.tagName[1]);
+    if (level <= 3) entries.push({ slug: slug, text: text, level: level });
+  }
+
+  if (toc) {
+    const list = toc.querySelector('ol');
+    list.replaceChildren();
+    const top = Math.min(...entries.map((entry) => entry.level));
+    for (const entry of entries) {
+      const item = document.createElement('li');
+      item.style.paddingLeft = (entry.level - top) * 16 + 'px';
+      const link = document.createElement('a');
+      link.href = '#' + entry.slug;
+      link.textContent = entry.text;
+      item.append(link);
+      list.append(item);
+    }
+    toc.hidden = entries.length < 3;
+  }
+  drawDiagrams();
+}
+
+show(renderLocal());
+
+if (location.hash) {
+  let target = null;
+  try { target = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (error) { /* bad hash */ }
+  if (target) target.scrollIntoView();
+}
+
+// GitHub's rendering is opt-in: the text only leaves the server when this button is pressed.
+const toggle = document.getElementById('renderer');
+const status = document.getElementById('render-notice');
+let github = null;
+function pressed(on) {
+  const label = on ? 'Render locally' : 'Render with GitHub';
+  toggle.setAttribute('aria-pressed', String(on));
+  toggle.setAttribute('aria-label', label);
+  toggle.title = label;
+}
+if (toggle) {
+  toggle.hidden = false;
+  toggle.addEventListener('click', async () => {
+    status.hidden = true;
+    if (toggle.getAttribute('aria-pressed') === 'true') {
+      show(renderLocal());
+      pressed(false);
+      return;
+    }
+    toggle.disabled = true;
+    try {
+      if (github === null) {
+        const response = await fetch('/markdown/github', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          body: source,
+        });
+        const answer = await response.json();
+        if (!response.ok || typeof answer.html !== 'string') throw new Error(answer.error || response.statusText);
+        github = answer.html;
+      }
+      show(sanitize(github));
+      pressed(true);
+    } catch (error) {
+      status.textContent = 'GitHub rendering failed: ' + (error.message || error);
+      status.hidden = false;
+    } finally {
+      toggle.disabled = false;
+    }
+  });
 }
 })();
 """
@@ -2150,13 +2347,13 @@ def qr_script(nonce: str = "") -> str:
 
 def markdown_page(
     title: str,
-    rendered: str,
+    text: str,
     notice: str | None,
     back: tuple[str, str],
     links: list[tuple[str, str]],
     project: str | None = None,
 ) -> tuple[bytes, str]:
-    """The reader page and the nonce its inline script runs under."""
+    """The reader page and the nonce its scripts run under. The browser renders the markdown."""
     nonce = secrets.token_urlsafe(16)
     bases = (
         f' data-poub="/poub/{quote(project)}/" data-md="/md/{quote(project)}/"'
@@ -2170,6 +2367,19 @@ def markdown_page(
     banner = (
         f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
     )
+    # Escaped so no "</script>" in the text can close the data block early.
+    source = (
+        json.dumps(text)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+    highlight = len(text.encode("utf-8")) <= HIGHLIGHT_MAX_BYTES
+    scripts = "".join(
+        f'<script nonce="{nonce}" src="/vendor/{name}"></script>'
+        for name in MARKDOWN_SCRIPTS
+        if highlight or name != "highlight.min.js"
+    )
     document = f"""<!doctype html>
 <html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark"><title>{html.escape(title)}</title>
@@ -2177,12 +2387,12 @@ def markdown_page(
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
-<main class="page">{banner}
+<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<main class="page">{banner}<p class="notice" id="render-notice" role="status" hidden></p>
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
-<article class="markdown-body"{bases}>
-{rendered}
-</article></main>
+<article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
+<script type="application/json" id="markdown-source">{source}</script>
+{scripts}
 <script nonce="{nonce}">{MARKDOWN_JS}</script>
 {qr_script(nonce)}
 </body></html>"""
@@ -4219,11 +4429,10 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     self.send_error(404)
                     return
-                rendered, notice = render_markdown(text)
                 body, nonce = markdown_page(
                     path.name,
-                    rendered,
-                    notice,
+                    text,
+                    None,
                     ("Drop", "/drop"),
                     [("Raw", f"{url}?raw=1"), ("Download", url)],
                     project,
@@ -4259,13 +4468,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/clip/md":
             text = clip_snapshot()["text"]
-            rendered, notice = render_markdown(text) if text else ("", None)
-            if not text:
-                notice = "The clipboard is empty."
             body, nonce = markdown_page(
                 "Clipboard",
-                rendered,
-                notice,
+                text,
+                None if text else "The clipboard is empty.",
                 ("Clipboard", "/clip"),
                 [("Raw", "/clip/raw")],
             )
@@ -4447,6 +4653,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/upload":
             self.handle_upload()
+            return
+
+        if parsed.path == "/markdown/github":
+            data = self.read_body(GITHUB_MARKDOWN_MAX_BYTES)
+            if data is None:
+                self.send_json(
+                    {"error": "Too large for GitHub's renderer (400 KB)."}, 413
+                )
+                return
+            rendered, error = github_markdown(data.decode("utf-8", errors="replace"))
+            if rendered is None:
+                self.send_json({"error": error}, 502)
+            else:
+                self.send_json({"html": rendered})
             return
 
         if parsed.path == "/expiry":
@@ -5033,11 +5253,11 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "allow_hosts": list,
     "allow_origins": list,
     "artifacts": list,
-    "github_token": str,
-    "github_token_pass": str,
     "theme": str,
     "public_url": str,
     "push_subject": str,
+    "github_token": str,
+    "github_token_pass": str,
 }
 ARTIFACT_TYPES: dict[str, type] = {
     "name": str,
@@ -5182,8 +5402,9 @@ def main() -> None:
     parser.add_argument(
         "--github-token-pass",
         metavar="ENTRY",
-        help="pass entry whose first line is a GitHub token for markdown rendering, read on "
-        "first use; $GITHUB_TOKEN and the config's github_token win over it",
+        help="pass entry whose first line is a GitHub token for the on-demand GitHub "
+        "markdown rendering, read on first use; $GITHUB_TOKEN and the config's "
+        "github_token win over it",
     )
     args = parser.parse_args()
     path, required = config_path(args.config)

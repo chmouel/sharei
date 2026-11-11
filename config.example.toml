@@ -35,11 +35,11 @@
 # allow_hosts = ["share.example.com"]
 # allow_origins = ["https://share.example.com"]
 
-# Dropped .md files open at /md/<project>/<name>, rendered by GitHub's markdown API, so their
-# text is sent to api.github.com. A token only lifts the rate limit from 60 to 5000 renders
-# an hour; it needs no scopes (a fine-grained token with public read-only access and no
-# permissions is enough). $GITHUB_TOKEN wins over github_token, which wins over the pass entry
-# (first line, read on first render; --github-token-pass on the command line).
+# Markdown renders in the browser. The GitHub button on a markdown page sends the text to
+# api.github.com instead, only when pressed. A token only lifts that rate limit from 60 to
+# 5000 renders an hour; it needs no scopes (a fine-grained token with public read-only
+# access and no permissions is enough). $GITHUB_TOKEN wins over github_token, which wins
+# over the pass entry (first line, read on first use; --github-token-pass on the command line).
 # github_token = "github_pat_..."
 # github_token_pass = "github/sharei-markdown"
 

@@ -33,7 +33,9 @@ proxy with authentication (see SECURITY.md).
   (inline when stdin is not a terminal), and print text files with
   control characters stripped; anything else, `-f` or `-o` saves a file.
 - `src/sharei/vendor/`: third-party assets served at `/vendor/`:
-  github-markdown-css, mermaid, markerjs, highlight.js (common languages
+  github-markdown-css, markdown-it with its footnote and emoji plugins and
+  DOMPurify (the `/md` renderer, `MARKDOWN_SCRIPTS`), mermaid, markerjs,
+  highlight.js (common languages
   bundle), qrcode-generator (`qrcode.js`, loaded lazily by `QR_JS`, which
   every page includes through `qr_script()`; `[data-qr]` buttons open it,
   an empty value meaning the current page, and loopback URLs are rebased on
@@ -65,7 +67,7 @@ the service.
 - Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`
   (current text plus the last `CLIP_HISTORY_MAX` replaced ones, each keeping
   the TTL it had; Clear does not archive),
-  `thumbs/`, the rendered `markdown/` and `push/` (`vapid.pem` and
+  `thumbs/`, `markdown/` (GitHub renderings) and `push/` (`vapid.pem` and
   `subs.json`, both 0600).
 - Settings: `~/.config/sharei/config.toml`, or `$SHAREI_CONFIG`, or
   `--config`. Command-line flags take priority over the file.
@@ -81,7 +83,14 @@ Pages:
 - `/shots`: screenshots
 - `/clip`: clipboard
 - `/drop`: dropped files
-- `/md/<project>/<name>`: a dropped markdown file, rendered
+- `/md/<project>/<name>`: a dropped markdown file, rendered in the browser.
+  The page carries the text as an escaped JSON block; `MARKDOWN_JS` renders
+  it with markdown-it, writes GitHub's markup for task lists, alerts, tables,
+  footnotes and code (`div.highlight.highlight-source-<lang>`, which the
+  mermaid step looks for) so github-markdown.css styles it, then sanitizes
+  with DOMPurify. The GitHub button in the bar (`RENDERER_BUTTON`) swaps in
+  GitHub's rendering from `POST /markdown/github` and back; both go through
+  the same sanitizer and the same link, heading, TOC and mermaid steps
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
@@ -117,6 +126,9 @@ Data:
 
 POST:
 
+- `/markdown/github`: text/plain body, at most 400 KB (413 above). Returns
+  `{html}` from api.github.com's markdown API, cached in `markdown/`, or
+  `{error}` with 502
 - `/upload?project=&name=`: raw body. Collisions are renamed `name-1.ext`.
   A HEIC/HEIF body, recognised by suffix or by its `ftyp` brand, is rewritten
   as JPEG (PNG when the image has alpha) with `convert_heic_upload()` before
@@ -159,17 +171,22 @@ These exist on purpose. Keep them when changing or adding code.
   (`ARTIFACT_CACHE_SECONDS`); a page waits at most `ARTIFACT_FIRST_WAIT`.
   A glob root only picks git repos whose `.git` is a folder, so linked
   worktrees appear once, under their main checkout.
-- `/md` pages use a nonce-based CSP, and GitHub's rendered HTML is treated as
-  untrusted. Don't add inline handlers or unnonced scripts there. `/view`
+- `/md` pages use a nonce-based CSP. The markdown and any raw HTML in it are
+  untrusted: everything markdown-it produces goes through DOMPurify (no
+  `style`, forms or event handlers) before it reaches the page, and the
+  source is embedded with `<`, `>` and `&` escaped so it cannot close its
+  `<script>` block. Don't add inline handlers or unnonced scripts there. `/view`
   pages use a nonce-only `script-src` (no `'self'`, so an uploaded `.js` can
   never run) and the file text is HTML-escaped on the server.
+- Markdown text goes to api.github.com only when the reader presses the
+  GitHub button. Keep it that way: no page may call `/markdown/github` on
+  load. The token is optional and needs no scopes. Its order of precedence is
+  `$GITHUB_TOKEN`, then `github_token`, then `github_token_pass` (a `pass`
+  entry). Never log or print it.
 - An SVG is an image inside an `<img>` and a document with scripts in a tab,
   so `/poub`, `/shot` and `/thumb` serve one with `vector_headers`, which adds
   a `sandbox` Content-Security-Policy. Keep that on any new route that returns
   a vector, and keep SVG out of `ANNOTATE_TYPES`: a canvas will not take it.
-- Markdown text is sent to api.github.com. The token is optional and needs no
-  scopes. Its order of precedence is `$GITHUB_TOKEN`, then `github_token`,
-  then `github_token_pass` (a `pass` entry). Never log or print it.
 - Push sends outbound requests only to subscription endpoints that pass
   `push.endpoint_allowed()`: https, port 443, a hostname (no IP literal, no
   userinfo) whose every address is global. Redirects are never followed, at

@@ -23,8 +23,8 @@ hidden files and limits what uploaded pages and scripts can do in your
 browser. These are a second line of defence, not a replacement for the
 password in front.
 
-Markdown you open in sharei is sent to GitHub's API to be rendered. Don't use
-that view for text that must stay private.
+Markdown is formatted in your browser. Only the GitHub button on a markdown
+page sends the document to GitHub's API, and only when you press it.
 
 Phone notifications, when turned on, go through the push service of the
 phone's browser (Google, Mozilla or Apple). The message, a file name or the
