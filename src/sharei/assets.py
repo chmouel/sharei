@@ -1108,6 +1108,13 @@ FOLDER_ICON = (
     '2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/></svg>'
 )
 
+NOTE_ICON = (
+    '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" '
+    'fill-rule="evenodd" d="M7 2.5h7.2c.5 0 1 .2 1.4.6l3.3 3.3c.4.4.6.9.6 1.4v11.7a2 2 0 0 1-2 2H7a2 '
+    '2 0 0 1-2-2v-15a2 2 0 0 1 2-2ZM8.5 11h7v1.5h-7Zm0 3.5h7V16h-7Zm0-7h3.5V9H8.5Z"/>'
+    '<path fill="currentColor" opacity=".45" d="M14.5 2.6v3.4a1.5 1.5 0 0 0 1.5 1.5h3.4Z"/></svg>'
+)
+
 
 NOTES_CSS = """
   .notes-crumbs { display:flex; flex-wrap:wrap; gap:2px 6px; margin:0 0 8px; padding-right:48px; color:var(--muted); font-size:13px; }
@@ -1118,6 +1125,8 @@ NOTES_CSS = """
   .note-filter:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   .note-filter::placeholder { color:var(--faint); }
   .file .folder-mark { color:var(--accent); }
+  .file-thumb img.note-icon { width:64%; height:64%; object-fit:contain; }
+  h1 .note-icon { width:.9em; height:.9em; margin-right:.25em; object-fit:contain; vertical-align:-.08em; }
   .note-results[hidden], .note-tree[hidden] { display:none; }
   .note-results .file[hidden] { display:none; }
 """

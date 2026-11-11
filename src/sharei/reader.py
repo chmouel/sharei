@@ -139,6 +139,7 @@ READER_CSS = """
   .reader .crumbs a:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:2px; border-radius:3px; }
   .reader .crumbs span { opacity:.6; }
   .reader .crumbs b { color:var(--fgColor-default); font-weight:500; }
+  .reader .crumbs .note-icon { width:1.25em; height:1.25em; margin-right:5px; object-fit:contain; vertical-align:-.3em; }
   .reader .markdown-body mark { padding:.05em .2em; border-radius:3px; background:color-mix(in srgb, var(--fgColor-attention) 26%, transparent); color:inherit; }
   .reader .markdown-body .note-tag { padding:0 7px; border-radius:999px; background:color-mix(in srgb, var(--fgColor-accent) 14%, transparent); color:var(--fgColor-accent); font-size:.9em; font-weight:500; white-space:nowrap; }
   .reader .markdown-body .note-missing { color:var(--fgColor-muted); text-decoration:underline dotted color-mix(in srgb, var(--fgColor-muted) 50%, transparent); text-underline-offset:.2em; }

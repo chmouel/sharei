@@ -180,6 +180,7 @@ Notes open in the same reader as markdown in Drop, and understand Obsidian's
 own writing: links and embeds between notes, callouts (folded ones too),
 ==highlights==, #tags, and %%comments%%, which stay hidden. Pictures and PDFs
 kept elsewhere in the vault show up only when one of these notes uses them.
+Icons given to notes and folders with the Icon Fairy plugin show up too.
 Everything else in the vault stays private: a link to a note outside the
 chosen folders shows as plain text. Nothing is ever changed in the vault.
 

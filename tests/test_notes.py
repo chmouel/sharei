@@ -106,6 +106,31 @@ def test_note_link_map(live_server, vault):
     assert "secret" not in body
 
 
+def test_icon_fairy_icons(live_server, vault):
+    plugin = vault / ".obsidian" / "plugins" / "icon-fairy"
+    write(vault / ".obsidian" / "community-plugins.json", b'["icon-fairy"]')
+    icon_map = {
+        "Shared": {"type": "custom", "value": "folder"},
+        "Shared/Demo.md": {"value": "demo"},
+        "Private": {"type": "custom", "value": "private"},
+        "Private/Secret.md": {"type": "custom", "value": "secret"},
+        "Shared/Sub/Other.md": {"type": "custom", "value": "../escape"},
+    }
+    write(plugin / "data.json", json.dumps({"iconMap": icon_map}).encode())
+    for name in ("folder.png", "demo.svg", "private.png", "secret.png"):
+        write(plugin / "icons" / name, b"\x89PNG\r\n\x1a\n")
+    _, body = get(live_server + "/notes")
+    assert 'src="/notes-icon/folder.png"' in body
+    assert "private.png" not in body
+    _, body = get(live_server + "/notes/Shared/")
+    assert '<h1><img class="note-icon" src="/notes-icon/folder.png"' in body
+    assert 'src="/notes-icon/demo.svg"' in body
+    assert 'src="/notes-icon/demo.svg"' in get(live_server + "/notes/Shared/Demo.md")[1]
+    assert status(live_server + "/notes-icon/folder.png") == 200
+    for name in ("private.png", "secret.png", "missing.png", "..%2fdata.json"):
+        assert status(live_server + "/notes-icon/" + name) == 404
+
+
 @pytest.mark.parametrize(
     "folders", [["../x"], ["/etc"], ["Missing"], ["Shared/./x"], [".obsidian"]]
 )

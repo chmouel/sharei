@@ -157,6 +157,8 @@ Files:
 
 - `/notes-file/<path>`: vault bytes, with the same inline/attachment and
   SVG rules as `/poub` (`send_shared_file`)
+- `/notes-icon/<name>`: an Icon Fairy icon image (`notes.scan_icons()`),
+  shown on rows, folder titles and the reader trail
 - `/shot/<key>`, `/thumb/<key>`: an SVG is served as itself, since Pillow cannot
   rasterise one, so `/thumb` has nothing to cache for it
 - `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
@@ -258,7 +260,10 @@ These exist on purpose. Keep them when changing or adding code.
   a configured folder or is an attachment a shared note links to. The scan
   skips hidden parts, symlinks and `userIgnoreFilters` paths; links inside
   code and `%%comments%%` grant nothing. Everything else is a 404,
-  unshared notes included.
+  unshared notes included. The one thing read under `.obsidian` is the
+  Icon Fairy plugin, when enabled: `/notes-icon` serves only the
+  `icons/<id>.<ext>` files that a shared note or folder uses, by name,
+  regular files up to `ICON_MAX_BYTES`.
 - `sharec` checks a markdown file's local images before uploading them:
   - inside the git toplevel, or the file's directory, checked after realpath
   - no hidden path parts and no symlink escapes

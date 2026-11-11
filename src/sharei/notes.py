@@ -31,6 +31,9 @@ FENCE = re.compile(r"^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$", re.MULTILINE | re.DOT
 INLINE_CODE = re.compile(r"(`+)[^`\n].*?\1")
 COMMENT = re.compile(r"%%.*?%%", re.DOTALL)
 SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+ICON_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+ICON_SUFFIXES = (".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif")
+ICON_MAX_BYTES = 1024 * 1024
 
 
 class Vault(NamedTuple):
@@ -45,6 +48,9 @@ class Index(NamedTuple):
     by_name: dict[str, list[str]]
     shared: frozenset[str]
     attachments: frozenset[str]
+    # Icon Fairy: shared note or folder path -> icon file name, and that name -> its file.
+    icons: dict[str, str]
+    icon_files: dict[str, Path]
 
 
 VAULT: Vault | None = None
@@ -165,7 +171,7 @@ def scan(vault: Vault) -> Index:
     for relative in files:
         by_name.setdefault(posixpath.basename(relative).lower(), []).append(relative)
     shared = frozenset(relative for relative in files if in_folders(vault, relative))
-    partial = Index(files, by_name, shared, frozenset())
+    partial = Index(files, by_name, shared, frozenset(), {}, {})
     attachments = set()
     links = CACHE.get("links")
     cached: dict[str, tuple[float, list[str]]] = (
@@ -193,7 +199,70 @@ def scan(vault: Vault) -> Index:
             if found and not is_markdown(found):
                 attachments.add(found)
     CACHE["links"] = fresh
-    return Index(files, by_name, shared, frozenset(attachments - shared))
+    icons, icon_files = scan_icons(vault, shared)
+    return Index(
+        files, by_name, shared, frozenset(attachments - shared), icons, icon_files
+    )
+
+
+def scan_icons(
+    vault: Vault, shared: frozenset[str]
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """Icons the Icon Fairy plugin gives to shared notes and folders.
+
+    Only the icon images those paths use are kept, so the rest of the plugin's folder,
+    which sits under the hidden .obsidian, stays unreachable.
+    """
+    obsidian = vault.root / ".obsidian"
+    plugin = obsidian / "plugins" / "icon-fairy"
+    try:
+        enabled = json.loads((obsidian / "community-plugins.json").read_text("utf-8"))
+        data = json.loads((plugin / "data.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}, {}
+    icon_map = data.get("iconMap") if isinstance(data, dict) else None
+    if (
+        not isinstance(enabled, list)
+        or "icon-fairy" not in enabled
+        or not isinstance(icon_map, dict)
+    ):
+        return {}, {}
+    folders = set()
+    for relative in shared:
+        parts = relative.split("/")[:-1]
+        folders.update("/".join(parts[:depth]) for depth in range(1, len(parts) + 1))
+    icons: dict[str, str] = {}
+    icon_files: dict[str, Path] = {}
+    for path, entry in icon_map.items():
+        if not isinstance(path, str) or not isinstance(entry, dict):
+            continue
+        relative = key(path.strip("/"))
+        icon_id = entry.get("value")
+        if (
+            entry.get("type") not in (None, "custom")
+            or not isinstance(icon_id, str)
+            or not ICON_ID.fullmatch(icon_id)
+            or (
+                relative not in shared
+                and not (relative in folders and in_folders(vault, relative))
+            )
+        ):
+            continue
+        for suffix in ICON_SUFFIXES:
+            name = icon_id + suffix
+            file = plugin / "icons" / name
+            try:
+                if (
+                    not file.is_symlink()
+                    and file.is_file()
+                    and file.stat().st_size <= ICON_MAX_BYTES
+                ):
+                    icons[relative] = name
+                    icon_files[name] = file
+                    break
+            except OSError:
+                continue
+    return icons, icon_files
 
 
 def refresh() -> None:

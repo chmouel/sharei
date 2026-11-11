@@ -54,6 +54,7 @@ from sharei.assets import (
     EXPIRY_JS,
     EXTRA_CSS,
     FOLDER_ICON,
+    NOTE_ICON,
     LIVE_JS,
     NOTES_CSS,
     NOTES_JS,
@@ -1381,6 +1382,7 @@ def markdown_page(
     comments: str = "",
     note_links: dict[str, dict[str, str] | None] | None = None,
     crumbs: list[tuple[str, str]] | None = None,
+    icon: str = "",
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
@@ -1405,7 +1407,7 @@ def markdown_page(
             f'<a href="{html.escape(href)}">{html.escape(label)}</a><span aria-hidden="true">/</span>'
             for label, href in crumbs
         )
-        + f'<b aria-current="page">{html.escape(title)}</b>'
+        + f'<b aria-current="page">{icon}{html.escape(title)}</b>'
         + "</nav>"
         if crumbs
         else ""
@@ -1953,6 +1955,14 @@ def read_note(path: Path) -> str | None:
         return None
 
 
+def notes_icon(index: notes.Index, relative: str) -> str:
+    """The Icon Fairy icon Obsidian shows for this note or folder, as an <img>."""
+    name = index.icons.get(relative)
+    if not name:
+        return ""
+    return f'<img class="note-icon" src="{notes.url("/notes-icon/", name)}" alt="">'
+
+
 # Rows behind the filter box; the tree itself is not capped.
 NOTES_FILTER_MAX = 2000
 
@@ -1964,7 +1974,7 @@ def notes_row(index: notes.Index, relative: str, show_folder: bool) -> str:
     file_url = notes.url("/notes-file/", relative)
     download = ""
     if notes.is_markdown(name):
-        thumb, action, href = '<span aria-hidden="true">¶</span>', "Read", None
+        thumb, action, href = NOTE_ICON, "Read", None
         name = posixpath.splitext(name)[0]
     elif suffix in IMAGE_LIKE_SUFFIXES:
         thumb = f'<img src="{file_url}" alt="" loading="lazy" decoding="async">'
@@ -1979,6 +1989,8 @@ def notes_row(index: notes.Index, relative: str, show_folder: bool) -> str:
     else:
         thumb, action, href = '<span aria-hidden="true">▤</span>', "Get", file_url
         download = " download"
+    if icon := notes_icon(index, relative):
+        thumb = icon
     try:
         info = path.stat()
         meta = f"{human_size(info.st_size)} <i>·</i> {datetime.fromtimestamp(info.st_mtime):%b %-d, %Y}"
@@ -2014,7 +2026,7 @@ def notes_page(index: notes.Index, folder: str, tab_counts: Counts) -> bytes:
             files.append(relative)
     rows = [
         f'<a class="file" href="{notes.url("/notes/", prefix + name)}/">'
-        f'<span class="file-thumb folder-mark">{FOLDER_ICON}</span>'
+        f'<span class="file-thumb folder-mark">{notes_icon(index, prefix + name) or FOLDER_ICON}</span>'
         f'<span class="file-copy"><strong>{html.escape(name)}</strong>'
         f"<small>{size} {'file' if size == 1 else 'files'}</small></span>"
         '<span class="file-action">Open</span></a>'
@@ -2044,7 +2056,7 @@ def notes_page(index: notes.Index, folder: str, tab_counts: Counts) -> bytes:
     )
     total = f"{len(below)} {'file' if len(below) == 1 else 'files'}"
     body = f"""
-  <header>{trail}<h1>{html.escape(title)}</h1>{intro}</header>
+  <header>{trail}<h1>{notes_icon(index, folder)}{html.escape(title)}</h1>{intro}</header>
   <input class="note-filter" id="note-filter" type="search" placeholder="Filter by name" aria-label="Filter notes by name" autocomplete="off">
   <div class="shelf-label"><span>{"Shared folders" if not folder else "In this folder"}</span><span class="count" id="note-count">{total}</span></div>
   {listing}
@@ -2844,6 +2856,7 @@ class Handler(BaseHTTPRequestHandler):
                                 index, text, relative, looks_like_text
                             ),
                             crumbs=crumbs,
+                            icon=notes_icon(index, relative),
                         )
                         self.send_html(body, markdown_headers(nonce))
                         return
@@ -2858,6 +2871,14 @@ class Handler(BaseHTTPRequestHandler):
             path = notes.allowed(index, relative) if index is not None else None
             if path is not None:
                 self.send_shared_file(path, "raw" in parse_qs(parsed.query))
+                return
+
+        if parsed.path.startswith("/notes-icon/"):
+            index = notes.index()
+            name = unquote(parsed.path.removeprefix("/notes-icon/"))
+            path = index.icon_files.get(name) if index is not None else None
+            if path is not None:
+                self.send_shared_file(path, False)
                 return
 
         if parsed.path.startswith("/notes-pdf/"):
