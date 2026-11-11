@@ -144,7 +144,8 @@ Pages:
   the fetch of `/poub`
 - `/clip/md`: the clipboard, rendered as markdown
 - `/notes`, `/notes/<folder>/`: the shared vault folders, with a client-side
-  name filter (`NOTES_JS`) over the whole tree
+  name filter (`NOTES_JS`) over the whole tree, newest first (folders by their
+  newest note) with a toggle to A to Z kept in localStorage `sharei-notes-sort`
 - `/notes/<path>`: a note in the `/md` reader with breadcrumbs and no
   review, Raw or comments; a text file in the `/view` page. The page
   embeds `notes.link_map()` as `#notes-links`, and `obsidianFlavour()` in

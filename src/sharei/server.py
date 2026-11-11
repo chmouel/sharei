@@ -65,6 +65,7 @@ from sharei.assets import (
     QR_CSS,
     QR_JS,
     SHARE_JS,
+    SORT_ICON,
     SW_JS,
 )
 from sharei.reader import (
@@ -1993,14 +1994,16 @@ def notes_row(index: notes.Index, relative: str, show_folder: bool) -> str:
         thumb = icon
     try:
         info = path.stat()
+        changed = int(info.st_mtime)
         meta = f"{human_size(info.st_size)} <i>·</i> {datetime.fromtimestamp(info.st_mtime):%b %-d, %Y}"
     except OSError:
-        meta = ""
+        changed, meta = 0, ""
     if show_folder:
         meta = f"{html.escape(posixpath.dirname(relative))} <i>·</i> {meta}"
     return (
         f'<a class="file" href="{href or notes.url("/notes/", relative)}"{download} '
-        f'data-path="{html.escape(relative.lower())}">'
+        f'data-path="{html.escape(relative.lower())}" data-name="{html.escape(name.lower())}" '
+        f'data-time="{changed}">'
         f'<span class="file-thumb">{thumb}</span>'
         f'<span class="file-copy"><strong>{html.escape(name)}</strong><small>{meta}</small></span>'
         f'<span class="file-action">{action}</span></a>'
@@ -2011,26 +2014,34 @@ def notes_page(index: notes.Index, folder: str, tab_counts: Counts) -> bytes:
     """A shared folder of the vault: its subfolders, then its files, and a filter over
     everything below it."""
     prefix = folder + "/" if folder else ""
-    below = sorted(
-        (relative for relative in index.shared if relative.startswith(prefix)),
-        key=str.lower,
-    )
-    folders: dict[str, int] = {}
+    changed: dict[str, float] = {}
+    for relative in index.shared:
+        if relative.startswith(prefix):
+            try:
+                changed[relative] = index.files[relative].stat().st_mtime
+            except OSError:
+                changed[relative] = 0.0
+    # Newest first, then by name.
+    below = sorted(changed, key=lambda relative: (-changed[relative], relative.lower()))
+    folders: dict[str, tuple[int, float]] = {}
     files = []
     for relative in below:
         rest = relative[len(prefix) :]
         if "/" in rest:
             name = rest.split("/", 1)[0]
-            folders[name] = folders.get(name, 0) + 1
+            size, newest = folders.get(name, (0, changed[relative]))
+            folders[name] = (size + 1, newest)
         else:
             files.append(relative)
     rows = [
-        f'<a class="file" href="{notes.url("/notes/", prefix + name)}/">'
+        f'<a class="file" href="{notes.url("/notes/", prefix + name)}/" data-folder '
+        f'data-name="{html.escape(name.lower())}" data-time="{int(newest)}">'
         f'<span class="file-thumb folder-mark">{notes_icon(index, prefix + name) or FOLDER_ICON}</span>'
         f'<span class="file-copy"><strong>{html.escape(name)}</strong>'
-        f"<small>{size} {'file' if size == 1 else 'files'}</small></span>"
+        f"<small>{size} {'file' if size == 1 else 'files'} <i>·</i> "
+        f"{datetime.fromtimestamp(newest):%b %-d, %Y}</small></span>"
         '<span class="file-action">Open</span></a>'
-        for name, size in sorted(folders.items(), key=lambda item: item[0].lower())
+        for name, (size, newest) in folders.items()
     ] + [notes_row(index, relative, False) for relative in files]
     results = "".join(
         notes_row(index, relative, True) for relative in below[:NOTES_FILTER_MAX]
@@ -2058,7 +2069,7 @@ def notes_page(index: notes.Index, folder: str, tab_counts: Counts) -> bytes:
     body = f"""
   <header>{trail}<h1>{notes_icon(index, folder)}{html.escape(title)}</h1>{intro}</header>
   <input class="note-filter" id="note-filter" type="search" placeholder="Filter by name" aria-label="Filter notes by name" autocomplete="off">
-  <div class="shelf-label"><span>{"Shared folders" if not folder else "In this folder"}</span><span class="count" id="note-count">{total}</span></div>
+  <div class="shelf-label"><span>{"Shared folders" if not folder else "In this folder"}</span><span class="shelf-actions"><span class="count" id="note-count">{total}</span><button class="note-sort" id="note-sort" type="button" hidden>{SORT_ICON}<span>Newest</span></button></span></div>
   {listing}
   <div class="file-list note-results" id="note-results" hidden>{results}</div>
   <script>{NOTES_JS}</script>"""

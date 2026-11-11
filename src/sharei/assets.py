@@ -1108,6 +1108,12 @@ FOLDER_ICON = (
     '2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/></svg>'
 )
 
+SORT_ICON = (
+    '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" '
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M4 6h9M4 12h6M4 18h3M17 5v14m0 0-3-3m3 3 3-3"/></svg>'
+)
+
 NOTE_ICON = (
     '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" '
     'fill-rule="evenodd" d="M7 2.5h7.2c.5 0 1 .2 1.4.6l3.3 3.3c.4.4.6.9.6 1.4v11.7a2 2 0 0 1-2 2H7a2 '
@@ -1128,6 +1134,10 @@ NOTES_CSS = """
   .file-thumb img.note-icon { width:64%; height:64%; object-fit:contain; }
   h1 .note-icon { width:.9em; height:.9em; margin-right:.25em; object-fit:contain; vertical-align:-.08em; }
   .note-results[hidden], .note-tree[hidden] { display:none; }
+  .note-sort { display:inline-flex; align-items:center; gap:5px; padding:5px 9px; border:1px solid var(--edge); border-radius:9px; background:var(--field); color:var(--soft); font:inherit; font-size:12px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .note-sort:hover { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, var(--edge)); }
+  .note-sort:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .note-sort[hidden] { display:none; }
   .note-results .file[hidden] { display:none; }
 """
 
@@ -1155,6 +1165,31 @@ NOTES_JS = """
   }
   input.addEventListener('input', filter);
   filter();
+  const sort = document.getElementById('note-sort');
+  const label = sort.querySelector('span');
+  let mode = 'date';
+  try { if (localStorage.getItem('sharei-notes-sort') === 'name') mode = 'name'; } catch (_) {}
+  function order(list) {
+    const items = [...list.children].filter((row) => row.classList.contains('file'));
+    items.sort((a, b) =>
+      ('folder' in b.dataset) - ('folder' in a.dataset) ||
+      (mode === 'date' ? Number(b.dataset.time) - Number(a.dataset.time) : 0) ||
+      a.dataset.name.localeCompare(b.dataset.name, undefined, { numeric: true }));
+    list.append(...items);
+  }
+  function apply() {
+    label.textContent = mode === 'date' ? 'Newest' : 'A to Z';
+    sort.setAttribute('aria-label', mode === 'date' ? 'Sorted newest first, sort by name' : 'Sorted by name, sort newest first');
+    order(tree);
+    order(results);
+  }
+  sort.addEventListener('click', () => {
+    mode = mode === 'date' ? 'name' : 'date';
+    try { localStorage.setItem('sharei-notes-sort', mode); } catch (_) {}
+    apply();
+  });
+  sort.hidden = false;
+  apply();
 })();
 """
 

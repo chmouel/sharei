@@ -137,3 +137,16 @@ def test_icon_fairy_icons(live_server, vault):
 def test_config_rejects_bad_folders(vault, folders):
     with pytest.raises(SystemExit):
         notes.configure("test", {"vault": str(vault), "folders": folders})
+
+
+def test_newest_first(live_server, vault):
+    import os
+
+    os.utime(vault / "Shared" / "Demo.md", (1_000_000, 1_000_000))
+    os.utime(vault / "Shared" / "Sub" / "Other.md", (2_000_000, 2_000_000))
+    write(vault / "Shared" / "Fresh.md", b"new")
+    _, body = get(live_server + "/notes/Shared/")
+    tree = body.split('id="note-tree"', 1)[1].split('id="note-results"', 1)[0]
+    assert tree.index(">Sub<") < tree.index(">Fresh<") < tree.index(">Demo<")
+    results = body.split('id="note-results"', 1)[1]
+    assert results.index(">Fresh<") < results.index(">Other<") < results.index(">Demo<")
