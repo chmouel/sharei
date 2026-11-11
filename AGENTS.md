@@ -90,7 +90,13 @@ Pages:
   mermaid step looks for) so github-markdown.css styles it, then sanitizes
   with DOMPurify. The GitHub button in the bar (`RENDERER_BUTTON`) swaps in
   GitHub's rendering from `POST /markdown/github` and back; both go through
-  the same sanitizer and the same link, heading, TOC and mermaid steps
+  the same sanitizer and the same link, heading, TOC and mermaid steps.
+  `READER_CSS` styles the result on top of github-markdown.css, scoped under
+  `.reader` so it wins on specificity. The page frames code blocks with a
+  copy button, turns the contents into a sticky side rail from 1240px that
+  follows the section being read, draws a progress line under the bar, and
+  colours mermaid's base theme from the page's CSS variables.
+  Linkify ignores scheme-less links so `README.md` stays text.
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is

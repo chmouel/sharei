@@ -1936,6 +1936,113 @@ MARKDOWN_CSS = """
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
 """
 
+# The markdown reader only. Everything is scoped under .reader so it beats github-markdown.css
+# by specificity rather than by source order.
+READER_CSS = """
+  @media (prefers-reduced-motion:no-preference) { html { scroll-behavior:smooth; } }
+  ::selection { background:color-mix(in srgb, var(--fgColor-accent) 28%, transparent); }
+  .bar.progress::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--fgColor-accent); transform:scaleX(var(--progress, 0)); transform-origin:left; pointer-events:none; }
+  .page.reader { width:min(100%, 820px); }
+  .reader .notice { border-radius:10px; }
+
+  .reader .markdown-body { --measure:46rem; --mono:ui-monospace,"JetBrains Mono","SF Mono","Cascadia Code",Menlo,Consolas,monospace; max-width:var(--measure); margin:0 auto; font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",sans-serif; font-size:16px; line-height:1.7; font-feature-settings:"kern","liga","calt"; text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; overflow-wrap:break-word; }
+  .reader .markdown-body > :first-child { margin-top:0 !important; }
+  .reader .markdown-body p, .reader .markdown-body li { text-wrap:pretty; }
+
+  .reader .markdown-body :is(h1, h2, h3, h4, h5, h6) { color:var(--fgColor-default); font-weight:700; letter-spacing:-.015em; line-height:1.25; text-wrap:balance; border:0; padding:0; }
+  .reader .markdown-body h1 { margin:.2em 0 .55em; font-size:clamp(2rem, 1.45rem + 2.4vw, 2.75rem); font-weight:800; letter-spacing:-.032em; line-height:1.1; }
+  .reader .markdown-body h2 { margin:1.8em 0 .65em; padding-top:1.1em; border-top:1px solid var(--borderColor-muted); font-size:1.55rem; letter-spacing:-.022em; }
+  .reader .markdown-body :is(h1 + h2, hr + h2, h2:first-child) { margin-top:.6em; padding-top:0; border-top:0; }
+  .reader .markdown-body h3 { margin:1.6em 0 .5em; font-size:1.22rem; }
+  .reader .markdown-body h4 { margin:1.6em 0 .5em; font-size:1.04rem; }
+  .reader .markdown-body :is(h5, h6) { margin:1.5em 0 .4em; color:var(--fgColor-muted); font-size:.95rem; }
+  .reader .markdown-body h1 + p { color:var(--fgColor-muted); font-size:1.13em; line-height:1.6; }
+  .reader .markdown-body .anchor { left:-1em; color:var(--fgColor-accent); font-weight:500; }
+
+  .reader .markdown-body a:not(.anchor) { color:var(--fgColor-accent); text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--fgColor-accent) 35%, transparent); text-decoration-thickness:.08em; text-underline-offset:.2em; transition:text-decoration-color .15s; }
+  .reader .markdown-body a:not(.anchor):hover { text-decoration-color:currentColor; }
+  .reader .markdown-body a:focus-visible, .reader .toc a:focus-visible { outline:2px solid var(--focus-outlineColor, var(--fgColor-accent)); outline-offset:2px; border-radius:3px; }
+  .reader .markdown-body strong { font-weight:650; color:var(--fgColor-default); }
+
+  .reader .markdown-body :is(ul, ol) { padding-left:1.6em; }
+  .reader .markdown-body li + li, .reader .markdown-body li > :is(ul, ol) { margin-top:.35em; }
+  .reader .markdown-body li::marker { color:var(--fgColor-muted); }
+  .reader .markdown-body ol > li::marker { font-variant-numeric:tabular-nums; font-weight:600; }
+
+  .reader .markdown-body :not(pre) > code, .reader .markdown-body :not(pre) > tt { padding:.14em .4em; border:1px solid color-mix(in srgb, var(--fgColor-default) 7%, transparent); border-radius:6px; background:color-mix(in srgb, var(--fgColor-default) 7%, transparent); font-family:var(--mono); font-size:.85em; }
+  .reader .markdown-body a > code { color:inherit; }
+
+  .reader .code-block { margin:0 0 1.3em; border:1px solid var(--borderColor-default); border-radius:12px; background:var(--bgColor-muted); overflow:hidden; }
+  .reader .code-block-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:36px; padding:4px 6px 4px 14px; border-bottom:1px solid var(--borderColor-muted); color:var(--fgColor-muted); font:12px/1 var(--mono); }
+  .reader .code-block-head button { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; border:1px solid transparent; border-radius:7px; background:none; color:inherit; font:600 12px/1 system-ui,sans-serif; cursor:pointer; }
+  .reader .code-block-head button:hover { border-color:var(--borderColor-default); color:var(--fgColor-default); }
+  .reader .code-block-head button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:1px; }
+  .reader .code-block-head button.copied { color:var(--fgColor-success); }
+  .reader .code-block-head svg { fill:currentColor; }
+  .reader .code-block :is(.highlight, .snippet-clipboard-content) { margin:0; }
+  .reader .markdown-body .code-block pre { margin:0; padding:14px 16px; border-radius:0; background:none; font-family:var(--mono); font-size:13.5px; line-height:1.65; tab-size:4; }
+  .reader .markdown-body .code-block pre code { font-size:inherit; }
+
+  .reader .markdown-body blockquote { margin:0 0 1.15em; padding:.15em 0 .15em 1.15em; border-left:3px solid color-mix(in srgb, var(--fgColor-accent) 45%, var(--borderColor-default)); color:var(--fgColor-muted); }
+
+  .reader .markdown-body .markdown-alert { --alert:var(--borderColor-accent-emphasis); margin:0 0 1.3em; padding:.85em 1.15em; border:0; border-left:3px solid var(--alert); border-radius:4px 12px 12px 4px; background:color-mix(in srgb, var(--alert) 9%, transparent); color:var(--fgColor-default); }
+  .reader .markdown-body .markdown-alert.markdown-alert-tip { --alert:var(--borderColor-success-emphasis); }
+  .reader .markdown-body .markdown-alert.markdown-alert-important { --alert:var(--borderColor-done-emphasis); }
+  .reader .markdown-body .markdown-alert.markdown-alert-warning { --alert:var(--borderColor-attention-emphasis); }
+  .reader .markdown-body .markdown-alert.markdown-alert-caution { --alert:var(--borderColor-danger-emphasis); }
+  .reader .markdown-body .markdown-alert .markdown-alert-title { margin-bottom:.35em; font-weight:650; }
+
+  .reader .markdown-body table { border-collapse:separate; border-spacing:0; border:1px solid var(--borderColor-default); border-radius:12px; font-size:.93em; font-variant-numeric:tabular-nums; }
+  .reader .markdown-body table :is(th, td) { padding:9px 14px; border:0; border-bottom:1px solid var(--borderColor-muted); }
+  .reader .markdown-body table :is(th, td) + :is(th, td) { border-left:1px solid var(--borderColor-muted); }
+  .reader .markdown-body table th { background:var(--bgColor-muted); font-weight:650; text-align:left; }
+  .reader .markdown-body table th[align="center"], .reader .markdown-body table td[align="center"] { text-align:center; }
+  .reader .markdown-body table th[align="right"], .reader .markdown-body table td[align="right"] { text-align:right; }
+  .reader .markdown-body table :is(th, td):is([align="right"], [align="center"]) { white-space:nowrap; }
+  .reader .markdown-body table tr { background:none; border:0; }
+  .reader .markdown-body table tbody tr:nth-child(2n) { background:color-mix(in srgb, var(--bgColor-muted) 55%, transparent); }
+  .reader .markdown-body table tr:last-child > :is(th, td) { border-bottom:0; }
+  .reader .markdown-body table thead + tbody tr:first-child > * { border-top:0; }
+
+  .reader .markdown-body .contains-task-list { padding-left:.2em; }
+  .reader .markdown-body .task-list-item { list-style:none; }
+  .reader .markdown-body .task-list-item + .task-list-item { margin-top:.45em; }
+  .reader .markdown-body .task-list-item-checkbox { appearance:none; -webkit-appearance:none; width:1.1em; height:1.1em; margin:0 .55em 0 0; vertical-align:-.18em; border:1.5px solid var(--borderColor-default); border-radius:5px; background:var(--bgColor-default); }
+  .reader .markdown-body .task-list-item-checkbox { display:inline-grid; place-content:center; }
+  .reader .markdown-body .task-list-item-checkbox:checked { border-color:var(--fgColor-accent); background:var(--fgColor-accent); }
+  .reader .markdown-body .task-list-item-checkbox:checked::before { content:""; width:.28em; height:.55em; margin-top:-.12em; border:solid var(--bgColor-default); border-width:0 .13em .13em 0; transform:rotate(45deg); }
+  .reader .markdown-body .task-list-item:has(> .task-list-item-checkbox:checked) { color:var(--fgColor-muted); }
+
+  .reader .markdown-body hr { width:5rem; height:3px; margin:2.6em auto; border:0; border-radius:3px; background:var(--borderColor-default); }
+  .reader .markdown-body img { border-radius:10px; }
+  .reader .markdown-body :is(a, p) > img:only-child { display:inline-block; }
+  .reader .markdown-body details { margin:0 0 1.15em; padding:.55em 1em; border:1px solid var(--borderColor-default); border-radius:12px; }
+  .reader .markdown-body details > summary { margin:-.55em -1em; padding:.55em 1em; font-weight:600; cursor:pointer; }
+  .reader .markdown-body details[open] > summary { margin-bottom:.6em; border-bottom:1px solid var(--borderColor-muted); }
+  .reader .markdown-body kbd { font-family:var(--mono); }
+  .reader .markdown-body .footnotes { margin-top:3em; padding-top:1.2em; border-top:1px solid var(--borderColor-muted); color:var(--fgColor-muted); font-size:.88em; }
+  .reader .mermaid-diagram { margin:0 0 1.3em; padding:20px 16px; border:1px solid var(--borderColor-muted); border-radius:12px; background:var(--bgColor-muted); }
+
+  .reader .toc { margin:0 auto 28px; max-width:46rem; padding:6px 16px; border-color:var(--borderColor-muted); border-radius:12px; background:color-mix(in srgb, var(--bgColor-muted) 60%, transparent); }
+  .reader .toc summary { color:var(--fgColor-muted); font-size:13px; }
+  .reader .toc ol { margin:4px 0 10px; border-left:1px solid var(--borderColor-muted); }
+  .reader .toc li { padding:0; }
+  .reader .toc a { display:block; margin-left:-1px; padding:4px 0 4px 12px; border-left:2px solid transparent; color:var(--fgColor-muted); line-height:1.4; }
+  .reader .toc a:hover { color:var(--fgColor-default); text-decoration:none; }
+  .reader .toc a[aria-current="location"] { border-left-color:var(--fgColor-accent); color:var(--fgColor-default); font-weight:600; }
+
+  @media (max-width:767px) { .reader .markdown-body table :is(th, td) { padding:8px 10px; } }
+  @media (min-width:768px) { .reader .markdown-body { font-size:17px; } .reader .markdown-body .code-block pre { font-size:14px; } }
+  @media (min-width:1240px) {
+    .page.reader { width:100%; display:grid; grid-template-columns:minmax(0, 46rem) 232px; justify-content:center; column-gap:64px; align-items:start; }
+    .page.reader > * { grid-column:1; }
+    .reader .markdown-body { width:100%; margin:0; }
+    .reader .toc { grid-column:2; grid-row:1 / span 3; position:sticky; top:76px; max-height:calc(100vh - 100px); margin:0; padding:0 0 0 2px; border:0; background:none; overflow:auto; scrollbar-width:thin; }
+    .reader .toc summary { pointer-events:none; list-style:none; padding:0 0 6px; }
+    .reader .toc summary::-webkit-details-marker { display:none; }
+  }
+"""
+
 # Octicons mark-github and markdown.
 RENDERER_BUTTON = (
     '<button type="button" class="renderer" id="renderer" aria-pressed="false" '
@@ -2067,6 +2174,8 @@ function renderLocal() {
   try {
     if (!markdown) {
       markdown = window.markdownit({ html: true, linkify: true });
+      // Without a scheme, README.md would become a link to a Moldovan domain.
+      markdown.linkify.set({ fuzzyLink: false });
       if (window.markdownitFootnote) markdown.use(window.markdownitFootnote);
       if (window.markdownitEmoji) markdown.use(window.markdownitEmoji);
       githubFlavour(markdown);
@@ -2093,12 +2202,63 @@ function local(value) {
 }
 
 let diagramCount = 0;
+// Mermaid's base theme recoloured from the page, so diagrams follow the picked theme.
+function diagramColours(dark) {
+  const style = getComputedStyle(article);
+  const context = document.createElement('canvas').getContext('2d');
+  const rgb = (name) => {
+    context.fillStyle = '#808080';
+    context.fillStyle = style.getPropertyValue(name).trim() || '#808080';
+    const value = context.fillStyle;
+    if (value[0] === '#') return [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16));
+    return value.match(/[\\d.]+/g).slice(0, 3).map(Number);
+  };
+  const hex = (colour) => '#' + colour.map((part) => Math.round(part).toString(16).padStart(2, '0')).join('');
+  const mix = (front, back, amount) => front.map((part, index) => part * amount + back[index] * (1 - amount));
+  const back = rgb('--bgColor-muted');
+  const ink = rgb('--fgColor-default');
+  const muted = rgb('--fgColor-muted');
+  const accent = rgb('--fgColor-accent');
+  const line = rgb('--borderColor-default');
+  const node = hex(mix(accent, back, dark ? 0.2 : 0.14));
+  return {
+    darkMode: dark,
+    background: hex(back),
+    mainBkg: node,
+    primaryColor: node,
+    primaryBorderColor: hex(mix(accent, back, 0.65)),
+    primaryTextColor: hex(ink),
+    secondaryColor: hex(mix(muted, back, 0.16)),
+    secondaryBorderColor: hex(line),
+    secondaryTextColor: hex(ink),
+    tertiaryColor: hex(mix(ink, back, 0.05)),
+    tertiaryBorderColor: hex(line),
+    tertiaryTextColor: hex(ink),
+    textColor: hex(ink),
+    lineColor: hex(muted),
+    clusterBkg: hex(mix(ink, back, 0.04)),
+    clusterBorder: hex(line),
+    edgeLabelBackground: hex(back),
+    noteBkgColor: hex(mix(accent, back, 0.08)),
+    noteBorderColor: hex(line),
+    noteTextColor: hex(ink),
+    fontFamily: style.fontFamily,
+    fontSize: '15px',
+    dropShadow: 'none',
+    useGradient: false,
+  };
+}
+
 function drawDiagrams() {
   const diagrams = [...article.querySelectorAll('.highlight-source-mermaid')];
   if (!diagrams.length) return;
   const draw = async () => {
     const dark = document.documentElement.dataset.mode === 'dark';
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+    let themeVariables = null;
+    try { themeVariables = diagramColours(dark); } catch (error) { /* mermaid's own palette */ }
+    mermaid.initialize(themeVariables
+      ? { startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: themeVariables }
+      : { startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
     for (const block of diagrams) {
       const id = 'mermaid-' + diagramCount++;
       try {
@@ -2121,6 +2281,101 @@ function drawDiagrams() {
   script.src = '/vendor/mermaid.min.js';
   script.onload = draw;
   document.head.append(script);
+}
+
+const COPY_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg>';
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (error) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const done = document.execCommand('copy');
+    area.remove();
+    return done;
+  }
+}
+
+// Each code block gets a header with its language and a copy button.
+function frameCode() {
+  for (const pre of article.querySelectorAll('pre')) {
+    if (pre.closest('.code-block, .mermaid-diagram')) continue;
+    const box = pre.closest('.highlight, .snippet-clipboard-content') || pre;
+    if (box.classList.contains('highlight-source-mermaid')) continue;
+    const kind = [...box.classList].map((name) => /^highlight-(?:source|text)-(.+)$/.exec(name)).find(Boolean);
+    const figure = document.createElement('figure');
+    figure.className = 'code-block';
+    const head = document.createElement('div');
+    head.className = 'code-block-head';
+    const label = document.createElement('span');
+    label.textContent = kind ? kind[1] : 'text';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('aria-label', 'Copy code');
+    button.innerHTML = COPY_ICON + '<span>Copy</span>';
+    let reset = 0;
+    button.addEventListener('click', async () => {
+      const done = await copyText(pre.textContent);
+      button.classList.toggle('copied', done);
+      button.lastChild.textContent = done ? 'Copied' : 'Copy failed';
+      clearTimeout(reset);
+      reset = setTimeout(() => {
+        button.classList.remove('copied');
+        button.lastChild.textContent = 'Copy';
+      }, 1600);
+    });
+    head.append(label, button);
+    box.replaceWith(figure);
+    figure.append(head, box);
+  }
+}
+
+// The progress line under the bar and the contents entry for the section being read.
+const bar = document.querySelector('.bar.progress');
+let tracked = [];
+let current = null;
+function track() {
+  const end = document.documentElement.scrollHeight - innerHeight;
+  if (bar) bar.style.setProperty('--progress', end > 0 ? Math.min(1, scrollY / end).toFixed(4) : '0');
+  let found = tracked[0] || null;
+  if (end > 0 && scrollY >= end - 2) found = tracked[tracked.length - 1] || null;
+  else for (const item of tracked) {
+    if (item.heading.getBoundingClientRect().top > 96) break;
+    found = item;
+  }
+  if (found === current) return;
+  if (current) current.link.removeAttribute('aria-current');
+  current = found;
+  if (!current) return;
+  current.link.setAttribute('aria-current', 'location');
+  if (toc && toc.scrollHeight > toc.clientHeight) {
+    const top = current.link.offsetTop;
+    if (top < toc.scrollTop || top > toc.scrollTop + toc.clientHeight - 40) toc.scrollTop = top - toc.clientHeight / 3;
+  }
+}
+let tracking = false;
+function scheduleTrack() {
+  if (tracking) return;
+  tracking = true;
+  requestAnimationFrame(() => {
+    tracking = false;
+    track();
+  });
+}
+addEventListener('scroll', scheduleTrack, { passive: true });
+addEventListener('resize', scheduleTrack);
+if (toc) {
+  const wide = matchMedia('(min-width:1240px)');
+  const openRail = () => { if (wide.matches) toc.open = true; };
+  wide.addEventListener('change', openRail);
+  openRail();
 }
 
 function show(content) {
@@ -2161,19 +2416,24 @@ function show(content) {
   if (toc) {
     const list = toc.querySelector('ol');
     list.replaceChildren();
+    tracked = [];
+    current = null;
     const top = Math.min(...entries.map((entry) => entry.level));
     for (const entry of entries) {
       const item = document.createElement('li');
-      item.style.paddingLeft = (entry.level - top) * 16 + 'px';
+      item.style.paddingLeft = (entry.level - top) * 14 + 'px';
       const link = document.createElement('a');
       link.href = '#' + entry.slug;
       link.textContent = entry.text;
       item.append(link);
       list.append(item);
+      tracked.push({ heading: document.getElementById(entry.slug), link: link });
     }
     toc.hidden = entries.length < 3;
   }
+  frameCode();
   drawDiagrams();
+  scheduleTrack();
 }
 
 show(renderLocal());
@@ -2386,9 +2646,9 @@ def markdown_page(
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
-<style>{MARKDOWN_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
-<main class="page">{banner}<p class="notice" id="render-notice" role="status" hidden></p>
+<style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<main class="page reader">{banner}<p class="notice" id="render-notice" role="status" hidden></p>
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
 <script type="application/json" id="markdown-source">{source}</script>
