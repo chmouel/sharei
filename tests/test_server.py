@@ -241,6 +241,16 @@ def test_audio_and_pdf_previews(live_server):
         assert error.value.code == 404
 
 
+def test_tall_shot_thumbnail_keeps_the_top_sharp(tmp_path):
+    image_module = pytest.importorskip("PIL.Image")
+    from sharei.server import THUMB_MAX, render_thumbnail
+
+    path = tmp_path / "page.png"
+    image_module.new("RGB", (900, 8000), "white").save(path)
+    with image_module.open(io.BytesIO(render_thumbnail(path))) as thumb:
+        assert thumb.size == (THUMB_MAX * 9 // 16, THUMB_MAX)
+
+
 def heic_bytes(alpha=False):
     image_module = pytest.importorskip("PIL.Image")
     pytest.importorskip("pillow_heif").register_heif_opener()

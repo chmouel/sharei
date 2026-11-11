@@ -1318,7 +1318,7 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
 
 def thumbnail_cache_path(path: Path) -> Path:
     digest = hashlib.sha256(
-        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}".encode()
+        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:top".encode()
     ).hexdigest()[:32]
     return THUMBS / f"{digest}.webp"
 
@@ -1337,6 +1337,11 @@ def render_thumbnail(path: Path) -> bytes:
     image_module = importlib.import_module("PIL.Image")
     with image_module.open(path) as image:
         image.draft("RGB", (THUMB_MAX, THUMB_MAX))
+        # Tiles show the top 9:16 of a shot, so a tall page is cropped to that before shrinking
+        # instead of being squeezed into a sliver the tile then has to blow up.
+        width, height = image.size
+        if height * 9 > width * 16:
+            image = image.crop((0, 0, width, -(-width * 16 // 9)))
         image.thumbnail((THUMB_MAX, THUMB_MAX))
         buffer = io.BytesIO()
         image.convert("RGB").save(buffer, "WEBP", quality=72, method=4)
