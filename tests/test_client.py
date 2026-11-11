@@ -223,3 +223,16 @@ def test_unauthorized_explains_how_to_log_in(sharec, monkeypatch):
 def test_show_in_terminal_saves_a_vector_instead_of_dumping_its_source(sharec):
     svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
     assert sharec.show_in_terminal([], 0, svg) is False
+
+
+def test_confirm_without_terminal_points_at_yes():
+    result = subprocess.run(
+        [sys.executable, "-c", "from sharei import client; client.confirm('Go?')"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        start_new_session=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "pass -y" in result.stderr

@@ -107,6 +107,10 @@ def gum(*args: str) -> str | None:
 
 def confirm(question: str) -> bool:
     sys.stdout.flush()
+    try:
+        open("/dev/tty").close()
+    except OSError:
+        raise SystemExit(f"{question} No terminal to answer on; pass -y.") from None
     if shutil.which("gum"):
         return subprocess.run(["gum", "confirm", question], check=False).returncode == 0
     return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
