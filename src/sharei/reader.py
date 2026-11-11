@@ -133,6 +133,23 @@ READER_CSS = """
   .reader .markdown-body .frontmatter-raw pre { margin:0 0 2.2em; }
   @media (max-width:540px) { .reader .markdown-body .frontmatter { gap:6px 16px; padding:12px 14px; } }
 
+  .reader .crumbs { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 6px; max-width:46rem; margin:0 auto 18px; color:var(--fgColor-muted); font-size:13px; }
+  .reader .crumbs a { color:inherit; text-decoration:none; }
+  .reader .crumbs a:hover { color:var(--fgColor-accent); }
+  .reader .crumbs a:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:2px; border-radius:3px; }
+  .reader .crumbs span { opacity:.6; }
+  .reader .crumbs b { color:var(--fgColor-default); font-weight:500; }
+  .reader .markdown-body mark { padding:.05em .2em; border-radius:3px; background:color-mix(in srgb, var(--fgColor-attention) 26%, transparent); color:inherit; }
+  .reader .markdown-body .note-tag { padding:0 7px; border-radius:999px; background:color-mix(in srgb, var(--fgColor-accent) 14%, transparent); color:var(--fgColor-accent); font-size:.9em; font-weight:500; white-space:nowrap; }
+  .reader .markdown-body .note-missing { color:var(--fgColor-muted); text-decoration:underline dotted color-mix(in srgb, var(--fgColor-muted) 50%, transparent); text-underline-offset:.2em; }
+  .reader .markdown-body details.markdown-alert { padding:.85em 1.15em; }
+  .reader .markdown-body details.markdown-alert > summary { margin:0; padding:0; border:0; list-style:none; }
+  .reader .markdown-body details.markdown-alert > summary::-webkit-details-marker { display:none; }
+  .reader .markdown-body details.markdown-alert > summary::after { content:"›"; display:inline-block; margin-left:.45em; transition:transform .15s ease; }
+  .reader .markdown-body details.markdown-alert[open] > summary { margin-bottom:.35em; }
+  .reader .markdown-body details.markdown-alert[open] > summary::after { transform:rotate(90deg); }
+  .reader .markdown-body details.markdown-alert:not([open]) > summary { margin-bottom:0; }
+
   .reader .toc { margin:0 auto 28px; max-width:46rem; padding:6px 16px; border-color:var(--borderColor-muted); border-radius:12px; background:color-mix(in srgb, var(--bgColor-muted) 60%, transparent); }
   .reader .toc summary { color:var(--fgColor-muted); font-size:13px; }
   .reader .toc ol { margin:4px 0 10px; border-left:1px solid var(--borderColor-muted); }
@@ -259,6 +276,19 @@ const poub = article.dataset.poub || '';
 const md = article.dataset.md || '';
 const outside = /^(?:[a-z][a-z0-9+.-]*:|#|\\/)/i;
 const markdownName = /\\.(?:md|markdown)$/i;
+const notesData = document.getElementById('notes-links');
+const noteLinks = notesData ? JSON.parse(notesData.textContent) : null;
+// Obsidian callout types drawn with the closest of GitHub's five alert styles.
+const CALLOUTS = {
+  note: 'note', info: 'note', todo: 'note', abstract: 'note', summary: 'note', tldr: 'note',
+  tip: 'tip', hint: 'tip', success: 'tip', check: 'tip', done: 'tip',
+  important: 'important', question: 'important', help: 'important', faq: 'important',
+  example: 'important', quote: 'important', cite: 'important',
+  warning: 'warning', caution: 'warning', attention: 'warning', failure: 'warning',
+  fail: 'warning', missing: 'warning', bug: 'warning',
+  danger: 'caution', error: 'caution',
+};
+const CALLOUT_MARK = /^\\[!([\\w-]+)\\]([+-]?)[ \\t]*([^\\n]*)(?:\\n|$)/;
 
 // GitHub's alert titles and octicons, so github-markdown.css styles them as on github.com.
 const ALERTS = {
@@ -431,16 +461,19 @@ function githubFlavour(markdown) {
       if (!inline || inline.type !== 'inline' || tokens[index + 1].type !== 'paragraph_open') continue;
       const children = inline.children || [];
       if (token.type === 'blockquote_open') {
-        const match = ALERT_MARK.exec(inline.content);
+        const match = (noteLinks ? CALLOUT_MARK : ALERT_MARK).exec(inline.content);
         if (!match) continue;
-        const kind = match[1].toLowerCase();
+        const type = match[1].toLowerCase();
+        const kind = noteLinks ? CALLOUTS[type] || 'note' : type;
+        const title = noteLinks ? match[3].trim() || type[0].toUpperCase() + type.slice(1) : ALERTS[kind][0];
+        const fold = noteLinks ? match[2] : '';
         let depth = 0, close = index;
         for (; close < tokens.length; close++) {
           if (tokens[close].type === 'blockquote_open') depth++;
           else if (tokens[close].type === 'blockquote_close' && --depth === 0) break;
         }
-        token.meta = { alert: kind };
-        tokens[close].meta = { alert: kind };
+        token.meta = { alert: kind, title: title, fold: fold };
+        tokens[close].meta = { alert: kind, fold: fold };
         const marker = match[0].trim();
         let consumed = '';
         while (children.length && children[0].type === 'text' && consumed.length < marker.length) consumed += children.shift().content;
@@ -486,13 +519,21 @@ function githubFlavour(markdown) {
     return '<pre' + lines(token, token.map ? token.map[0] + 1 : 0) + '><code>' + markdown.utils.escapeHtml(token.content.replace(/\\n$/, '')) + '</code></pre>\\n';
   };
   rules.blockquote_open = (tokens, index, options, env, self) => {
-    const kind = tokens[index].meta && tokens[index].meta.alert;
-    if (!kind) return self.renderToken(tokens, index, options);
-    const [title, icon, path] = ALERTS[kind];
-    return '<div class="markdown-alert markdown-alert-' + kind + '"><p class="markdown-alert-title"><svg class="octicon octicon-' + icon + ' mr-2" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="' + path + '"></path></svg>' + title + '</p>\\n';
+    const meta = tokens[index].meta;
+    if (!meta || !meta.alert) return self.renderToken(tokens, index, options);
+    const [, icon, path] = ALERTS[meta.alert];
+    const svg = '<svg class="octicon octicon-' + icon + ' mr-2" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="' + path + '"></path></svg>';
+    const title = markdown.utils.escapeHtml(meta.title);
+    const classes = 'markdown-alert markdown-alert-' + meta.alert;
+    // A foldable callout ([!type]- or [!type]+) opens closed or open.
+    if (meta.fold) return '<details class="' + classes + '"' + (meta.fold === '+' ? ' open' : '') + '><summary class="markdown-alert-title">' + svg + title + '</summary>\\n';
+    return '<div class="' + classes + '"><p class="markdown-alert-title">' + svg + title + '</p>\\n';
   };
-  rules.blockquote_close = (tokens, index, options, env, self) =>
-    tokens[index].meta && tokens[index].meta.alert ? '</div>\\n' : self.renderToken(tokens, index, options);
+  rules.blockquote_close = (tokens, index, options, env, self) => {
+    const meta = tokens[index].meta;
+    if (!meta || !meta.alert) return self.renderToken(tokens, index, options);
+    return meta.fold ? '</details>\\n' : '</div>\\n';
+  };
   rules.fence = (tokens, index) => {
     const token = tokens[index];
     const text = token.content.replace(/\\n$/, '');
@@ -524,19 +565,139 @@ function sanitize(markup) {
   });
 }
 
+function noteSlug(text) {
+  return text.trim().toLowerCase().replace(/[^\\p{L}\\p{N}\\s_-]/gu, '').replace(/\\s/g, '-') || 'section';
+}
+
+function noteAnchor(heading) {
+  if (!heading.startsWith('#') || heading.startsWith('#^')) return '';
+  return '#' + noteSlug(heading.slice(1).split('#').pop());
+}
+
+// [[target#heading|alias]] and ![[file|300]]. The server resolved every target into
+// noteLinks; one it left out, or mapped to null, is not shared and stays plain text.
+function wikilink(inner, embed, escape) {
+  const bar = inner.indexOf('|');
+  const ref = bar < 0 ? inner : inner.slice(0, bar);
+  const alias = bar < 0 ? '' : inner.slice(bar + 1).trim();
+  const at = ref.search(/[#^]/);
+  const target = (at < 0 ? ref : ref.slice(0, at)).trim();
+  const heading = at < 0 ? '' : ref.slice(at);
+  const anchor = noteAnchor(heading);
+  const size = /^(\\d+)(?:x(\\d+))?$/.exec(alias);
+  const parts = heading && !heading.startsWith('#^') ? heading.slice(1).split('#').filter(Boolean) : [];
+  const label = (size ? '' : alias) || [target, ...parts].filter(Boolean).join(' › ');
+  if (!target) return anchor ? '<a href="' + escape(anchor) + '">' + escape(label) + '</a>' : escape(label);
+  const entry = noteLinks[target];
+  if (!entry) return '<span class="note-missing">' + escape(label) + '</span>';
+  if (embed && entry.src) {
+    const dimensions = size ? ' width="' + size[1] + '"' + (size[2] ? ' height="' + size[2] + '"' : '') : '';
+    return '<img src="' + escape(entry.src) + '" alt="' + escape(size ? target : alias || target) + '"' + dimensions + '>';
+  }
+  return '<a href="' + escape(entry.href + anchor) + '">' + escape(label) + '</a>';
+}
+
+// Obsidian comments are hidden in reading view; fenced code keeps its %% as written.
+function stripComments(text) {
+  return text.replace(/^(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?^\\1[ \\t]*$|%%[\\s\\S]*?%%/gm, (all, fence) => (fence ? all : ''));
+}
+
+function obsidianFlavour(markdown) {
+  const escape = markdown.utils.escapeHtml;
+  markdown.inline.ruler.before('link', 'obsidian_wikilink', (state, silent) => {
+    const start = state.pos;
+    const embed = state.src.charCodeAt(start) === 0x21;
+    const open = start + (embed ? 1 : 0);
+    if (state.src.charCodeAt(open) !== 0x5b || state.src.charCodeAt(open + 1) !== 0x5b) return false;
+    const close = state.src.indexOf(']]', open + 2);
+    if (close < 0 || close + 2 > state.posMax) return false;
+    const inner = state.src.slice(open + 2, close).replace(/\\\\\\|/g, '|');
+    if (!inner.trim() || /[\\[\\]\\n]/.test(inner)) return false;
+    if (!silent) state.push('html_inline', '', 0).content = wikilink(inner, embed, escape);
+    state.pos = close + 2;
+    return true;
+  });
+  markdown.inline.ruler.before('emphasis', 'obsidian_mark', (state, silent) => {
+    const start = state.pos;
+    if (state.src.charCodeAt(start) !== 0x3d || state.src.charCodeAt(start + 1) !== 0x3d) return false;
+    const match = /^==(?=[^\\s=])([^\\n]*?[^\\s=])==/.exec(state.src.slice(start, state.posMax));
+    if (!match) return false;
+    if (!silent) {
+      const max = state.posMax;
+      state.push('mark_open', 'mark', 1);
+      state.pos = start + 2;
+      state.posMax = start + 2 + match[1].length;
+      state.md.inline.tokenize(state);
+      state.posMax = max;
+      state.push('mark_close', 'mark', -1);
+    }
+    state.pos = start + match[0].length;
+    return true;
+  });
+  markdown.inline.ruler.before('emphasis', 'obsidian_tag', (state, silent) => {
+    const start = state.pos;
+    if (state.src.charCodeAt(start) !== 0x23 || (start > 0 && !/\\s/.test(state.src[start - 1]))) return false;
+    const match = /^#([\\p{L}\\p{N}_\\/-]+)/u.exec(state.src.slice(start, state.posMax));
+    if (!match || /^[\\d\\/-]+$/.test(match[1])) return false;
+    if (!silent) state.push('html_inline', '', 0).content = '<span class="note-tag">#' + escape(match[1]) + '</span>';
+    state.pos = start + match[0].length;
+    return true;
+  });
+  // Plain markdown links and images go through the same map, so /ZAttachments/x.png and
+  // ../Other.md find their file, and anything unshared loses its link.
+  markdown.core.ruler.push('obsidian_links', (state) => {
+    for (const block of state.tokens) {
+      for (const token of block.children || []) {
+        if (token.type !== 'link_open' && token.type !== 'image') continue;
+        const name = token.type === 'image' ? 'src' : 'href';
+        const value = token.attrGet(name) || '';
+        if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) continue;
+        let path = value.split(/[?#]/)[0];
+        const hash = value.includes('#') ? value.slice(value.indexOf('#')) : '';
+        try { path = decodeURIComponent(path); } catch (error) { /* keep it encoded */ }
+        const entry = noteLinks[path.trim()];
+        if (!entry || (name === 'src' && !entry.src)) {
+          token.meta = { unlinked: true };
+          continue;
+        }
+        let heading = hash;
+        try { heading = decodeURIComponent(hash); } catch (error) { /* keep it encoded */ }
+        token.attrSet(name, name === 'src' ? entry.src : entry.href + noteAnchor(heading));
+      }
+    }
+  });
+  const rules = markdown.renderer.rules;
+  const plain = (tokens, index, options, env, self) => self.renderToken(tokens, index, options);
+  const linkOpen = rules.link_open || plain;
+  const linkClose = rules.link_close || plain;
+  const image = rules.image;
+  rules.link_open = (tokens, index, options, env, self) => {
+    const unlinked = Boolean(tokens[index].meta && tokens[index].meta.unlinked);
+    (env.unlinked = env.unlinked || []).push(unlinked);
+    return unlinked ? '<span class="note-missing">' : linkOpen(tokens, index, options, env, self);
+  };
+  rules.link_close = (tokens, index, options, env, self) =>
+    (env.unlinked || []).pop() ? '</span>' : linkClose(tokens, index, options, env, self);
+  rules.image = (tokens, index, options, env, self) =>
+    tokens[index].meta && tokens[index].meta.unlinked
+      ? escape(self.renderInlineAsText(tokens[index].children, options, env))
+      : image(tokens, index, options, env, self);
+}
+
 let markdown = null;
 function renderLocal() {
   try {
     if (!markdown) {
-      markdown = window.markdownit({ html: true, linkify: true });
+      markdown = window.markdownit({ html: true, linkify: true, breaks: 'breaks' in article.dataset });
       // Without a scheme, README.md would become a link to a Moldovan domain.
       markdown.linkify.set({ fuzzyLink: false });
       if (window.markdownitFootnote) markdown.use(window.markdownitFootnote);
       if (window.markdownitEmoji) markdown.use(window.markdownitEmoji);
       frontMatterPlugin(markdown);
       githubFlavour(markdown);
+      if (noteLinks) obsidianFlavour(markdown);
     }
-    return sanitize(markdown.render(source));
+    return sanitize(markdown.render(noteLinks ? stripComments(source) : source));
   } catch (error) {
     console.error('markdown rendering failed', error);
     const pre = document.createElement('pre');

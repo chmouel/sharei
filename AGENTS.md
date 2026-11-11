@@ -24,6 +24,10 @@ proxy with authentication (see SECURITY.md).
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
   `PUSH_ENABLED` stays false and every push route is a 404.
+- `src/sharei/notes.py`: the read-only Obsidian vault behind the Notes tab
+  (`[notes]` setting): config checks, the scanned index (refreshed in a
+  background thread every `CACHE_SECONDS`), Obsidian link resolution and the
+  per-note link map. `VAULT` is None without the setting.
 - `src/sharei/client.py`: the CLI uploader, entry point `sharec` (`run`). It
   shares a screenshot, the clipboard, a markdown file with its local images,
   or any file. A FILE ending in `.md` or `.markdown` is shared as markdown,
@@ -85,6 +89,8 @@ the service.
   the TTL it had; Clear does not archive),
   `thumbs/` and `push/` (`vapid.pem` and
   `subs.json`, both 0600).
+- Notes: the `[notes]` vault is only read, never written. Its
+  `.obsidian/app.json` gives `strictLineBreaks` and `userIgnoreFilters`.
 - Settings: `~/.config/sharei/config.toml`, or `$SHAREI_CONFIG`, or
   `--config`. Command-line flags take priority over the file.
 - The systemd unit can only write under `~/tmp`. Don't move the root elsewhere
@@ -137,9 +143,20 @@ Pages:
   allows `worker-src 'self'` and `connect-src 'self'` for the worker and
   the fetch of `/poub`
 - `/clip/md`: the clipboard, rendered as markdown
+- `/notes`, `/notes/<folder>/`: the shared vault folders, with a client-side
+  name filter (`NOTES_JS`) over the whole tree
+- `/notes/<path>`: a note in the `/md` reader with breadcrumbs and no
+  review, Raw or comments; a text file in the `/view` page. The page
+  embeds `notes.link_map()` as `#notes-links`, and `obsidianFlavour()` in
+  `MARKDOWN_JS` uses it for wikilinks, embeds and standard links (a null
+  target becomes `.note-missing` text), plus `==mark==`, inline `#tags`,
+  `%%comments%%`, and any callout type with `-`/`+` folding as `<details>`
+- `/notes-pdf/<path>`: a vault PDF in the pdf.js page
 
 Files:
 
+- `/notes-file/<path>`: vault bytes, with the same inline/attachment and
+  SVG rules as `/poub` (`send_shared_file`)
 - `/shot/<key>`, `/thumb/<key>`: an SVG is served as itself, since Pillow cannot
   rasterise one, so `/thumb` has nothing to cache for it
 - `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
@@ -236,6 +253,12 @@ These exist on purpose. Keep them when changing or adding code.
   `sharei-push` cookie (HttpOnly, SameSite=Strict) only names the sender's
   own subscription so it is skipped; it grants nothing. The service worker's
   notification click opens same-origin URLs only.
+- Notes never join a request path onto the vault. `notes.allowed()` looks
+  the exact key up in the scanned index and serves it only when it is under
+  a configured folder or is an attachment a shared note links to. The scan
+  skips hidden parts, symlinks and `userIgnoreFilters` paths; links inside
+  code and `%%comments%%` grant nothing. Everything else is a 404,
+  unshared notes included.
 - `sharec` checks a markdown file's local images before uploading them:
   - inside the git toplevel, or the file's directory, checked after realpath
   - no hidden path parts and no symlink escapes

@@ -25,6 +25,7 @@ import ipaddress
 import json
 import mimetypes
 import os
+import posixpath
 import re
 import secrets
 import socket
@@ -40,7 +41,7 @@ from pathlib import Path
 from typing import NamedTuple, TypedDict
 from urllib.parse import ParseResult, parse_qs, quote, unquote, urlparse, urlsplit
 
-from sharei import push
+from sharei import notes, push
 from sharei.assets import (
     ANNOTATE_JS,
     CAROUSEL_JS,
@@ -52,7 +53,10 @@ from sharei.assets import (
     DROP_JS,
     EXPIRY_JS,
     EXTRA_CSS,
+    FOLDER_ICON,
     LIVE_JS,
+    NOTES_CSS,
+    NOTES_JS,
     PDF_CSS,
     PDF_JS,
     PLAY_CSS,
@@ -1357,6 +1361,16 @@ def qr_script(nonce: str = "") -> str:
     return f"<script{attribute}>window.shareiPublicUrl = {base};{QR_JS}</script>"
 
 
+def json_script(value: object) -> str:
+    """JSON for a data <script>, escaped so no "</script>" in it can close the block early."""
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
 def markdown_page(
     title: str,
     text: str,
@@ -1365,15 +1379,35 @@ def markdown_page(
     links: list[tuple[str, str]],
     project: str | None = None,
     comments: str = "",
+    note_links: dict[str, dict[str, str] | None] | None = None,
+    crumbs: list[tuple[str, str]] | None = None,
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
     With a comments URL the page also offers review mode, for line comments kept on the server.
+    With note_links it reads an Obsidian note: links go through that map.
     """
     nonce = secrets.token_urlsafe(16)
     bases = (
         f' data-poub="/poub/{quote(project)}/" data-md="/md/{quote(project)}/"'
         if project
+        else ""
+    )
+    extra = ""
+    if note_links is not None:
+        bases += " data-notes"
+        if notes.VAULT and not notes.VAULT.strict_breaks:
+            bases += " data-breaks"
+        extra = f'<script type="application/json" id="notes-links">{json_script(note_links)}</script>'
+    trail = (
+        '<nav class="crumbs" aria-label="Folders">'
+        + "".join(
+            f'<a href="{html.escape(href)}">{html.escape(label)}</a><span aria-hidden="true">/</span>'
+            for label, href in crumbs
+        )
+        + f'<b aria-current="page">{html.escape(title)}</b>'
+        + "</nav>"
+        if crumbs
         else ""
     )
     if comments:
@@ -1386,13 +1420,7 @@ def markdown_page(
     banner = (
         f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
     )
-    # Escaped so no "</script>" in the text can close the data block early.
-    source = (
-        json.dumps(text)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
+    source = json_script(text)
     highlight = len(text.encode("utf-8")) <= HIGHLIGHT_MAX_BYTES
     scripts = "".join(
         f'<script nonce="{nonce}" src="/vendor/{name}"></script>'
@@ -1407,11 +1435,12 @@ def markdown_page(
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
 <header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{review[0]}{qr_button()}</nav></header>
-<main class="page reader">{banner}
+<main class="page reader">{trail}{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
 {review[1]}
 <script type="application/json" id="markdown-source">{source}</script>
+{extra}
 {scripts}
 <script nonce="{nonce}">{MARKDOWN_JS}</script>
 {qr_script(nonce)}
@@ -1419,7 +1448,12 @@ def markdown_page(
     return document.encode("utf-8"), nonce
 
 
-def code_page(name: str, text: str, links: list[tuple[str, str]]) -> tuple[bytes, str]:
+def code_page(
+    name: str,
+    text: str,
+    links: list[tuple[str, str]],
+    back: tuple[str, str] = ("Drop", "/drop"),
+) -> tuple[bytes, str]:
     """A dropped text file with line numbers, highlighted in the browser by the vendored highlight.js."""
     nonce = secrets.token_urlsafe(16)
     text = text.replace("\r\n", "\n")
@@ -1447,7 +1481,7 @@ def code_page(name: str, text: str, links: list[tuple[str, str]]) -> tuple[bytes
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav>{actions}{qr_button()}</nav></header>
+<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav>{actions}{qr_button()}</nav></header>
 <main class="page code-page">{notice}
 <div class="code"><div class="gutter">{gutter}</div><div class="scroll"><div class="line-mark" id="line-mark" hidden></div><pre><code id="code"{language}>{html.escape(text)}</code></pre></div></div>
 </main>
@@ -1503,17 +1537,19 @@ def play_headers(nonce: str) -> dict[str, str]:
     }
 
 
-def pdf_page(project: str, name: str) -> tuple[bytes, str]:
-    """A dropped PDF drawn page by page with pdf.js, fetched from /poub."""
+def pdf_page(
+    name: str, url: str, back: tuple[str, str] = ("Drop", "/drop")
+) -> tuple[bytes, str]:
+    """A PDF drawn page by page with pdf.js, fetched from url."""
     nonce = secrets.token_urlsafe(16)
-    url = html.escape(f"/poub/{quote(project)}/{quote(name)}")
+    url = html.escape(url)
     document = f"""<!doctype html>
 <html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{PDF_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}</nav></header>
+<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}</nav></header>
 <main class="page pdf-page" data-url="{url}"><p class="pdf-status">Loading…</p></main>
 <script type="module" nonce="{nonce}">{PDF_JS}</script>
 {qr_script(nonce)}
@@ -1895,6 +1931,134 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
     return layout("Drop files", "drop", tab_counts, body, extra_css=DROP_CSS)
 
 
+def counts_now() -> Counts:
+    return counts(available_artifacts(), available_shots(), poub_files())
+
+
+def notes_crumbs(folder: str) -> list[tuple[str, str]]:
+    """Notes, then each folder down to this one, as (label, URL)."""
+    parts = folder.split("/") if folder else []
+    return [("Notes", "/notes")] + [
+        (part, notes.url("/notes/", "/".join(parts[: depth + 1])) + "/")
+        for depth, part in enumerate(parts)
+    ]
+
+
+def read_note(path: Path) -> str | None:
+    try:
+        if path.stat().st_size > notes.MAX_NOTE_BYTES:
+            return None
+        return path.read_text("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+# Rows behind the filter box; the tree itself is not capped.
+NOTES_FILTER_MAX = 2000
+
+
+def notes_row(index: notes.Index, relative: str, show_folder: bool) -> str:
+    path = index.files[relative]
+    name = posixpath.basename(relative)
+    suffix = posixpath.splitext(name)[1].lower()
+    file_url = notes.url("/notes-file/", relative)
+    download = ""
+    if notes.is_markdown(name):
+        thumb, action, href = '<span aria-hidden="true">¶</span>', "Read", None
+        name = posixpath.splitext(name)[0]
+    elif suffix in IMAGE_LIKE_SUFFIXES:
+        thumb = f'<img src="{file_url}" alt="" loading="lazy" decoding="async">'
+        action, href = "Open", file_url
+    elif suffix == ".pdf":
+        thumb = '<span class="pdf-mark" aria-hidden="true">PDF</span>'
+        action, href = "Read", notes.url("/notes-pdf/", relative)
+    elif suffix in MEDIA_SUFFIXES:
+        thumb, action, href = '<span aria-hidden="true">▶</span>', "Play", file_url
+    elif looks_like_text(path):
+        thumb, action, href = '<span aria-hidden="true">&lt;/&gt;</span>', "View", None
+    else:
+        thumb, action, href = '<span aria-hidden="true">▤</span>', "Get", file_url
+        download = " download"
+    try:
+        info = path.stat()
+        meta = f"{human_size(info.st_size)} <i>·</i> {datetime.fromtimestamp(info.st_mtime):%b %-d, %Y}"
+    except OSError:
+        meta = ""
+    if show_folder:
+        meta = f"{html.escape(posixpath.dirname(relative))} <i>·</i> {meta}"
+    return (
+        f'<a class="file" href="{href or notes.url("/notes/", relative)}"{download} '
+        f'data-path="{html.escape(relative.lower())}">'
+        f'<span class="file-thumb">{thumb}</span>'
+        f'<span class="file-copy"><strong>{html.escape(name)}</strong><small>{meta}</small></span>'
+        f'<span class="file-action">{action}</span></a>'
+    )
+
+
+def notes_page(index: notes.Index, folder: str, tab_counts: Counts) -> bytes:
+    """A shared folder of the vault: its subfolders, then its files, and a filter over
+    everything below it."""
+    prefix = folder + "/" if folder else ""
+    below = sorted(
+        (relative for relative in index.shared if relative.startswith(prefix)),
+        key=str.lower,
+    )
+    folders: dict[str, int] = {}
+    files = []
+    for relative in below:
+        rest = relative[len(prefix) :]
+        if "/" in rest:
+            name = rest.split("/", 1)[0]
+            folders[name] = folders.get(name, 0) + 1
+        else:
+            files.append(relative)
+    rows = [
+        f'<a class="file" href="{notes.url("/notes/", prefix + name)}/">'
+        f'<span class="file-thumb folder-mark">{FOLDER_ICON}</span>'
+        f'<span class="file-copy"><strong>{html.escape(name)}</strong>'
+        f"<small>{size} {'file' if size == 1 else 'files'}</small></span>"
+        '<span class="file-action">Open</span></a>'
+        for name, size in sorted(folders.items(), key=lambda item: item[0].lower())
+    ] + [notes_row(index, relative, False) for relative in files]
+    results = "".join(
+        notes_row(index, relative, True) for relative in below[:NOTES_FILTER_MAX]
+    )
+    title = posixpath.basename(folder) if folder else "Notes"
+    trail = ""
+    if folder:
+        trail = (
+            '<nav class="notes-crumbs" aria-label="Folders">'
+            + "".join(
+                f'<a href="{html.escape(href)}">{html.escape(label)}</a><span aria-hidden="true">/</span>'
+                for label, href in notes_crumbs(posixpath.dirname(folder))
+            )
+            + "</nav>"
+        )
+        intro = ""
+    else:
+        intro = '<p class="intro">Read-only folders from your Obsidian vault.</p>'
+    listing = (
+        f'<div class="file-list note-tree" id="note-tree">{"".join(rows)}</div>'
+        if rows
+        else '<div class="empty note-tree" id="note-tree"><span>¶</span><h2>No notes here</h2><p>Notes added to this folder show up after a reload.</p></div>'
+    )
+    total = f"{len(below)} {'file' if len(below) == 1 else 'files'}"
+    body = f"""
+  <header>{trail}<h1>{html.escape(title)}</h1>{intro}</header>
+  <input class="note-filter" id="note-filter" type="search" placeholder="Filter by name" aria-label="Filter notes by name" autocomplete="off">
+  <div class="shelf-label"><span>{"Shared folders" if not folder else "In this folder"}</span><span class="count" id="note-count">{total}</span></div>
+  {listing}
+  <div class="file-list note-results" id="note-results" hidden>{results}</div>
+  <script>{NOTES_JS}</script>"""
+    return layout(
+        f"{html.escape(title)} · Notes",
+        "notes",
+        tab_counts,
+        body,
+        extra_css=DROP_CSS + NOTES_CSS,
+    )
+
+
 def artifacts_page(artifacts: list[dict[str, str]], tab_counts: Counts) -> bytes:
     sections = []
     groups: dict[tuple[str, str], list[dict[str, str]]] = {}
@@ -2214,6 +2378,7 @@ def layout(
             tab("drop", "/drop", "Drop", tab_counts["drop"], "⇪"),
             tab("clip", "/clip", "Clipboard", 0, "⎘"),
             tab("artifacts", "/artifacts", "Artifacts", tab_counts["artifacts"], "↓"),
+            tab("notes", "/notes", "Notes", 0, "¶") if notes.VAULT else "",
         )
     )
 
@@ -2626,7 +2791,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/pdf/"):
             path = poub_path(parsed.path.removeprefix("/pdf/"))
             if path is not None and path.suffix.lower() == ".pdf":
-                body, nonce = pdf_page(path.parent.parent.name, path.name)
+                body, nonce = pdf_page(
+                    path.name,
+                    f"/poub/{quote(path.parent.parent.name)}/{quote(path.name)}",
+                )
                 self.send_html(body, pdf_headers(nonce))
                 return
 
@@ -2645,37 +2813,64 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/poub/"):
             path = poub_path(parsed.path.removeprefix("/poub/"))
             if path is not None:
-                headers = {
-                    "Cache-Control": "no-cache",
-                    "X-Content-Type-Options": "nosniff",
-                }
-                suffix = path.suffix.lower()
-                content_type = (
-                    AUDIO_TYPES.get(suffix)
-                    or HEIC_TYPES.get(suffix)
-                    or VECTOR_TYPES.get(suffix)
-                    or mimetypes.guess_type(path.name)[0]
-                    or "application/octet-stream"
+                self.send_shared_file(path, "raw" in parse_qs(parsed.query))
+                return
+
+        if parsed.path == "/notes" or parsed.path.startswith("/notes/"):
+            index = notes.index()
+            relative = unquote(parsed.path.removeprefix("/notes").strip("/"))
+            if index is not None and notes.is_folder(index, relative):
+                self.send_html(
+                    notes_page(index, notes.key(relative), counts_now()),
+                    {"Cache-Control": "no-store"},
                 )
-                if "raw" in parse_qs(parsed.query) and (
-                    suffix in MARKDOWN_SUFFIXES or looks_like_text(path)
-                ):
-                    content_type = "text/plain; charset=utf-8"
-                elif suffix in HTML_SUFFIXES:
-                    # Render in the browser, but in an opaque origin so the page
-                    # cannot reach the sharei API or its storage.
-                    headers["Content-Security-Policy"] = HTML_CSP
-                elif suffix in VECTOR_SUFFIXES:
-                    headers.update(vector_headers({}))
-                elif (
-                    suffix not in IMAGE_LIKE_SUFFIXES
-                    and suffix not in HEIC_SUFFIXES
-                    and suffix not in MEDIA_SUFFIXES
-                ):
-                    headers["Content-Disposition"] = (
-                        f"attachment; filename*=UTF-8''{quote(path.name)}"
-                    )
-                self.send_file(path, content_type, headers)
+                return
+            path = notes.allowed(index, relative) if index is not None else None
+            if path is not None:
+                relative = notes.key(relative)
+                back = notes_crumbs(posixpath.dirname(relative))[-1]
+                download = [("Download", notes.url("/notes-file/", relative))]
+                if notes.is_markdown(path.name):
+                    text = read_note(path)
+                    if text is not None:
+                        crumbs = notes_crumbs(posixpath.dirname(relative))
+                        body, nonce = markdown_page(
+                            path.stem,
+                            text,
+                            None,
+                            back,
+                            [],
+                            note_links=notes.link_map(
+                                index, text, relative, looks_like_text
+                            ),
+                            crumbs=crumbs,
+                        )
+                        self.send_html(body, markdown_headers(nonce))
+                        return
+                elif (text := read_text_file(path)) is not None:
+                    body, nonce = code_page(path.name, text, download, back)
+                    self.send_html(body, code_headers(nonce))
+                    return
+
+        if parsed.path.startswith("/notes-file/"):
+            index = notes.index()
+            relative = unquote(parsed.path.removeprefix("/notes-file/"))
+            path = notes.allowed(index, relative) if index is not None else None
+            if path is not None:
+                self.send_shared_file(path, "raw" in parse_qs(parsed.query))
+                return
+
+        if parsed.path.startswith("/notes-pdf/"):
+            index = notes.index()
+            relative = notes.key(unquote(parsed.path.removeprefix("/notes-pdf/")))
+            path = notes.allowed(index, relative) if index is not None else None
+            if path is not None and path.suffix.lower() == ".pdf":
+                body, nonce = pdf_page(
+                    path.name,
+                    notes.url("/notes-file/", relative),
+                    notes_crumbs(posixpath.dirname(relative))[-1],
+                )
+                self.send_html(body, pdf_headers(nonce))
                 return
 
         if parsed.path == "/clip/state":
@@ -3376,6 +3571,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_shared_file(self, path: Path, raw: bool) -> None:
+        """A dropped or shared file: media inline, text as text/plain on request, the rest
+        as a download."""
+        headers = {
+            "Cache-Control": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        }
+        suffix = path.suffix.lower()
+        content_type = (
+            AUDIO_TYPES.get(suffix)
+            or HEIC_TYPES.get(suffix)
+            or VECTOR_TYPES.get(suffix)
+            or mimetypes.guess_type(path.name)[0]
+            or "application/octet-stream"
+        )
+        if raw and (suffix in MARKDOWN_SUFFIXES or looks_like_text(path)):
+            content_type = "text/plain; charset=utf-8"
+        elif suffix in HTML_SUFFIXES:
+            # Render in the browser, but in an opaque origin so the page
+            # cannot reach the sharei API or its storage.
+            headers["Content-Security-Policy"] = HTML_CSP
+        elif suffix in VECTOR_SUFFIXES:
+            headers.update(vector_headers({}))
+        elif (
+            suffix not in IMAGE_LIKE_SUFFIXES
+            and suffix not in HEIC_SUFFIXES
+            and suffix not in MEDIA_SUFFIXES
+        ):
+            headers["Content-Disposition"] = (
+                f"attachment; filename*=UTF-8''{quote(path.name)}"
+            )
+        self.send_file(path, content_type, headers)
+
     def send_file(self, path: Path, content_type: str, headers: dict[str, str]) -> None:
         size = path.stat().st_size
         start, end = 0, size - 1
@@ -3449,6 +3677,7 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "theme": str,
     "public_url": str,
     "qr": bool,
+    "notes": dict,
     "push_subject": str,
 }
 ARTIFACT_TYPES: dict[str, type] = {
@@ -3625,6 +3854,8 @@ def main() -> None:
         PUBLIC_URL = f"http://{address}:{port}" if address else ""
 
     QR_ENABLED = bool(config.get("qr", True))
+    if "notes" in config:
+        notes.VAULT = notes.configure(str(path), config["notes"])
     PUSH_ENABLED = push.available()
     PUSH_SUBJECT = str(
         config.get("push_subject")
@@ -3652,6 +3883,7 @@ def main() -> None:
     threading.Thread(target=expiry_sweeper, daemon=True).start()
     if PUSH_ENABLED:
         threading.Thread(target=push_worker, daemon=True).start()
+    notes.index()
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Config: {path if config else 'built-in defaults'}; files under {ROOT}")
     print(

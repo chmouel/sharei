@@ -8,7 +8,7 @@ a file over to the other device, without cables or a cloud drive.
 
 ## What you get
 
-The page has four tabs, along the bottom on a phone and down the left side
+The page has four tabs (five with Notes), along the bottom on a phone and down the left side
 on a computer.
 
 Screenshots lists what you saved, grouped by project. Open one and tap the
@@ -41,6 +41,9 @@ to a file in Drop on a computer. The phone camera opens it straight away. Set
 Artifacts lists the files your projects build, newest first: Android APKs,
 Python wheels, release archives, whatever you point it at. Tap one on your
 phone to download it, or to install it if it is an APK.
+
+Notes shows a few folders of your Obsidian vault, read only, when you set it
+up (see below).
 
 | Screenshots | Drop | Clipboard |
 |---|---|---|
@@ -161,6 +164,24 @@ Precise patterns like `dist/*.whl` keep the page fast. A pattern starting with
 `**` has to look through the whole project. sharei also picks up builds in your
 git worktrees. [`config.example.toml`](config.example.toml) lists every other
 setting.
+
+## Read your Obsidian notes
+
+Pick the vault folders you want to read from your phone:
+
+```toml
+[notes]
+vault = "~/Notes"
+folders = ["Travel", "Recipes"]
+```
+
+The Notes tab then lists those folders, with a box to find a note by name.
+Notes open in the same reader as markdown in Drop, and understand Obsidian's
+own writing: links and embeds between notes, callouts (folded ones too),
+==highlights==, #tags, and %%comments%%, which stay hidden. Pictures and PDFs
+kept elsewhere in the vault show up only when one of these notes uses them.
+Everything else in the vault stays private: a link to a note outside the
+chosen folders shows as plain text. Nothing is ever changed in the vault.
 
 ## Share from the terminal
 

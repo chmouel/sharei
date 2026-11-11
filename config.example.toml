@@ -57,3 +57,11 @@
 # [[artifacts]]
 # root = "~/src/*"
 # patterns = ["**/build/outputs/apk/**/*.apk", "dist/*.whl", "target/release/*.tar.gz"]
+
+# Notes tab: read-only view of chosen folders of an Obsidian vault. Only notes and files
+# under these folders are served, plus attachments elsewhere in the vault that those notes
+# link to or embed. Hidden folders, symlinks and the vault's excluded files are skipped.
+# Line breaks and excluded files follow the vault's own settings (.obsidian/app.json).
+# [notes]
+# vault = "~/Notes"
+# folders = ["Travel", "Recipes"]

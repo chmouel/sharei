@@ -1,7 +1,7 @@
 """Static CSS and JavaScript for the app pages and the file viewers."""
 
 EXTRA_CSS = """
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:5; display:grid; grid-template-columns:repeat(4, 1fr); padding:6px max(8px, env(safe-area-inset-left)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right)); background:color-mix(in srgb, var(--base) 94%, transparent); border-top:1px solid var(--line); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:5; display:grid; grid-auto-flow:column; grid-auto-columns:1fr; padding:6px max(8px, env(safe-area-inset-left)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right)); background:color-mix(in srgb, var(--base) 94%, transparent); border-top:1px solid var(--line); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
   .tab { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-width:0; min-height:52px; padding:4px 2px; border-radius:12px; color:var(--muted); text-decoration:none; font-size:11.5px; font-weight:650; line-height:1; white-space:nowrap; -webkit-tap-highlight-color:transparent; transition:background .15s ease,color .15s ease; }
   .tab:hover { color:var(--ink); }
   .tab-icon { display:grid; place-items:center; width:46px; height:26px; border-radius:13px; font-size:15px; line-height:1; transition:background .15s ease; }
@@ -34,7 +34,7 @@ EXTRA_CSS = """
   @media (min-width:900px) {
     body { padding-left:96px; }
     .wrap { padding-bottom:48px; }
-    .tabs { top:0; right:auto; width:96px; grid-template-columns:none; grid-auto-rows:min-content; align-content:start; gap:10px; padding:28px 8px; border-top:0; border-right:1px solid var(--line); }
+    .tabs { top:0; right:auto; width:96px; grid-auto-flow:row; grid-auto-columns:auto; grid-auto-rows:min-content; align-content:start; gap:10px; padding:28px 8px; border-top:0; border-right:1px solid var(--line); }
     .tab { min-height:64px; font-size:12px; gap:6px; }
     .tab-icon { width:56px; height:32px; border-radius:16px; font-size:17px; }
     .tab-count { top:0; left:calc(50% + 14px); }
@@ -1099,6 +1099,54 @@ for (const button of document.querySelectorAll('[data-wipe-project]')) {
 
 const wipe = document.getElementById('delete-all');
 if (wipe) wipe.addEventListener('click', () => remove('/poub/delete-all', 'Delete ALL dropped files in every project? This cannot be undone.'));
+"""
+
+
+FOLDER_ICON = (
+    '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" '
+    'd="M3 6.5A2.5 2.5 0 0 1 5.5 4h3.6c.6 0 1.2.2 1.6.7L12 6h6.5A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 '
+    '2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/></svg>'
+)
+
+
+NOTES_CSS = """
+  .notes-crumbs { display:flex; flex-wrap:wrap; gap:2px 6px; margin:0 0 8px; padding-right:48px; color:var(--muted); font-size:13px; }
+  .notes-crumbs a { color:inherit; text-decoration:none; }
+  .notes-crumbs a:hover { color:var(--accent); }
+  .notes-crumbs span { opacity:.6; }
+  .note-filter { display:block; width:100%; margin:0 0 4px; padding:11px 14px; border:1px solid var(--edge); border-radius:12px; background:var(--field); color:var(--ink); font:inherit; font-size:15px; }
+  .note-filter:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .note-filter::placeholder { color:var(--faint); }
+  .file .folder-mark { color:var(--accent); }
+  .note-results[hidden], .note-tree[hidden] { display:none; }
+  .note-results .file[hidden] { display:none; }
+"""
+
+
+NOTES_JS = """
+(() => {
+  const input = document.getElementById('note-filter');
+  const tree = document.getElementById('note-tree');
+  const results = document.getElementById('note-results');
+  const count = document.getElementById('note-count');
+  if (!input) return;
+  const rows = [...results.querySelectorAll('.file')];
+  const total = count.textContent;
+  function filter() {
+    const words = input.value.trim().toLowerCase().split(/\\s+/).filter(Boolean);
+    tree.hidden = words.length > 0;
+    results.hidden = !words.length;
+    let shown = 0;
+    for (const row of rows) {
+      const hit = words.every((word) => row.dataset.path.includes(word));
+      row.hidden = !hit;
+      if (hit) shown++;
+    }
+    count.textContent = words.length ? shown + ' found' : total;
+  }
+  input.addEventListener('input', filter);
+  filter();
+})();
 """
 
 
