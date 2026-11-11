@@ -28,7 +28,7 @@ proxy with authentication (see SECURITY.md).
   (PNG as is, other raster formats through Pillow) on the alternate screen,
   sized to the window (`browse`: j/space/right and k/backspace/delete/left
   step through the last `BROWSE_MAX` items, wrapping and skipping
-  non-images; Ctrl-D then y deletes the item through the server's delete
+  non-images; D then D or y deletes the item through the server's delete
   routes; any other key quits), then delete the image by id
   (inline when stdin is not a terminal), and print text files with
   control characters stripped; anything else, `-f` or `-o` saves a file.

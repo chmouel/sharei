@@ -115,7 +115,7 @@ def test_get_browse_deletes_after_confirming(sharec, monkeypatch, capsysbinary):
     monkeypatch.setattr(sharec.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(sharec.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sharec, "terminal_size", lambda: (80, 24, 10, 20))
-    keys = iter([b"\x04", b"n", b"\x04", b"y", b"\x04", b"y"])
+    keys = iter([b"D", b"n", b"D", b"y", b"D", b"y"])
     monkeypatch.setattr(sharec, "wait_key", lambda: next(keys))
     tall = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x64\x00\x00\x03\xe8"
     sharec.upload("a.png", tall, "")
@@ -124,8 +124,8 @@ def test_get_browse_deletes_after_confirming(sharec, monkeypatch, capsysbinary):
     sharec.get_main(["drop"])
     out = capsysbinary.readouterr().out
     assert next(keys, None) is None
-    assert out.count(b"Delete b.png from sharei? y to confirm") == 2
-    assert b"Delete a.png from sharei? y to confirm" in out
+    assert out.count(b"Delete b.png from sharei? D to confirm") == 2
+    assert b"Delete a.png from sharei? D to confirm" in out
     assert out.endswith(b"\x1b[?1049l")
     assert [item["name"] for item in sharec.recent(10, "")["drop"]] == ["note.txt"]
 

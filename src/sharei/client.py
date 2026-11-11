@@ -365,7 +365,7 @@ def kitty_image(
 
 NEXT_KEYS = {b" ", b"j", b"\x1b[C", b"\x1bOC"}
 PREVIOUS_KEYS = {b"k", b"\x7f", b"\x08", b"\x1b[3~", b"\x1b[D", b"\x1bOD"}
-DELETE_KEYS = {b"\x04"}
+DELETE_KEYS = {b"D"}
 BROWSE_MAX = 50
 
 
@@ -402,8 +402,8 @@ def wait_key() -> bytes:
 def browse(items: list[dict], index: int, image: tuple[bytes, int, int]) -> None:
     """Show items[index] full screen. Space or right goes to the next (older)
     image (also j), backspace, delete, left or k to the previous one, wrapping
-    around and skipping what isn't an image; Ctrl-D deletes the image on the
-    server after a y to confirm; any other key puts the terminal back."""
+    around and skipping what isn't an image; D deletes the image on the
+    server after a D or a y to confirm; any other key puts the terminal back."""
     out = sys.stdout.buffer
     cache: dict[int, tuple[bytes, int, int] | None] = {index: image}
 
@@ -433,13 +433,13 @@ def browse(items: list[dict], index: int, image: tuple[bytes, int, int]) -> None
             hint = f"{items[index]['name']}  {index + 1}/{len(items)}"
             if len(items) > 1:
                 hint += "  j/→ next  k/← previous"
-            hint += "  ^D delete  q quit"
+            hint += "  D delete  q quit"
 
             say(hint)
             key = wait_key()
             if key in DELETE_KEYS:
-                say(f"Delete {items[index]['name']} from sharei? y to confirm")
-                if wait_key() not in (b"y", b"Y"):
+                say(f"Delete {items[index]['name']} from sharei? D to confirm")
+                if wait_key() not in (b"D", b"y", b"Y"):
                     continue
                 try:
                     delete_item(items[index])
