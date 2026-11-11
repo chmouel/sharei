@@ -236,3 +236,31 @@ def test_confirm_without_terminal_points_at_yes():
     )
     assert result.returncode == 1
     assert "pass -y" in result.stderr
+
+
+def test_get_comments_and_replace_keep_review(sharec, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    sharec.upload("plan.md", b"# Plan\n\nStep one.\n", "inbox")
+    urllib.request.urlopen(
+        urllib.request.Request(
+            f"{sharec.SHAREI_URL}/comments/add/inbox/plan.md",
+            data=json.dumps({"start": 3, "end": 3, "body": "Too vague"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+    ).read()
+    sharec.get_main(["comments", "plan.md"])
+    assert capsys.readouterr().out == (
+        "Review comments on plan.md (sharei):\n\nplan.md:3\n> Step one.\nToo vague\n"
+    )
+    with pytest.raises(sharec.Abort, match="-p PROJECT"):
+        sharec.get_main(["comments", "other.md"])
+
+    (tmp_path / "plan.md").write_text("# Plan\n\nStep one, with detail.\n")
+    monkeypatch.setattr(
+        sys, "argv", ["sharec", "plan.md", "-p", "inbox", "--replace", "--json"]
+    )
+    sharec.main()
+    assert json.loads(capsys.readouterr().out)["name"] == "plan.md"
+    sharec.get_main(["comments", "--json"])
+    [entry] = json.loads(capsys.readouterr().out)["comments"]
+    assert entry["outdated"] is True and entry["body"] == "Too vague"

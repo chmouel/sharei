@@ -24,9 +24,9 @@ if [[ $words[2] == get ]]; then
         '(-f --file -o --output)'{-f,--file}'[drop/shot: save to the current folder instead of showing it]' \
         '(-f --file -o --output)'{-o+,--output=}'[drop/shot: file or folder to save to, - for stdout]:output:_files' \
         '(-p --project)'{-p+,--project=}'[sharei project]:project:__sharei_shot_projects' \
-        '--json[list: print the raw JSON]' \
-        '1:what:((clip\:"the shared clipboard" drop\:"the newest dropped file" shot\:"the newest screenshot" list\:"what sharei holds"))' \
-        '2:steps back from the newest: '
+        '--json[list, comments: print the raw JSON]' \
+        '1:what:((clip\:"the shared clipboard" drop\:"the newest dropped file" shot\:"the newest screenshot" list\:"what sharei holds" comments\:"review comments on a markdown file"))' \
+        '2:steps back from the newest, or a markdown file name for comments: '
     return
 fi
 
@@ -51,6 +51,7 @@ _arguments -s -S \
     '(-p --project)'{-p+,--project=}'[sharei project]:project:__sharei_shot_projects' \
     '(-y --yes)'{-y,--yes}'[upload a markdown file'\''s local images without asking]' \
     '--json[print the upload as JSON]' \
+    '--replace[overwrite the dropped file with the same name, keeping its comments]' \
     '1:file to share, get to fetch or clip to set the clipboard (.md/.markdown is shown as markdown, text files highlighted):__sharei_shot_files'
 
 # vim: ft=zsh

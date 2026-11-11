@@ -518,3 +518,172 @@ def test_dropped_svg_is_an_image_but_stays_sandboxed(live_server):
     upload(live_server, "shot.png", b"\x89PNG\r\n\x1a\n")
     _, headers, _ = get(live_server + "/poub/inbox/shot.png")
     assert "Content-Security-Policy" not in headers
+
+
+def comment(base, action, name, payload=None, query="", origin=None):
+    headers = {"Content-Type": "application/json"}
+    if origin:
+        headers["Origin"] = origin
+    request = urllib.request.Request(
+        f"{base}/comments/{action}/inbox/{name}{query}",
+        data=json.dumps(payload).encode() if payload is not None else b"",
+        method="POST",
+        headers=headers,
+    )
+    with urllib.request.urlopen(request) as response:
+        return json.load(response)
+
+
+def comment_error(*args, **kwargs):
+    with pytest.raises(urllib.error.HTTPError) as error:
+        comment(*args, **kwargs)
+    return error.value.code
+
+
+PLAN = b"# Plan\n\nFirst step.\n\nSecond step.\n"
+
+
+def test_comments_add_edit_delete_and_prompt(live_server):
+    upload(live_server, "plan.md", PLAN)
+    view = comment(
+        live_server, "add", "plan.md", {"start": 3, "end": 5, "body": "Why?"}
+    )
+    assert view["lines"] == 5
+    [entry] = view["comments"]
+    assert (entry["start"], entry["end"], entry["body"]) == (3, 5, "Why?")
+    assert entry["quote"] == ["First step.", "", "Second step."]
+    edited = comment(
+        live_server, "edit", "plan.md", {"body": "Split it"}, f"?id={entry['id']}"
+    )
+    assert edited["comments"][0]["body"] == "Split it"
+
+    _, headers, body = get(live_server + "/comments/inbox/plan.md?format=prompt")
+    assert headers["Content-Type"].startswith("text/plain")
+    assert body.decode() == (
+        "Review comments on plan.md (sharei):\n\n"
+        "plan.md:3-5\n> First step.\n>\n> Second step.\nSplit it\n"
+    )
+    _, _, recent = get(live_server + "/recent")
+    assert json.loads(recent)["drop"][0]["comments"] == 1
+
+    assert (
+        comment(live_server, "delete", "plan.md", query=f"?id={entry['id']}")[
+            "comments"
+        ]
+        == []
+    )
+
+
+def test_comments_reject_bad_input(live_server, sharei_root):
+    upload(live_server, "plan.md", PLAN)
+    upload(live_server, "notes.txt", b"text\n")
+    assert (
+        comment_error(
+            live_server, "add", "plan.md", {"start": 4, "end": 9, "body": "x"}
+        )
+        == 400
+    )
+    assert (
+        comment_error(
+            live_server, "add", "plan.md", {"start": 0, "end": 1, "body": "x"}
+        )
+        == 400
+    )
+    assert (
+        comment_error(
+            live_server, "add", "plan.md", {"start": 1, "end": 1, "body": " "}
+        )
+        == 400
+    )
+    from sharei import server
+
+    too_long = "x" * (server.COMMENT_MAX_CHARS + 1)
+    assert (
+        comment_error(
+            live_server, "add", "plan.md", {"start": 1, "end": 1, "body": too_long}
+        )
+        == 400
+    )
+    assert (
+        comment_error(live_server, "edit", "plan.md", {"body": "x"}, "?id=nope") == 404
+    )
+    assert (
+        comment_error(
+            live_server, "add", "notes.txt", {"start": 1, "end": 1, "body": "x"}
+        )
+        == 404
+    )
+    assert (
+        comment_error(
+            live_server, "add", "gone.md", {"start": 1, "end": 1, "body": "x"}
+        )
+        == 404
+    )
+    good = {"start": 1, "end": 1, "body": "x"}
+    assert (
+        comment_error(
+            live_server, "add", "plan.md", good, origin="https://evil.example.com"
+        )
+        == 403
+    )
+    request = urllib.request.Request(
+        f"{live_server}/comments/add/inbox/plan.md", data=b"{nope", method="POST"
+    )
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(request)
+    assert error.value.code == 400
+    assert not (sharei_root / "inbox/drop/.comments").exists() or not any(
+        (sharei_root / "inbox/drop/.comments").iterdir()
+    )
+    with pytest.raises(urllib.error.HTTPError) as error:
+        get(live_server + "/poub/inbox/.comments/plan.md.json")
+    assert error.value.code == 404
+
+
+def test_comments_follow_moved_lines_and_flag_changed_ones(live_server):
+    upload(live_server, "plan.md", PLAN)
+    comment(live_server, "add", "plan.md", {"start": 3, "end": 3, "body": "moves"})
+    comment(live_server, "add", "plan.md", {"start": 5, "end": 5, "body": "changes"})
+    revised = b"# Plan\n\nIntro.\n\nFirst step.\n\nSecond step, reworded.\n"
+    request = urllib.request.Request(
+        f"{live_server}/upload?project=inbox&name=plan.md&replace=1",
+        data=revised,
+        method="POST",
+    )
+    with urllib.request.urlopen(request) as response:
+        result = json.load(response)
+    assert result["name"] == "plan.md" and result["replaced"] is True
+
+    _, _, body = get(live_server + "/comments/inbox/plan.md")
+    moved, changed = json.loads(body)["comments"]
+    assert (moved["body"], moved["start"], moved.get("outdated", False)) == (
+        "moves",
+        5,
+        False,
+    )
+    assert (changed["body"], changed["start"], changed["outdated"]) == (
+        "changes",
+        5,
+        True,
+    )
+    _, _, prompt = get(live_server + "/comments/inbox/plan.md?format=prompt")
+    assert b"plan.md:5 (outdated" in prompt
+
+    assert upload(live_server, "plan.md", PLAN)["name"] == "plan-1.md"
+
+
+def test_deleting_markdown_drops_its_comments(live_server, sharei_root):
+    upload(live_server, "plan.md", PLAN)
+    comment(live_server, "add", "plan.md", {"start": 1, "end": 1, "body": "x"})
+    assert any((sharei_root / "inbox/drop/.comments").iterdir())
+    post(live_server + "/poub/delete/inbox/plan.md")
+    assert not any((sharei_root / "inbox/drop/.comments").iterdir())
+    upload(live_server, "plan.md", PLAN)
+    _, _, body = get(live_server + "/comments/inbox/plan.md")
+    assert json.loads(body)["comments"] == []
+
+
+def test_markdown_page_offers_review(live_server):
+    upload(live_server, "plan.md", PLAN)
+    _, _, body = get(live_server + "/md/inbox/plan.md")
+    assert b'id="review"' in body and b'data-comments="/comments/inbox/plan.md"' in body

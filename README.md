@@ -219,6 +219,14 @@ files, which no terminal can draw, are always saved. When the
 output goes to a pipe or a file, you get the file itself. Downloads never
 overwrite a file; they become `name-1.ext` instead.
 
+To comment on a markdown file, press the speech bubbles in its header.
+Line numbers appear next to the text; tap one, or tap a second to take a
+range, and write your note. Copy as prompt puts every comment on the
+clipboard, ready to paste back to whoever wrote the file, and
+`sharec get comments plan.md` prints the same thing. Send a revised version
+with `sharec plan.md --replace` and the comments stay: those on lines that
+moved follow them, and those on lines that changed are marked as such.
+
 ## Privacy
 
 Everything stays on your computer. Markdown is formatted by your own browser,

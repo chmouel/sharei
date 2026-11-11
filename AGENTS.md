@@ -22,6 +22,10 @@ proxy with authentication (see SECURITY.md).
   anything else as is. With no arguments it shows a `gum` menu.
   `sharec get [clip|drop|shot|list] [N]` reads back through `/clip/raw` and
   `/recent` (N is steps back from the newest) and never overwrites a file.
+  `sharec get comments [NAME|N] [-p P] [--json]` prints a markdown drop's
+  review comments from `/comments/...?format=prompt` (or the JSON). A name
+  not among the 50 newest drops needs `-p`. `sharec FILE --replace` uploads
+  with `replace=1` so a revised file keeps its name and comments.
   `sharec clip [TEXT|-] [--ttl S] [--clear]` writes `/clip`, `/clip/ttl` and
   `/clip/clear`; with `--ttl` and no TEXT only the expiry changes.
   On a terminal, `drop`/`shot` draw images with the kitty graphics protocol
@@ -60,6 +64,9 @@ the service.
 - Root: `~/tmp/sharei` (`root` setting or `--root`).
   - `<root>/<project>/shots/**`: screenshots
   - `<root>/<project>/drop/*`: dropped files
+  - `<root>/<project>/drop/.comments/<name>.json`: review comments on a
+    markdown drop, a list of `{id, start, end, quote, body, created,
+    updated}`; `quote` holds the source lines when the comment was written
   - `<root>/.expiry.json`: expiries set from the UI, mapping a path relative
     to the root to an epoch
 - Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
@@ -97,6 +104,17 @@ Pages:
   follows the section being read, draws a progress line under the bar, and
   colours mermaid's base theme from the page's CSS variables.
   Linkify ignores scheme-less links so `README.md` stays text.
+  A `sharei_lines` core rule copies markdown-it's `token.map` onto blocks as
+  `data-line`/`data-line-end` (1-based, inclusive; a tight list item takes
+  its hidden paragraph's range) and `data-code` on code blocks. The review
+  button (`REVIEW_BUTTON`, `REVIEW_DOCK`) turns on a line gutter built from
+  those attributes, switching GitHub rendering off first since it has no
+  map. Picking lines (shift-click, or a second tap on touch) sets
+  `#Lx-Ly`, which also opens review on load. Comments are fetched from and
+  posted to `data-comments` and drawn with `textContent`. On read,
+  `comment_anchor()` keeps a comment whose lines still equal its `quote`,
+  moves it to the single other place the quote appears, or marks it
+  `outdated` at its clamped range.
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
@@ -129,6 +147,8 @@ Data:
 - `/recent`: newest items as JSON, used by the skill
 - `/sw.js` (service worker), `/push/key` (VAPID public key): push only
 - `/clip/raw[?n=]`: the clip, or history entry n (1 is the newest), `/clip/state`
+- `/comments/<project>/<name>`: `{name, lines, comments}` for a markdown
+  drop, or `?format=prompt` for the text `sharec get comments` prints
 
 POST:
 
@@ -139,6 +159,9 @@ POST:
   A HEIC/HEIF body, recognised by suffix or by its `ftyp` brand, is rewritten
   as JPEG (PNG when the image has alpha) with `convert_heic_upload()` before
   it is published, so the name that comes back carries the new suffix.
+  `replace=1` overwrites an existing visible file of that name in place
+  (`replace_poub()`, keeping its expiry and comments) and adds
+  `"replaced": true`; with no such file it is a normal upload.
   Returns `{project, name, size, url, view?}`.
 - `/share`: Android share target, converting HEIC the same way
 - `/annotate`
@@ -148,6 +171,10 @@ POST:
 - `/clip/history/restore?id=`, `/clip/history/delete?id=`, `/clip/history/clear`
 - `/shots/delete/<key>`, `/shots/delete-all[?project=]`
 - `/poub/delete/<project>/<name>`, `/poub/delete-all[?project=]`
+- `/comments/add/<project>/<name>` (JSON `{start, end, body}`),
+  `/comments/edit/...?id=` (`{body}`), `/comments/delete/...?id=`: return
+  the comments view. Limits: `COMMENTS_MAX` per file, `COMMENT_MAX_CHARS`,
+  `COMMENT_MAX_LINES` quoted
 
 "poub" is the internal name for the drop folder.
 
@@ -166,7 +193,14 @@ These exist on purpose. Keep them when changing or adding code.
   404 before the sweeper deletes them. A delete or a publish under the same
   name must call `expiry_forget()` so a new file never inherits an old expiry.
 - Uploads are written to `.part-*` and published with a hard link (no
-  overwrite). The limit is `UPLOAD_MAX_BYTES`.
+  overwrite). The limit is `UPLOAD_MAX_BYTES`. Only `replace=1` overwrites,
+  with `os.replace`, and only a regular non-hidden file already in that
+  drop folder.
+- Comments live in the hidden `.comments` folder, so no route lists or
+  serves it. Their file is found through `poub_path()` (markdown only), so
+  an expired or missing file has none, and every delete, sweep or new
+  publish under the name calls `comments_forget()`. Comment text is
+  rendered with `textContent`, never as HTML.
 - Artifacts: `/download/<key>` only serves a path found by the last scan
   (`available_artifacts()`), never a path from the request. The scanner
   (`artifact_files`) keeps only regular files whose resolved path stays

@@ -208,8 +208,12 @@ def failure(action: str, error: Exception) -> Abort:
     return Abort(f"{action} failed: {error}")
 
 
-def upload(name: str, data: bytes, project: str) -> dict:
-    params = {"name": name, **({"project": project} if project else {})}
+def upload(name: str, data: bytes, project: str, replace: bool = False) -> dict:
+    params = {
+        "name": name,
+        **({"project": project} if project else {}),
+        **({"replace": "1"} if replace else {}),
+    }
     try:
         with request(f"/upload?{urlencode(params)}", data) as response:
             return json.load(response)
@@ -557,27 +561,56 @@ def get_list(limit: int, project: str, as_json: bool = False) -> None:
             )
 
 
+def get_comments(name: str, back: int, project: str, as_json: bool) -> None:
+    """Print the review comments on a dropped markdown file, by name or N back."""
+    drops = [
+        item
+        for item in recent(50, project)["drop"]
+        if item["name"].lower().endswith(MARKDOWN_SUFFIXES)
+    ]
+    where = f" in {project}" if project else ""
+    if name:
+        found = next((item for item in drops if item["name"] == name), None)
+        if found is None and not project:
+            raise Abort(f"No recent markdown file named {name}; pass -p PROJECT.")
+        project = found["project"] if found else project
+    elif len(drops) <= back:
+        raise Abort(
+            f"No markdown file{where} {back} back."
+            if back
+            else f"No markdown file{where}."
+        )
+    else:
+        project, name = drops[back]["project"], drops[back]["name"]
+    path = f"/comments/{quote(project)}/{quote(name)}"
+    if as_json:
+        print(json.dumps(json.loads(fetch(path)), indent=2))
+        return
+    sys.stdout.write(fetch(f"{path}?format=prompt").decode("utf-8", errors="replace"))
+
+
 def parse_get_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="sharec get",
         description="Fetch the shared clipboard, the newest dropped file or "
-        "screenshot, or list what sharei holds.",
+        "screenshot, the review comments on a markdown file, or list what "
+        "sharei holds.",
     )
     parser.add_argument(
         "what",
         nargs="?",
-        choices=("clip", "drop", "shot", "list"),
+        choices=("clip", "drop", "shot", "list", "comments"),
         default="clip",
         help="what to fetch (default: clip)",
     )
     parser.add_argument(
         "back",
         nargs="?",
-        type=int,
-        default=0,
+        default="0",
         metavar="N",
         help="how many steps back from the newest (default: 0, the newest); "
-        "for list, how many items per kind (default: 5)",
+        "for list, how many items per kind (default: 5); for comments, the "
+        "markdown file's name or how many markdown files back",
     )
     parser.add_argument(
         "-c", "--copy", action="store_true", help="clip: put it on this clipboard"
@@ -602,17 +635,27 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
         help="drop/shot/list: only this project (default: $SHAREI_PROJECT)",
     )
     parser.add_argument(
-        "--json", action="store_true", help="list: print the raw /recent JSON"
+        "--json",
+        action="store_true",
+        help="list, comments: print the raw JSON",
     )
     args = parser.parse_args(argv)
+    args.name = ""
+    if args.what == "comments" and not args.back.isdigit():
+        args.name, args.back = args.back, 0
+    else:
+        try:
+            args.back = int(args.back)
+        except ValueError:
+            parser.error(f"N must be a number, not {args.back!r}")
     if args.back < 0:
         parser.error("N must be 0 or more")
     if args.copy and args.what != "clip":
         parser.error("--copy only works with clip")
     if (args.output or args.file) and args.what not in ("drop", "shot"):
         parser.error("--file and --output only work with drop or shot")
-    if args.json and args.what != "list":
-        parser.error("--json only works with list")
+    if args.json and args.what not in ("list", "comments"):
+        parser.error("--json only works with list or comments")
     return args
 
 
@@ -622,6 +665,8 @@ def get_main(argv: list[str]) -> int:
         get_clip(args.back, args.copy)
     elif args.what == "list":
         get_list(args.back or 5, args.project, args.json)
+    elif args.what == "comments":
+        get_comments(args.name, args.back, args.project, args.json)
     else:
         get_file(
             "drop" if args.what == "drop" else "shots",
@@ -997,6 +1042,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="print the upload's JSON, with absolute url and view links",
     )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite the dropped file with the same name instead of adding "
+        "a numbered copy; markdown review comments stay with it",
+    )
     parser.add_argument("file", nargs="?", type=Path, metavar="FILE")
     args = parser.parse_args()
     if args.file is not None:
@@ -1052,14 +1103,15 @@ def main() -> int:
             if name is None:
                 return 0
             name = markdown_name(Path(name or "note.md").name)
-    response = upload(name, data, project)
+    response = upload(name, data, project, args.replace)
     for key in ("url", "view"):
         if response.get(key):
             response[key] = f"{public_url()}{response[key]}"
     if args.json:
         print(json.dumps(response, indent=2))
         return 0
-    print(f"Uploaded {response.get('name', name)} ({human(response.get('size', 0))})")
+    verb = "Replaced" if response.get("replaced") else "Uploaded"
+    print(f"{verb} {response.get('name', name)} ({human(response.get('size', 0))})")
     print(f"Download: {response['url']}")
     if response.get("view"):
         print(f"Open it:  {response['view']}")

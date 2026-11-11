@@ -40,7 +40,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import NamedTuple, TypedDict
-from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
+from urllib.parse import ParseResult, parse_qs, quote, unquote, urlparse, urlsplit
 
 from sharei import push
 
@@ -199,6 +199,12 @@ CLIP: ClipState = {
 }
 
 UPLOAD_MAX_BYTES = 2 * 1024**3
+# Review comments on dropped markdown live in <project>/drop/.comments/<name>.json.
+COMMENTS_DIR = ".comments"
+COMMENTS_MAX = 200
+COMMENT_MAX_CHARS = 4000
+COMMENT_MAX_LINES = 200
+COMMENTS_LOCK = threading.Lock()
 # Share target bodies are parsed in memory, so they get a lower cap than /upload.
 SHARE_MAX_BYTES = 200 * 1024**2
 SHARE_LOCK = threading.Lock()
@@ -1514,6 +1520,7 @@ def delete_poub(encoded: str) -> bool:
         return False
     path.unlink()
     expiry_forget(path)
+    comments_forget(path)
     return True
 
 
@@ -1525,6 +1532,7 @@ def delete_all_poub(project: str | None = None) -> int:
         except OSError:
             continue
         expiry_forget(path)
+        comments_forget(path)
         deleted += 1
     return deleted
 
@@ -1626,6 +1634,8 @@ def sweep_expired() -> int:
                 if relative.parts[1] == "shots":
                     forget_thumbnail(path)
                 path.unlink()
+                if relative.parts[1] == "drop":
+                    comments_forget(path)
             except OSError as error:
                 print(f"Cannot delete expired {path}: {error}")
                 continue
@@ -1737,8 +1747,216 @@ def publish_poub(temporary: Path, name: str) -> Path:
             ) from error
         temporary.unlink(missing_ok=True)
         expiry_forget(candidate)
+        comments_forget(candidate)
         return candidate
     raise OSError("too many files already use that name")
+
+
+def replace_poub(temporary: Path, name: str) -> Path | None:
+    """Swap an existing dropped file for the upload, keeping its name, expiry and comments."""
+    path = temporary.parent / name
+    if path.is_symlink() or not path.is_file():
+        return None
+    if expired(path):
+        expiry_forget(path)
+        comments_forget(path)
+    forget_thumbnail(path)
+    os.replace(temporary, path)
+    return path
+
+
+def comments_file(path: Path) -> Path:
+    return path.parent / COMMENTS_DIR / f"{path.name}.json"
+
+
+def comments_forget(path: Path) -> None:
+    with COMMENTS_LOCK:
+        try:
+            comments_file(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def comment_valid(entry: object) -> bool:
+    return (
+        isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and isinstance(entry.get("body"), str)
+        and isinstance(entry.get("quote"), list)
+        and all(isinstance(line, str) for line in entry["quote"])
+        and all(
+            isinstance(entry.get(key), int) and not isinstance(entry.get(key), bool)
+            for key in ("start", "end")
+        )
+        and 1 <= entry["start"] <= entry["end"]
+    )
+
+
+def comments_load(path: Path) -> list[dict]:
+    try:
+        data = json.loads(comments_file(path).read_text("utf-8"))
+    except (OSError, ValueError):
+        return []
+    return (
+        [entry for entry in data if comment_valid(entry)]
+        if isinstance(data, list)
+        else []
+    )
+
+
+def comments_save(path: Path, entries: list[dict]) -> None:
+    target = comments_file(path)
+    if not entries:
+        target.unlink(missing_ok=True)
+        return
+    target.parent.mkdir(exist_ok=True)
+    if target.parent.is_symlink() or not under_root(target.parent):
+        raise OSError(f"{target.parent} leads outside {ROOT}")
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(4)}.part")
+    try:
+        temporary.write_text(json.dumps(entries, indent=1), "utf-8")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def markdown_lines(path: Path) -> list[str]:
+    """Source lines as markdown-it numbers them."""
+    text = path.read_text("utf-8", errors="replace")
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def comment_anchor(entry: dict, lines: list[str]) -> dict:
+    """Where the comment's quoted lines are now: same place, moved, or gone (outdated)."""
+    start, end, quoted = entry["start"], entry["end"], entry["quote"]
+    shown = {
+        key: entry[key]
+        for key in ("id", "body", "quote", "created", "updated")
+        if key in entry
+    }
+    if lines[start - 1 : end] == quoted:
+        return {**shown, "start": start, "end": end, "outdated": False}
+    size = len(quoted)
+    found = [
+        index + 1
+        for index in range(len(lines) - size + 1)
+        if size and lines[index : index + size] == quoted
+    ]
+    if found:
+        moved = min(found, key=lambda line: abs(line - start))
+        return {**shown, "start": moved, "end": moved + size - 1, "outdated": False}
+    last = max(1, len(lines))
+    start = min(start, last)
+    return {
+        **shown,
+        "start": start,
+        "end": min(max(end, start), last),
+        "outdated": True,
+    }
+
+
+def comments_view(path: Path) -> dict[str, object]:
+    lines = markdown_lines(path)
+    with COMMENTS_LOCK:
+        entries = comments_load(path)
+    comments = sorted(
+        (comment_anchor(entry, lines) for entry in entries),
+        key=lambda comment: (
+            comment["start"],
+            comment["end"],
+            comment.get("created", 0),
+        ),
+    )
+    return {"name": path.name, "lines": len(lines), "comments": comments}
+
+
+def comments_count(path: Path) -> int:
+    if not is_markdown(path.name) or not comments_file(path).is_file():
+        return 0
+    with COMMENTS_LOCK:
+        return len(comments_load(path))
+
+
+def comments_prompt(view: dict) -> str:
+    """The comments as one block of text to paste back to whoever wrote the file."""
+    name = view["name"]
+    if not view["comments"]:
+        return f"No review comments on {name}.\n"
+    parts = [f"Review comments on {name} (sharei):"]
+    for comment in view["comments"]:
+        where = (
+            str(comment["start"])
+            if comment["start"] == comment["end"]
+            else f"{comment['start']}-{comment['end']}"
+        )
+        head = f"{name}:{where}"
+        if comment["outdated"]:
+            head += " (outdated: these lines changed since the comment)"
+        quoted = "\n".join(f"> {line}".rstrip() for line in comment["quote"])
+        parts.append(f"{head}\n{quoted}\n{comment['body'].strip()}")
+    return "\n\n".join(parts) + "\n"
+
+
+def comment_change(
+    path: Path, action: str, comment_id: str, data: object
+) -> str | None:
+    """Add, edit or delete a comment. Returns an error message, or None when done."""
+    if action != "delete":
+        if not isinstance(data, dict) or not isinstance(data.get("body"), str):
+            return "body must be a string"
+        body = data["body"].strip()
+        if not body:
+            return "the comment is empty"
+        if len(body) > COMMENT_MAX_CHARS:
+            return f"comments are limited to {COMMENT_MAX_CHARS} characters"
+    now = time.time()
+    lines = markdown_lines(path)
+    with COMMENTS_LOCK:
+        entries = comments_load(path)
+        if action == "add":
+            start, end = data.get("start"), data.get("end", data.get("start"))
+            if not all(
+                isinstance(value, int) and not isinstance(value, bool)
+                for value in (start, end)
+            ):
+                return "start and end must be line numbers"
+            if not 1 <= start <= end <= len(lines):
+                return f"lines must be between 1 and {len(lines)}"
+            if end - start + 1 > COMMENT_MAX_LINES:
+                return f"a comment covers at most {COMMENT_MAX_LINES} lines"
+            if len(entries) >= COMMENTS_MAX:
+                return f"a file holds at most {COMMENTS_MAX} comments"
+            entries.append(
+                {
+                    "id": secrets.token_hex(6),
+                    "start": start,
+                    "end": end,
+                    "quote": lines[start - 1 : end],
+                    "body": body,
+                    "created": now,
+                    "updated": now,
+                }
+            )
+        else:
+            index = next(
+                (
+                    index
+                    for index, entry in enumerate(entries)
+                    if entry["id"] == comment_id
+                ),
+                None,
+            )
+            if index is None:
+                return "not found"
+            if action == "delete":
+                del entries[index]
+            else:
+                entries[index] = {**entries[index], "body": body, "updated": now}
+        comments_save(path, entries)
+    return None
 
 
 def sweep_partials(max_age: float = 24 * 60 * 60) -> None:
@@ -2031,6 +2249,72 @@ READER_CSS = """
   .reader .toc a:hover { color:var(--fgColor-default); text-decoration:none; }
   .reader .toc a[aria-current="location"] { border-left-color:var(--fgColor-accent); color:var(--fgColor-default); font-weight:600; }
 
+  .bar nav .review-toggle .count { min-width:16px; padding:0 4px; border-radius:8px; background:var(--fgColor-accent); color:var(--bgColor-default); font:700 11px/16px system-ui,-apple-system,sans-serif; text-align:center; }
+  .bar nav .review-toggle .count[hidden] { display:none; }
+  .reader .markdown-body { --review-tint:color-mix(in srgb, var(--fgColor-accent) 13%, transparent); }
+  .reader .markdown-body.reviewing { position:relative; padding-left:2.9rem; }
+  .reader .markdown-body.reviewing .anchor { display:none; }
+  .reader .review-gutter { position:absolute; top:0; bottom:0; left:0; width:2.5rem; pointer-events:none; }
+  .reader .review-line { position:absolute; left:0; width:2.4rem; height:24px; padding:0 7px 0 0; border:0; border-radius:6px; background:none; color:var(--fgColor-muted); font:12px/24px var(--mono); font-variant-numeric:tabular-nums; text-align:right; cursor:pointer; pointer-events:auto; }
+  .reader .review-line:hover { color:var(--fgColor-accent); background:var(--review-tint); }
+  .reader .review-line:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:-2px; }
+  .reader .review-line.commented { color:var(--fgColor-accent); font-weight:700; }
+  .reader .review-line.selected { background:var(--fgColor-accent); color:var(--bgColor-default); }
+  .reader .review-line[hidden] { display:none; }
+  .reader .markdown-body .review-selected { border-radius:3px; background:var(--review-tint); box-shadow:0 0 0 6px var(--review-tint); }
+  .reader .markdown-body tr.review-selected { background:none; box-shadow:none; }
+  .reader .markdown-body .review-selected .review-selected { background:none; box-shadow:none; }
+  .reader .markdown-body tr.review-selected > :is(td, th) { background:var(--review-tint); }
+
+  .reader .code-body { position:relative; }
+  .reader .code-gutter { display:none; }
+  .reader .markdown-body.reviewing .code-body { display:grid; grid-template-columns:auto minmax(0, 1fr); }
+  .reader .markdown-body.reviewing .code-gutter { display:block; padding:14px 0; border-right:1px solid var(--borderColor-muted); font-size:13.5px; line-height:1.65; user-select:none; }
+  .reader .code-gutter .review-line { position:static; display:block; width:auto; min-width:2.8em; height:auto; padding:0 10px 0 12px; border-radius:0; font-size:inherit; line-height:inherit; }
+  .reader .code-band { position:absolute; left:0; right:0; background:var(--review-tint); pointer-events:none; }
+
+  .reader .markdown-body :is(.review-thread, .review-composer) { margin:.4em 0 1.4em; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:15px; line-height:1.55; }
+  .reader .markdown-body li > :is(.review-thread, .review-composer) { margin:.6em 0; }
+  .reader .markdown-body .review-comment { padding:10px 14px 12px; border:1px solid var(--borderColor-default); border-left:3px solid var(--fgColor-accent); border-radius:4px 12px 12px 4px; background:var(--bgColor-muted); }
+  .reader .markdown-body .review-comment + .review-comment { margin-top:8px; }
+  .reader .markdown-body .review-comment.outdated { border-left-color:var(--fgColor-attention); }
+  .reader .markdown-body .review-comment > header { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin-bottom:6px; color:var(--fgColor-muted); font-size:13px; }
+  .reader .markdown-body .review-where { padding:0; border:0; background:none; color:var(--fgColor-accent); font:600 12.5px/1.4 var(--mono); cursor:pointer; }
+  .reader .markdown-body .review-where:hover { text-decoration:underline; }
+  .reader .markdown-body .review-tools { display:flex; gap:2px; margin-left:auto; }
+  .reader .markdown-body .review-body { margin:0; color:var(--fgColor-default); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .reader .markdown-body .review-note { margin:0 0 6px; color:var(--fgColor-attention); font-size:13px; font-weight:600; }
+  .reader .markdown-body .review-quote { margin:0 0 8px; padding:8px 10px; border:1px solid var(--borderColor-muted); border-radius:8px; background:var(--bgColor-default); color:var(--fgColor-muted); font:12.5px/1.5 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .reader .markdown-body .review-composer { padding:12px; border:1px solid color-mix(in srgb, var(--fgColor-accent) 45%, var(--borderColor-default)); border-radius:12px; background:var(--bgColor-muted); }
+  .reader .markdown-body .review-composer-title { margin:0 0 8px; color:var(--fgColor-muted); font-size:13px; font-weight:600; }
+  .reader .markdown-body .review-comment .review-form { margin-top:4px; }
+  .reader .review-form textarea { display:block; width:100%; min-height:6.5em; padding:10px 12px; border:1px solid var(--borderColor-default); border-radius:10px; background:var(--bgColor-default); color:var(--fgColor-default); font:inherit; font-size:16px; line-height:1.5; resize:vertical; }
+  .reader .review-form textarea:focus { border-color:var(--fgColor-accent); outline:2px solid color-mix(in srgb, var(--fgColor-accent) 35%, transparent); outline-offset:0; }
+  .reader .review-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:8px; }
+  .reader .review-hint { margin-right:auto; color:var(--fgColor-muted); font-size:12px; }
+  @media (pointer:coarse) { .reader .review-hint { display:none; } }
+
+  :is(.review-actions, .review-tools, .review-dock) button { display:inline-flex; align-items:center; min-height:32px; padding:0 12px; border:1px solid var(--borderColor-default); border-radius:8px; background:var(--bgColor-default); color:var(--fgColor-default); font:600 13px/1 system-ui,-apple-system,sans-serif; white-space:nowrap; cursor:pointer; }
+  :is(.review-actions, .review-tools, .review-dock) button:hover { border-color:var(--fgColor-muted); }
+  :is(.review-actions, .review-tools, .review-dock) button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:1px; }
+  :is(.review-actions, .review-dock) button.primary { border-color:var(--fgColor-accent); background:var(--fgColor-accent); color:var(--bgColor-default); }
+  :is(.review-actions, .review-tools, .review-dock) button:disabled { opacity:.55; cursor:progress; }
+  :is(.review-actions, .review-tools, .review-dock) button[hidden] { display:none; }
+  .review-tools button { min-height:26px; padding:0 8px; border-color:transparent; background:none; color:var(--fgColor-muted); }
+  .review-tools button:hover { color:var(--fgColor-default); }
+  .review-tools button.danger { border-color:var(--fgColor-danger); color:var(--fgColor-danger); }
+
+  .review-dock { position:fixed; z-index:3; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); display:flex; align-items:center; gap:8px; width:max-content; max-width:calc(100% - 24px); padding:8px 8px 8px 16px; border:1px solid var(--borderColor-default); border-radius:14px; background:color-mix(in srgb, var(--bgColor-default) 94%, transparent); box-shadow:0 12px 32px rgba(0,0,0,.3); backdrop-filter:blur(10px); color:var(--fgColor-default); font:14px/1.3 system-ui,-apple-system,sans-serif; transform:translateX(-50%); }
+  .review-dock[hidden] { display:none; }
+  .review-dock-text { flex:1; min-width:0; margin-right:4px; overflow:hidden; color:var(--fgColor-muted); text-overflow:ellipsis; white-space:nowrap; }
+  .review-dock.error .review-dock-text { color:var(--fgColor-danger); }
+  @media (prefers-reduced-motion:no-preference) {
+    .review-dock { animation:review-dock-in .18s ease-out; }
+    @keyframes review-dock-in { from { opacity:0; transform:translate(-50%, 10px); } }
+  }
+  body.reviewing .page.reader { padding-bottom:120px; }
+  @media (min-width:768px) { .reader .markdown-body.reviewing .code-gutter { font-size:14px; } }
+
   @media (max-width:767px) { .reader .markdown-body table :is(th, td) { padding:8px 10px; } }
   @media (min-width:768px) { .reader .markdown-body { font-size:17px; } .reader .markdown-body .code-block pre { font-size:14px; } }
   @media (min-width:1240px) {
@@ -2050,6 +2334,25 @@ RENDERER_BUTTON = (
     '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>'
     '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M14.85 3c.63 0 1.15.52 1.14 1.15v7.7c0 .63-.51 1.15-1.15 1.15H1.15C.52 13 0 12.48 0 11.84V4.15C0 3.52.52 3 1.15 3ZM9 11V5H7L5.5 7 4 5H2v6h2V8l1.5 1.92L7 8v3Zm2.99.5L14.5 8H13V5h-2v3H9.5Z"></path></svg>'
     "</button>"
+)
+
+# Octicon comment-discussion. The count badge stays hidden until the file has comments.
+REVIEW_BUTTON = (
+    '<button type="button" class="renderer review-toggle" id="review" aria-pressed="false" '
+    'aria-label="Review" title="Review" hidden>'
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M1.75 1h8.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 10.25 10H7.061l-2.574 2.573A1.458 1.458 0 0 1 2 11.543V10h-.25A1.75 1.75 0 0 1 0 8.25v-5.5C0 1.784.784 1 1.75 1ZM1.5 2.75v5.5c0 .138.112.25.25.25h1a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h3.5a.25.25 0 0 0 .25-.25v-5.5a.25.25 0 0 0-.25-.25h-8.5a.25.25 0 0 0-.25.25Zm13 2a.25.25 0 0 0-.25-.25h-.5a.75.75 0 0 1 0-1.5h.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 14.25 12H14v1.543a1.458 1.458 0 0 1-2.487 1.03L9.22 12.28a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l2.22 2.22v-2.19a.75.75 0 0 1 .75-.75h1a.25.25 0 0 0 .25-.25Z"></path></svg>'
+    '<span class="count" hidden></span>'
+    "</button>"
+)
+
+REVIEW_DOCK = (
+    '<div class="review-dock" id="review-dock" role="region" aria-label="Review" hidden>'
+    '<span class="review-dock-text" role="status"></span>'
+    '<button type="button" class="primary" data-review="comment" hidden>Comment</button>'
+    '<button type="button" data-review="clear" hidden>Clear</button>'
+    '<button type="button" data-review="copy" hidden>Copy as prompt</button>'
+    '<button type="button" data-review="done">Done</button>'
+    "</div>"
 )
 
 MARKDOWN_SCRIPTS = (
@@ -2129,7 +2432,27 @@ function githubFlavour(markdown) {
       }
     }
   });
+  // Source line ranges (1-based, inclusive) for review comments. A tight list hides its
+  // paragraphs, so their range goes on the list item.
+  markdown.core.ruler.push('sharei_lines', (state) => {
+    const tokens = state.tokens;
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index];
+      if (!token.map || !/^(paragraph_open|heading_open|tr_open|hr)$/.test(token.type)) continue;
+      const target = token.hidden ? tokens[index - 1] : token;
+      if (!target || (token.hidden && target.type !== 'list_item_open')) continue;
+      target.attrSet('data-line', String(token.map[0] + 1));
+      target.attrSet('data-line-end', String(Math.max(token.map[1], token.map[0] + 1)));
+    }
+  });
+  const lines = (token, first) => token.map
+    ? ' data-line="' + (token.map[0] + 1) + '" data-line-end="' + token.map[1] + '" data-code="' + first + '"'
+    : '';
   const rules = markdown.renderer.rules;
+  rules.code_block = (tokens, index) => {
+    const token = tokens[index];
+    return '<pre' + lines(token, token.map ? token.map[0] + 1 : 0) + '><code>' + markdown.utils.escapeHtml(token.content.replace(/\\n$/, '')) + '</code></pre>\\n';
+  };
   rules.blockquote_open = (tokens, index, options, env, self) => {
     const kind = tokens[index].meta && tokens[index].meta.alert;
     if (!kind) return self.renderToken(tokens, index, options);
@@ -2142,12 +2465,13 @@ function githubFlavour(markdown) {
     const token = tokens[index];
     const text = token.content.replace(/\\n$/, '');
     const language = (token.info.trim().split(/\\s+/)[0] || '').toLowerCase().replace(/[^a-z0-9_+#.-]/g, '');
-    if (!language) return '<pre class="notranslate"><code>' + markdown.utils.escapeHtml(text) + '</code></pre>\\n';
+    const where = lines(token, token.map ? token.map[0] + 2 : 0);
+    if (!language) return '<pre class="notranslate"' + where + '><code>' + markdown.utils.escapeHtml(text) + '</code></pre>\\n';
     const body = language !== 'mermaid' && window.hljs && hljs.getLanguage(language)
       ? hljs.highlight(text, { language: language, ignoreIllegals: true }).value
       : markdown.utils.escapeHtml(text);
     // The highlight-source-* wrapper is what the mermaid step below looks for.
-    return '<div class="highlight highlight-source-' + language + '"><pre class="notranslate">' + body + '</pre></div>\\n';
+    return '<div class="highlight highlight-source-' + language + '"' + where + '><pre class="notranslate">' + body + '</pre></div>\\n';
   };
   if (rules.footnote_ref) {
     rules.footnote_caption = (tokens, index) => String(tokens[index].meta.id + 1);
@@ -2265,8 +2589,13 @@ function drawDiagrams() {
         const result = await mermaid.render(id, block.textContent);
         const holder = document.createElement('div');
         holder.className = 'mermaid-diagram';
+        if (block.dataset.line) {
+          holder.dataset.line = block.dataset.line;
+          holder.dataset.lineEnd = block.dataset.lineEnd;
+        }
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
+        if (onDiagram) onDiagram();
       } catch (error) {
         document.getElementById('d' + id)?.remove();
         block.title = 'Mermaid: ' + (error.message || error);
@@ -2332,8 +2661,11 @@ function frameCode() {
       }, 1600);
     });
     head.append(label, button);
+    const body = document.createElement('div');
+    body.className = 'code-body';
     box.replaceWith(figure);
-    figure.append(head, box);
+    body.append(box);
+    figure.append(head, body);
   }
 }
 
@@ -2378,7 +2710,10 @@ if (toc) {
   openRail();
 }
 
+let onShow = null;
+let onDiagram = null;
 function show(content) {
+  if (onShow) onShow();
   if (poub) {
     for (const image of content.querySelectorAll('img[src]')) {
       const found = local(image.getAttribute('src'));
@@ -2438,7 +2773,7 @@ function show(content) {
 
 show(renderLocal());
 
-if (location.hash) {
+if (location.hash && !/^#L\\d/.test(location.hash)) {
   let target = null;
   try { target = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (error) { /* bad hash */ }
   if (target) target.scrollIntoView();
@@ -2484,6 +2819,501 @@ if (toggle) {
       toggle.disabled = false;
     }
   });
+}
+
+// Review mode: numbers for the source lines behind each block, and comments kept on the server
+// next to the file. Comment text only ever goes in through textContent.
+const commentsUrl = article.dataset.comments || '';
+const reviewToggle = document.getElementById('review');
+const dock = document.getElementById('review-dock');
+if (commentsUrl && reviewToggle && dock) {
+  const coarse = matchMedia('(pointer: coarse)');
+  const commentMax = Number(article.dataset.commentMax) || 4000;
+  const badge = reviewToggle.querySelector('.count');
+  const dockText = dock.querySelector('.review-dock-text');
+  const commentButton = dock.querySelector('[data-review="comment"]');
+  const clearButton = dock.querySelector('[data-review="clear"]');
+  const copyButton = dock.querySelector('[data-review="copy"]');
+  const gutter = document.createElement('div');
+  gutter.className = 'review-gutter';
+  let reviewing = false;
+  let view = { lines: 0, comments: [] };
+  let promptText = '';
+  let selection = null;
+  let marks = [];
+  let composer = null;
+  let message = '';
+  let messageTimer = 0;
+
+  const range = (start, end) => start === end ? 'Line ' + start : 'Lines ' + start + '–' + end;
+  const plural = (count) => count + (count === 1 ? ' comment' : ' comments');
+  const previousBusy = window.liveBusy;
+  window.liveBusy = () => Boolean(composer) || Boolean(article.querySelector('.review-comment form'))
+    || (previousBusy ? previousBusy() : false);
+
+  function make(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    if (tag === 'button') element.type = 'button';
+    return element;
+  }
+
+  function ago(date) {
+    const seconds = (date.getTime() - Date.now()) / 1000;
+    const format = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+    for (const [unit, size] of [['day', 86400], ['hour', 3600], ['minute', 60]]) {
+      if (Math.abs(seconds) >= size) return format.format(Math.round(seconds / size), unit);
+    }
+    return 'just now';
+  }
+
+  function notify(text) {
+    message = text;
+    clearTimeout(messageTimer);
+    messageTimer = setTimeout(() => { message = ''; updateDock(); }, 3000);
+    updateDock();
+  }
+
+  async function call(url, options) {
+    const response = await fetch(url, Object.assign({ cache: 'no-store' }, options));
+    const answer = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(answer.error || response.statusText);
+    return answer;
+  }
+
+  async function loadPrompt() {
+    const response = await fetch(commentsUrl + '?format=prompt', { cache: 'no-store' });
+    promptText = response.ok ? await response.text() : '';
+  }
+
+  async function refresh() {
+    view = await call(commentsUrl);
+    await loadPrompt();
+    redraw();
+  }
+
+  async function post(action, query, body) {
+    view = await call(commentsUrl.replace('/comments/', '/comments/' + action + '/') + query, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? '' : JSON.stringify(body),
+    });
+    await loadPrompt();
+    redraw();
+  }
+
+  function redraw() {
+    const count = view.comments.length;
+    badge.textContent = String(count);
+    badge.hidden = !count;
+    const label = count ? 'Review, ' + plural(count) : 'Review';
+    reviewToggle.setAttribute('aria-label', label);
+    reviewToggle.title = label;
+    if (!reviewing) return;
+    buildMarks();
+    drawThreads();
+    paint();
+  }
+
+  // Every block that maps to source lines, and each line of every code block.
+  function collect() {
+    const found = [];
+    for (const element of article.querySelectorAll('[data-line]')) {
+      if (element.closest('.code-body, .review-thread, .review-composer')) continue;
+      const start = Number(element.dataset.line);
+      if (start) found.push({ element: element, start: start, end: Number(element.dataset.lineEnd) || start, code: false });
+    }
+    for (const box of article.querySelectorAll('.code-body [data-code]')) {
+      const first = Number(box.dataset.code);
+      const pre = box.matches('pre') ? box : box.querySelector('pre');
+      if (!first || !pre) continue;
+      const count = pre.textContent.replace(/\\n$/, '').split('\\n').length;
+      const last = Math.min(first + count - 1, Number(box.dataset.lineEnd) || Infinity);
+      for (let line = first; line <= last; line++) {
+        found.push({ element: box, start: line, end: line, code: true, body: box.closest('.code-body') });
+      }
+    }
+    return found.sort((a, b) => a.start - b.start || a.end - b.end);
+  }
+
+  function buildMarks() {
+    gutter.replaceChildren();
+    for (const old of article.querySelectorAll('.code-gutter')) old.remove();
+    const commented = view.comments.filter((comment) => !comment.outdated);
+    marks = collect();
+    const columns = new Map();
+    for (const mark of marks) {
+      const button = make('button', 'review-line', String(mark.start));
+      button.dataset.start = mark.start;
+      button.dataset.end = mark.end;
+      button.setAttribute('aria-label', range(mark.start, mark.end));
+      if (mark.end > mark.start) button.title = range(mark.start, mark.end);
+      if (commented.some((comment) => comment.start <= mark.end && comment.end >= mark.start)) button.classList.add('commented');
+      mark.button = button;
+      if (mark.code) {
+        let column = columns.get(mark.body);
+        if (!column) {
+          column = make('div', 'code-gutter');
+          mark.body.prepend(column);
+          columns.set(mark.body, column);
+        }
+        column.append(button);
+      } else {
+        gutter.append(button);
+      }
+    }
+    article.append(gutter);
+    place();
+  }
+
+  function place() {
+    if (!reviewing) return;
+    const top = article.getBoundingClientRect().top;
+    for (const mark of marks) {
+      if (mark.code) continue;
+      const box = mark.element.getBoundingClientRect();
+      mark.button.hidden = !box.height;
+      if (!box.height) continue;
+      const row = mark.element.tagName === 'TR';
+      const style = getComputedStyle(row ? mark.element.cells[0] || mark.element : mark.element);
+      const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+      const offset = mark.element.tagName === 'HR'
+        ? box.height / 2 - 12
+        : (parseFloat(style.paddingTop) || 0) + (parseFloat(style.borderTopWidth) || 0) + (line - 24) / 2;
+      mark.button.style.top = (box.top - top + offset) + 'px';
+    }
+    drawBands();
+  }
+
+  const inside = (mark) => Boolean(selection) && mark.start <= selection.end && mark.end >= selection.start;
+
+  // Code lines are not elements, so their selection is a tinted band over the block.
+  function drawBands() {
+    for (const band of article.querySelectorAll('.code-band')) band.remove();
+    const spans = new Map();
+    for (const mark of marks) {
+      if (!mark.code || !inside(mark)) continue;
+      const span = spans.get(mark.body) || [mark.button, mark.button];
+      span[1] = mark.button;
+      spans.set(mark.body, span);
+    }
+    for (const [body, [first, last]] of spans) {
+      const band = make('div', 'code-band');
+      band.style.top = first.offsetTop + 'px';
+      band.style.height = (last.offsetTop + last.offsetHeight - first.offsetTop) + 'px';
+      body.append(band);
+    }
+  }
+
+  function paint() {
+    for (const element of article.querySelectorAll('.review-selected')) element.classList.remove('review-selected');
+    for (const mark of marks) {
+      const on = inside(mark);
+      mark.button.classList.toggle('selected', on);
+      mark.button.setAttribute('aria-pressed', String(on));
+      if (on && !mark.code) mark.element.classList.add('review-selected');
+    }
+    drawBands();
+    updateDock();
+  }
+
+  function remember() {
+    const hash = selection ? '#L' + selection.start + (selection.end > selection.start ? '-L' + selection.end : '') : '';
+    if (hash || /^#L\\d/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search + hash);
+  }
+
+  function choose(start, end, extend) {
+    if (extend && selection) {
+      const anchor = selection.anchor;
+      selection = { start: Math.min(anchor.start, start), end: Math.max(anchor.end, end), anchor: anchor };
+    } else {
+      selection = { start: start, end: end, anchor: { start: start, end: end } };
+    }
+    remember();
+    paint();
+  }
+
+  function clear() {
+    selection = null;
+    remember();
+    paint();
+  }
+
+  function updateDock() {
+    const count = view.comments.length;
+    dock.classList.toggle('error', message.startsWith('!'));
+    if (message) dockText.textContent = message.replace(/^!/, '');
+    else if (selection) dockText.textContent = range(selection.start, selection.end) + ' selected';
+    else if (count) dockText.textContent = plural(count);
+    else dockText.textContent = coarse.matches ? 'Tap a line number' : 'Click a line number, shift-click for a range';
+    commentButton.hidden = !selection || Boolean(composer);
+    clearButton.hidden = !selection;
+    copyButton.hidden = Boolean(selection) || !count;
+  }
+
+  // The last mapped block or code line at or before the line: comments and the form go after it.
+  function spot(line) {
+    let best = null;
+    for (const mark of marks) if (mark.start <= line) best = mark;
+    return best || marks[0] || null;
+  }
+
+  const lineOf = (element) => Number(element?.dataset.line || element?.querySelector('[data-line]')?.dataset.line || 0);
+
+  // Where comments for a range ending on this mark go: [node, 'after' | 'before' | 'append'].
+  function slot(mark, start) {
+    const element = mark.element;
+    if (mark.code) return [element.closest('.code-block'), 'after'];
+    if (element.tagName === 'TR') return [element.closest('table'), 'after'];
+    const own = element.tagName === 'LI' ? element : element.parentElement?.tagName === 'LI' ? element.parentElement : null;
+    if (!own) return [element, 'after'];
+    // A range covering whole list items goes after their list, not inside the last item.
+    let item = own;
+    let list = null;
+    while (item && start < lineOf(item) && lineOf(item.parentElement.firstElementChild) >= start) {
+      list = item.parentElement;
+      item = list.parentElement?.tagName === 'LI' ? list.parentElement : null;
+    }
+    if (list) return [list, 'after'];
+    if (element !== own) return [element, 'after'];
+    const nested = own.querySelector(':scope > ul, :scope > ol');
+    return nested ? [nested, 'before'] : [own, 'append'];
+  }
+
+  function insertAt([node, how], content) {
+    if (how === 'before') node.before(content);
+    else if (how === 'append') node.append(content);
+    else node.after(content);
+  }
+
+  function editor(text, label, action, save, cancel) {
+    const form = make('form', 'review-form');
+    const area = make('textarea');
+    area.value = text;
+    area.rows = 4;
+    area.maxLength = commentMax;
+    area.placeholder = 'Leave a comment';
+    area.setAttribute('aria-label', label);
+    const row = make('div', 'review-actions');
+    const hint = make('span', 'review-hint', /Mac|iP/.test(navigator.platform) ? '⌘ Enter to save' : 'Ctrl+Enter to save');
+    const cancelButton = make('button', '', 'Cancel');
+    const submit = make('button', 'primary', action);
+    submit.type = 'submit';
+    row.append(hint, cancelButton, submit);
+    form.append(area, row);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!area.value.trim()) {
+        area.focus();
+        return;
+      }
+      submit.disabled = true;
+      try {
+        await save(area.value);
+      } catch (error) {
+        submit.disabled = false;
+        notify('!Saving failed: ' + (error.message || error));
+      }
+    });
+    area.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        form.requestSubmit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cancel();
+      }
+    });
+    cancelButton.addEventListener('click', cancel);
+    return { form: form, area: area };
+  }
+
+  function closeComposer() {
+    if (composer) composer.remove();
+    composer = null;
+    updateDock();
+  }
+
+  function compose() {
+    if (!selection) return;
+    closeComposer();
+    const target = { start: selection.start, end: selection.end };
+    const mark = spot(target.end);
+    if (!mark) return;
+    const holder = make('div', 'review-composer');
+    holder.append(make('p', 'review-composer-title', 'Comment on ' + range(target.start, target.end).toLowerCase()));
+    const { form, area } = editor('', 'Comment on ' + range(target.start, target.end).toLowerCase(), 'Comment', async (text) => {
+      await post('add', '', { start: target.start, end: target.end, body: text });
+      closeComposer();
+      clear();
+      notify('Comment added');
+    }, closeComposer);
+    holder.append(form);
+    insertAt(slot(mark, target.start), holder);
+    composer = holder;
+    updateDock();
+    area.focus({ preventScroll: true });
+    holder.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function card(comment) {
+    const item = make('section', 'review-comment' + (comment.outdated ? ' outdated' : ''));
+    const head = make('header');
+    const where = make('button', 'review-where', range(comment.start, comment.end));
+    where.setAttribute('aria-label', 'Select ' + range(comment.start, comment.end).toLowerCase());
+    where.addEventListener('click', () => choose(comment.start, comment.end, false));
+    const stamp = new Date((comment.updated || comment.created) * 1000);
+    const when = make('time', '', ago(stamp) + (comment.updated > comment.created + 1 ? ', edited' : ''));
+    when.dateTime = stamp.toISOString();
+    when.title = stamp.toLocaleString();
+    const tools = make('span', 'review-tools');
+    const edit = make('button', '', 'Edit');
+    const remove = make('button', '', 'Delete');
+    tools.append(edit, remove);
+    head.append(where, when, tools);
+    item.append(head);
+    if (comment.outdated) {
+      item.append(make('p', 'review-note', 'These lines changed after the comment. It was written on:'));
+      item.append(make('pre', 'review-quote', comment.quote.join('\\n')));
+    }
+    const body = make('p', 'review-body', comment.body);
+    item.append(body);
+    edit.addEventListener('click', () => {
+      if (item.querySelector('form')) return;
+      const done = () => {
+        form.remove();
+        body.hidden = false;
+        edit.disabled = false;
+      };
+      const { form, area } = editor(comment.body, 'Edit the comment on ' + range(comment.start, comment.end).toLowerCase(), 'Save', async (text) => {
+        await post('edit', '?id=' + encodeURIComponent(comment.id), { body: text });
+        notify('Comment saved');
+      }, done);
+      body.hidden = true;
+      edit.disabled = true;
+      body.after(form);
+      area.focus();
+    });
+    let armed = 0;
+    remove.addEventListener('click', async () => {
+      if (!armed) {
+        remove.textContent = 'Confirm delete';
+        remove.classList.add('danger');
+        armed = setTimeout(() => {
+          armed = 0;
+          remove.textContent = 'Delete';
+          remove.classList.remove('danger');
+        }, 3000);
+        return;
+      }
+      clearTimeout(armed);
+      remove.disabled = true;
+      try {
+        await post('delete', '?id=' + encodeURIComponent(comment.id));
+        notify('Comment deleted');
+      } catch (error) {
+        remove.disabled = false;
+        notify('!Deleting failed: ' + (error.message || error));
+      }
+    });
+    return item;
+  }
+
+  function drawThreads() {
+    for (const old of article.querySelectorAll('.review-thread')) old.remove();
+    const groups = [];
+    for (const comment of view.comments) {
+      const mark = spot(comment.end);
+      if (!mark) continue;
+      const where = slot(mark, comment.start);
+      let group = groups.find((other) => other.where[0] === where[0] && other.where[1] === where[1]);
+      if (!group) groups.push((group = { where, end: 0, comments: [] }));
+      group.end = Math.max(group.end, comment.end);
+      group.comments.push(comment);
+    }
+    // Inserted from the bottom up, so threads after the same block keep their line order.
+    for (const group of groups.sort((a, b) => b.end - a.end)) {
+      const thread = make('div', 'review-thread');
+      for (const comment of group.comments) thread.append(card(comment));
+      insertAt(group.where, thread);
+    }
+  }
+
+  function enter() {
+    if (toggle && toggle.getAttribute('aria-pressed') === 'true') {
+      show(renderLocal());
+      pressed(false);
+    }
+    reviewing = true;
+    article.classList.add('reviewing');
+    document.body.classList.add('reviewing');
+    dock.hidden = false;
+    reviewToggle.setAttribute('aria-pressed', 'true');
+    buildMarks();
+    drawThreads();
+    paint();
+  }
+
+  function leave() {
+    reviewing = false;
+    closeComposer();
+    selection = null;
+    remember();
+    gutter.remove();
+    for (const element of article.querySelectorAll('.code-gutter, .code-band, .review-thread')) element.remove();
+    for (const element of article.querySelectorAll('.review-selected')) element.classList.remove('review-selected');
+    marks = [];
+    article.classList.remove('reviewing');
+    document.body.classList.remove('reviewing');
+    dock.hidden = true;
+    reviewToggle.setAttribute('aria-pressed', 'false');
+  }
+
+  onShow = () => { if (reviewing) leave(); };
+  onDiagram = () => {
+    if (!reviewing) return;
+    buildMarks();
+    paint();
+  };
+
+  reviewToggle.hidden = false;
+  reviewToggle.addEventListener('click', () => (reviewing ? leave() : enter()));
+  article.addEventListener('mousedown', (event) => {
+    if (event.shiftKey && event.target.closest('.review-line')) event.preventDefault();
+  });
+  article.addEventListener('click', (event) => {
+    const button = event.target.closest('.review-line');
+    if (!button || !reviewing) return;
+    const start = Number(button.dataset.start), end = Number(button.dataset.end);
+    const touch = coarse.matches && Boolean(selection);
+    if (touch && start >= selection.start && end <= selection.end) clear();
+    else choose(start, end, event.shiftKey || touch);
+  });
+  commentButton.addEventListener('click', compose);
+  clearButton.addEventListener('click', clear);
+  dock.querySelector('[data-review="done"]').addEventListener('click', leave);
+  copyButton.addEventListener('click', async () => {
+    const done = promptText ? await copyText(promptText) : false;
+    notify(done ? 'Copied ' + plural(view.comments.length) + ' as a prompt' : '!Copy failed');
+  });
+  document.addEventListener('keydown', (event) => {
+    if (reviewing && event.key === 'Escape' && selection && !composer && !event.target.closest('textarea')) clear();
+  });
+  new ResizeObserver(() => { if (reviewing) requestAnimationFrame(place); }).observe(article);
+
+  // #L12 or #L12-L14 opens review mode with those lines selected, as on GitHub.
+  function follow() {
+    const wanted = /^#L(\\d+)(?:-L(\\d+))?$/.exec(location.hash);
+    if (!wanted) return;
+    if (!reviewing) enter();
+    const start = Math.max(1, Math.min(Number(wanted[1]), view.lines || 1));
+    choose(start, Math.max(start, Math.min(Number(wanted[2] || start), view.lines || start)), false);
+    const first = marks.find(inside);
+    if (first) (first.code ? first.button : first.element).scrollIntoView({ block: 'center' });
+  }
+  addEventListener('hashchange', follow);
+  refresh().catch((error) => console.error('comments', error)).then(follow);
 }
 })();
 """
@@ -2612,14 +3442,21 @@ def markdown_page(
     back: tuple[str, str],
     links: list[tuple[str, str]],
     project: str | None = None,
+    comments: str = "",
 ) -> tuple[bytes, str]:
-    """The reader page and the nonce its scripts run under. The browser renders the markdown."""
+    """The reader page and the nonce its scripts run under. The browser renders the markdown.
+
+    With a comments URL the page also offers review mode, for line comments kept on the server.
+    """
     nonce = secrets.token_urlsafe(16)
     bases = (
         f' data-poub="/poub/{quote(project)}/" data-md="/md/{quote(project)}/"'
         if project
         else ""
     )
+    if comments:
+        bases += f' data-comments="{html.escape(comments)}" data-comment-max="{COMMENT_MAX_CHARS}"'
+    review = (REVIEW_BUTTON, REVIEW_DOCK) if comments else ("", "")
     actions = "".join(
         f'<a href="{html.escape(href)}"{" download" if label == "Download" else ""}>{html.escape(label)}</a>'
         for label, href in links
@@ -2647,10 +3484,11 @@ def markdown_page(
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}{review[0]}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
 <main class="page reader">{banner}<p class="notice" id="render-notice" role="status" hidden></p>
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
+{review[1]}
 <script type="application/json" id="markdown-source">{source}</script>
 {scripts}
 <script nonce="{nonce}">{MARKDOWN_JS}</script>
@@ -3954,6 +4792,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                 "age_seconds": int(now - stat.st_mtime),
                 "image": path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
                 **({"expires": when} if (when := expires_at(path)) else {}),
+                **({"comments": count} if (count := comments_count(path)) else {}),
                 "url": f"/poub/{quote(path.parent.parent.name)}/{quote(path.name)}",
                 **(
                     {"view": view}
@@ -4696,9 +5535,30 @@ class Handler(BaseHTTPRequestHandler):
                     ("Drop", "/drop"),
                     [("Raw", f"{url}?raw=1"), ("Download", url)],
                     project,
+                    f"/comments/{quote(project)}/{quote(path.name)}",
                 )
                 self.send_html(body, markdown_headers(nonce))
                 return
+
+        if parsed.path.startswith("/comments/"):
+            path = poub_path(parsed.path.removeprefix("/comments/"))
+            if path is None or not is_markdown(path.name):
+                self.send_json({"error": "not found"}, status=404)
+                return
+            try:
+                view = comments_view(path)
+            except OSError:
+                self.send_json({"error": "not found"}, status=404)
+                return
+            if (parse_qs(parsed.query).get("format") or [""])[-1] == "prompt":
+                self.send_bytes(
+                    comments_prompt(view).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+                )
+            else:
+                self.send_json(view)
+            return
 
         if parsed.path.startswith("/view/"):
             path = poub_path(parsed.path.removeprefix("/view/"))
@@ -4913,6 +5773,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/upload":
             self.handle_upload()
+            return
+
+        if parsed.path.startswith("/comments/"):
+            self.handle_comment(parsed)
             return
 
         if parsed.path == "/markdown/github":
@@ -5190,8 +6054,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         temporary, name = convert_heic_upload(temporary, name)
+        replace = (query.get("replace") or [""])[-1].lower() in ("1", "true", "yes")
         try:
-            path = publish_poub(temporary, name)
+            path = replace_poub(temporary, name) if replace else None
+            replaced = path is not None
+            if path is None:
+                path = publish_poub(temporary, name)
         except OSError as error:
             temporary.unlink(missing_ok=True)
             self.send_json({"error": str(error)}, status=500)
@@ -5213,8 +6081,43 @@ class Handler(BaseHTTPRequestHandler):
                 "size": path.stat().st_size,
                 "url": f"/poub/{quote(project)}/{quote(path.name)}",
                 **({"view": view} if view else {}),
+                **({"replaced": True} if replaced else {}),
             }
         )
+
+    def handle_comment(self, parsed: ParseResult) -> None:
+        action, _, encoded = parsed.path.removeprefix("/comments/").partition("/")
+        if action not in ("add", "edit", "delete"):
+            self.send_json({"error": "not found"}, status=404)
+            return
+        path = poub_path(encoded)
+        if path is None or not is_markdown(path.name):
+            self.send_json({"error": "not found"}, status=404)
+            return
+        data: object = None
+        if action != "delete":
+            body = self.read_body(COMMENT_MAX_CHARS * 4 + 1024)
+            if body is None:
+                self.send_json({"error": "request too large"}, status=413)
+                return
+            try:
+                data = json.loads(body)
+            except ValueError:
+                self.send_json({"error": "body must be JSON"}, status=400)
+                return
+        comment_id = (parse_qs(parsed.query).get("id") or [""])[-1]
+        try:
+            error = comment_change(path, action, comment_id, data)
+            view = comments_view(path)
+        except OSError as failure:
+            self.send_json({"error": str(failure)}, status=500)
+            return
+        if error:
+            self.send_json(
+                {"error": error}, status=404 if error == "not found" else 400
+            )
+            return
+        self.send_json(view)
 
     def handle_share(self) -> None:
         content_type = self.headers.get("Content-Type") or ""
