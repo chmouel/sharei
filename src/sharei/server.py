@@ -32,8 +32,6 @@ import subprocess
 import threading
 import time
 import tomllib
-import urllib.error
-import urllib.request
 import zlib
 from collections.abc import Callable
 from datetime import datetime
@@ -259,15 +257,6 @@ def cache_root() -> Path:
 THUMBS = cache_root() / "thumbs"
 CLIP_FILE = cache_root() / "clip.json"
 PUSH_DIR = cache_root() / "push"
-MARKDOWN_CACHE = cache_root() / "markdown"
-
-# Only used when the reader asks for GitHub's rendering; the default is local.
-GITHUB_API = os.environ.get("SHAREI_GITHUB_API", "https://api.github.com").rstrip("/")
-GITHUB_MARKDOWN_MAX_BYTES = 400 * 1024
-GITHUB_TOKEN: str | None = None
-GITHUB_TOKEN_PASS: str | None = None
-TOKEN_LOCK = threading.Lock()
-TOKEN_FROM_PASS_TRIED = False
 
 
 class Counts(TypedDict):
@@ -2052,74 +2041,6 @@ def code_language(name: str, text: str) -> str:
     return ""
 
 
-def github_token() -> str | None:
-    global GITHUB_TOKEN, TOKEN_FROM_PASS_TRIED
-    with TOKEN_LOCK:
-        if GITHUB_TOKEN or not GITHUB_TOKEN_PASS or TOKEN_FROM_PASS_TRIED:
-            return GITHUB_TOKEN
-        # Asked once: a failing entry would otherwise run gpg on every render.
-        TOKEN_FROM_PASS_TRIED = True
-        try:
-            result = subprocess.run(
-                ["pass", "show", GITHUB_TOKEN_PASS],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=True,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            detail = getattr(error, "stderr", None) or error
-            print(
-                f"pass show {GITHUB_TOKEN_PASS} failed, rendering without a token: {detail}"
-            )
-            return None
-        GITHUB_TOKEN = result.stdout.partition("\n")[0].strip() or None
-        return GITHUB_TOKEN
-
-
-def github_markdown(text: str) -> tuple[str | None, str | None]:
-    """GitHub's HTML for text, or None and the reason GitHub could not render it."""
-    data = text.encode("utf-8")
-    cached = MARKDOWN_CACHE / f"{hashlib.sha256(data).hexdigest()}.html"
-    try:
-        return cached.read_text("utf-8"), None
-    except OSError:
-        pass
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Content-Type": "application/json",
-        "User-Agent": "sharei",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    token = github_token()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(
-        f"{GITHUB_API}/markdown",
-        data=json.dumps({"text": text, "mode": "gfm"}).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            rendered = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-        print(f"GitHub markdown API answered {error.code}: {error.reason}")
-        return None, f"GitHub could not render it ({error.code} {error.reason})."
-    except (OSError, ValueError) as error:
-        print(f"GitHub markdown API unreachable: {error}")
-        return None, "GitHub is unreachable."
-    try:
-        MARKDOWN_CACHE.mkdir(parents=True, exist_ok=True)
-        temporary = cached.with_name(f"{cached.name}.{secrets.token_hex(4)}.part")
-        temporary.write_text(rendered, "utf-8")
-        os.replace(temporary, cached)
-    except OSError:
-        pass
-    return rendered, None
-
-
 MARKDOWN_CSS = """
   * { box-sizing:border-box }
   html { scroll-padding-top:64px; }
@@ -2134,7 +2055,6 @@ MARKDOWN_CSS = """
   .bar nav .renderer { display:inline-flex; align-items:center; gap:3px; margin:-4px 0; padding:4px 6px; border-radius:6px; color:var(--fgColor-muted); }
   .bar nav .renderer:hover { color:var(--fgColor-default); text-decoration:none; }
   .bar nav .renderer[aria-pressed="true"] { color:var(--fgColor-accent); background:color-mix(in srgb, var(--fgColor-accent) 18%, transparent); }
-  .bar nav .renderer:disabled { opacity:.5; cursor:progress; }
   .bar nav .renderer[hidden] { display:none; }
   .renderer svg { display:block; fill:currentColor; }
   .page { width:min(100%, 980px); margin:0 auto; padding:24px 16px 64px; }
@@ -2338,15 +2258,6 @@ READER_CSS = """
     .reader .toc summary::-webkit-details-marker { display:none; }
   }
 """
-
-# Octicons mark-github and markdown.
-RENDERER_BUTTON = (
-    '<button type="button" class="renderer" id="renderer" aria-pressed="false" '
-    'aria-label="Render with GitHub" title="Render with GitHub" hidden>'
-    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>'
-    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M14.85 3c.63 0 1.15.52 1.14 1.15v7.7c0 .63-.51 1.15-1.15 1.15H1.15C.52 13 0 12.48 0 11.84V4.15C0 3.52.52 3 1.15 3ZM9 11V5H7L5.5 7 4 5H2v6h2V8l1.5 1.92L7 8v3Zm2.99.5L14.5 8H13V5h-2v3H9.5Z"></path></svg>'
-    "</button>"
-)
 
 # Octicon comment-discussion. The count badge stays hidden until the file has comments.
 REVIEW_BUTTON = (
@@ -2639,9 +2550,8 @@ function githubFlavour(markdown) {
   }
 }
 
-// Raw HTML in the file, and whatever GitHub sends back, is untrusted: DOMPurify drops scripts,
-// handlers and javascript: URLs, and the fragment stays in its inert document until its links
-// are rewritten below.
+// Raw HTML in the file is untrusted: DOMPurify drops scripts, handlers and javascript: URLs,
+// and the fragment stays in its inert document until its links are rewritten below.
 function sanitize(markup) {
   return DOMPurify.sanitize(markup, {
     RETURN_DOM_FRAGMENT: true,
@@ -2935,51 +2845,6 @@ if (location.hash && !/^#L\\d/.test(location.hash)) {
   let target = null;
   try { target = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (error) { /* bad hash */ }
   if (target) target.scrollIntoView();
-}
-
-// GitHub's rendering is opt-in: the text only leaves the server when this button is pressed.
-const toggle = document.getElementById('renderer');
-const status = document.getElementById('render-notice');
-let github = null;
-// GitHub would show front matter as rules and text, so it is cut here and drawn locally instead.
-const front = readFrontMatter(source.replace(/\\r\\n?/g, '\\n'));
-const githubSource = front ? source.replace(/\\r\\n?/g, '\\n').split('\\n').slice(front.lines).join('\\n') : source;
-function pressed(on) {
-  const label = on ? 'Render locally' : 'Render with GitHub';
-  toggle.setAttribute('aria-pressed', String(on));
-  toggle.setAttribute('aria-label', label);
-  toggle.title = label;
-}
-if (toggle) {
-  toggle.hidden = false;
-  toggle.addEventListener('click', async () => {
-    status.hidden = true;
-    if (toggle.getAttribute('aria-pressed') === 'true') {
-      show(renderLocal());
-      pressed(false);
-      return;
-    }
-    toggle.disabled = true;
-    try {
-      if (github === null) {
-        const response = await fetch('/markdown/github', {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-          body: githubSource,
-        });
-        const answer = await response.json();
-        if (!response.ok || typeof answer.html !== 'string') throw new Error(answer.error || response.statusText);
-        github = answer.html;
-      }
-      show(sanitize((front ? frontPanel(front) : '') + github));
-      pressed(true);
-    } catch (error) {
-      status.textContent = 'GitHub rendering failed: ' + (error.message || error);
-      status.hidden = false;
-    } finally {
-      toggle.disabled = false;
-    }
-  });
 }
 
 // Review mode: numbers for the source lines behind each block, and comments kept on the server
@@ -3402,10 +3267,6 @@ if (commentsUrl && reviewToggle && dock) {
   }
 
   function enter() {
-    if (toggle && toggle.getAttribute('aria-pressed') === 'true') {
-      show(renderLocal());
-      pressed(false);
-    }
     reviewing = true;
     article.classList.add('reviewing');
     document.body.classList.add('reviewing');
@@ -3653,8 +3514,8 @@ def markdown_page(
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}{review[0]}{qr_button()}</nav></header>
-<main class="page reader">{banner}<p class="notice" id="render-notice" role="status" hidden></p>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{review[0]}{qr_button()}</nav></header>
+<main class="page reader">{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
 {review[1]}
@@ -5969,20 +5830,6 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_comment(parsed)
             return
 
-        if parsed.path == "/markdown/github":
-            data = self.read_body(GITHUB_MARKDOWN_MAX_BYTES)
-            if data is None:
-                self.send_json(
-                    {"error": "Too large for GitHub's renderer (400 KB)."}, 413
-                )
-                return
-            rendered, error = github_markdown(data.decode("utf-8", errors="replace"))
-            if rendered is None:
-                self.send_json({"error": error}, 502)
-            else:
-                self.send_json({"html": rendered})
-            return
-
         if parsed.path == "/expiry":
             self.handle_expiry(parse_qs(parsed.query))
             return
@@ -6610,8 +6457,6 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "public_url": str,
     "qr": bool,
     "push_subject": str,
-    "github_token": str,
-    "github_token_pass": str,
 }
 ARTIFACT_TYPES: dict[str, type] = {
     "name": str,
@@ -6704,7 +6549,7 @@ def parse_artifacts(where: str, entries: list[object]) -> tuple[ArtifactRule, ..
 
 
 def main() -> None:
-    global ARTIFACT_RULES, DEFAULT_PROJECT, ROOT, GITHUB_TOKEN, GITHUB_TOKEN_PASS
+    global ARTIFACT_RULES, DEFAULT_PROJECT, ROOT
     global THEME_DEFAULT, PUBLIC_URL, PUSH_ENABLED, PUSH_SUBJECT, QR_ENABLED
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -6755,13 +6600,6 @@ def main() -> None:
         help="extra Origin accepted for POSTs (repeatable), e.g. https://share.example.com "
         "behind a reverse proxy",
     )
-    parser.add_argument(
-        "--github-token-pass",
-        metavar="ENTRY",
-        help="pass entry whose first line is a GitHub token for the on-demand GitHub "
-        "markdown rendering, read on first use; $GITHUB_TOKEN and the config's "
-        "github_token win over it",
-    )
     args = parser.parse_args()
     path, required = config_path(args.config)
     config = load_config(path, required)
@@ -6784,10 +6622,6 @@ def main() -> None:
         )
     ARTIFACT_RULES = parse_artifacts(str(path), config.get("artifacts", []))  # type: ignore[arg-type]
     clip_ttl = setting("clip_ttl", None)
-    GITHUB_TOKEN = (
-        os.environ.get("GITHUB_TOKEN") or str(config.get("github_token", "")) or None
-    )
-    GITHUB_TOKEN_PASS = str(setting("github_token_pass", "")) or None
     PUBLIC_URL = str(config.get("public_url", "")).rstrip("/")
     if PUBLIC_URL and urlparse(PUBLIC_URL).scheme not in ("http", "https"):
         raise SystemExit(

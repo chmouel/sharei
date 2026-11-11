@@ -39,14 +39,6 @@
 # allow_hosts = ["share.example.com"]
 # allow_origins = ["https://share.example.com"]
 
-# Markdown renders in the browser. The GitHub button on a markdown page sends the text to
-# api.github.com instead, only when pressed. A token only lifts that rate limit from 60 to
-# 5000 renders an hour; it needs no scopes (a fine-grained token with public read-only
-# access and no permissions is enough). $GITHUB_TOKEN wins over github_token, which wins
-# over the pass entry (first line, read on first use; --github-token-pass on the command line).
-# github_token = "github_pat_..."
-# github_token_pass = "github/sharei-markdown"
-
 # Build artifacts listed on the Artifacts page. Each entry is a repo (root) and the
 # files to offer from it (patterns, relative to the repo; ** matches any number of
 # folders). Git worktrees of a repo are scanned too. Hidden folders, node_modules and

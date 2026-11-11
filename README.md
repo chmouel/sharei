@@ -1,9 +1,8 @@
 # sharei
 
 sharei is a small web page that runs on your computer and that you open on
-your phone. Use it to grab the app you just built, look at your screenshots,
-pass text back and forth or drop a file from one device to the other, without
-cables, a cloud drive or emailing yourself.
+your phone. It gets the app you just built, your screenshots, a bit of text or
+a file over to the other device, without cables or a cloud drive.
 
 ![sharei on a phone](docs/screenshots/hero.png)
 
@@ -12,22 +11,21 @@ cables, a cloud drive or emailing yourself.
 The page has four tabs, along the bottom on a phone and down the left side
 on a computer.
 
-Screenshots shows the screenshots you saved, grouped by project. Open one and
-tap the left or right side to turn to the previous or next screenshot, like a
-book; a tap in the middle closes the viewer. Swiping works too. You can draw
-arrows and notes on them, and set them to disappear after a while. SVG files
-count as screenshots too.
+Screenshots lists what you saved, grouped by project. Open one and tap the
+left or right side to turn to the previous or next screenshot, like a book; a
+tap in the middle closes the viewer. Swiping works too. You can draw arrows
+and notes on them, and set them to disappear after a while. SVG files count as
+screenshots too.
 
-Drop holds files you send either way. Markdown opens formatted the way GitHub
-shows it, with any front matter at the top laid out as a tidy list of
-properties, code opens with colours and line numbers, pictures open full
-screen (SVG too, drawn by your browser), videos and audio play right in the
-page, and PDFs open page by page
-even on phones that would otherwise only download them. An iPhone HEIC photo
-arrives as a JPEG (a PNG when it has transparency) when the thumbnails extra
-is installed. Any file there can be set to expire too. Pressing Ctrl+V (⌘+V
-on a Mac) on the Drop page uploads what you copied: files, a screenshot, or
-text, which is saved as a `.txt` file.
+Drop holds files you send either way. Markdown opens in a reader made for long
+documents, with any front matter drawn as a list of properties. Code opens with
+colours and line numbers, pictures full screen (SVG too, drawn by your browser),
+videos and audio play in the page, and PDFs open page by page, even on phones
+that would otherwise only download them. An iPhone HEIC photo arrives as a
+JPEG (a PNG when it has transparency) when the thumbnails extra is installed.
+Any file there can be set to expire. Pressing Ctrl+V (⌘+V on a Mac) on the
+Drop page uploads what you copied: files, a screenshot, or text, which is
+saved as a `.txt` file.
 
 Clipboard is a shared note. Paste on one device and copy on the other.
 It clears itself after ten minutes unless you change that. The last five
@@ -35,10 +33,10 @@ notes you replaced stay underneath, each on its own timer, so you can copy
 one again or put it back. Clear forgets the current note for good. When the
 note is a web address, it shows up as a link you can tap.
 
-To move a page or a link to another device, press QR: on the clipboard link,
-in the header of a markdown, code or video page, or next to a file in Drop on
-a computer. The phone camera opens it straight away. Set `qr = false` in the
-config file to hide these buttons.
+To move a page or a link to another device, press the QR button. It sits on
+the clipboard link, in the header of a markdown, code or video page, and next
+to a file in Drop on a computer. The phone camera opens it straight away. Set
+`qr = false` in the config file to hide these buttons.
 
 Artifacts lists the files your projects build, newest first: Android APKs,
 Python wheels, release archives, whatever you point it at. Tap one on your
@@ -234,9 +232,7 @@ moved follow them, and those on lines that changed are marked as such.
 ## Privacy
 
 Everything stays on your computer. Markdown is formatted by your own browser,
-so even a private document never leaves it. The GitHub button on a markdown
-page is the one exception: pressing it sends that document to GitHub to be
-formatted their way.
+so even a private document never leaves it.
 
 With notifications on, each notification (a file name or the start of the
 clipboard text) travels through your browser maker's push service (Google,

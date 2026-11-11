@@ -75,7 +75,7 @@ the service.
 - Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`
   (current text plus the last `CLIP_HISTORY_MAX` replaced ones, each keeping
   the TTL it had; Clear does not archive),
-  `thumbs/`, `markdown/` (GitHub renderings) and `push/` (`vapid.pem` and
+  `thumbs/` and `push/` (`vapid.pem` and
   `subs.json`, both 0600).
 - Settings: `~/.config/sharei/config.toml`, or `$SHAREI_CONFIG`, or
   `--config`. Command-line flags take priority over the file.
@@ -96,9 +96,7 @@ Pages:
   it with markdown-it, writes GitHub's markup for task lists, alerts, tables,
   footnotes and code (`div.highlight.highlight-source-<lang>`, which the
   mermaid step looks for) so github-markdown.css styles it, then sanitizes
-  with DOMPurify. The GitHub button in the bar (`RENDERER_BUTTON`) swaps in
-  GitHub's rendering from `POST /markdown/github` and back; both go through
-  the same sanitizer and the same link, heading, TOC and mermaid steps.
+  with DOMPurify.
   `READER_CSS` styles the result on top of github-markdown.css, scoped under
   `.reader` so it wins on specificity. The page frames code blocks with a
   copy button, turns the contents into a sticky side rail from 1240px that
@@ -108,14 +106,12 @@ Pages:
   YAML front matter at line 1 (closed by `---` or `...` within 200 lines,
   with at least one `key:`) is claimed by the `sharei_frontmatter` block
   rule and drawn by `frontPanel()` as a `dl.frontmatter` properties panel
-  covering its lines; the GitHub button cuts those lines before posting and
-  puts the same panel back in front of GitHub's HTML.
+  covering its lines.
   A `sharei_lines` core rule copies markdown-it's `token.map` onto blocks as
   `data-line`/`data-line-end` (1-based, inclusive; a tight list item takes
   its hidden paragraph's range) and `data-code` on code blocks. The review
   button (`REVIEW_BUTTON`, `REVIEW_DOCK`) turns on a line gutter built from
-  those attributes, switching GitHub rendering off first since it has no
-  map. Picking lines (shift-click, or a second tap on touch) sets
+  those attributes. Picking lines (shift-click, or a second tap on touch) sets
   `#Lx-Ly`, which also opens review on load. Comments are fetched from and
   posted to `data-comments` and drawn with `textContent`. On read,
   `comment_anchor()` keeps a comment whose lines still equal its `quote`,
@@ -158,9 +154,6 @@ Data:
 
 POST:
 
-- `/markdown/github`: text/plain body, at most 400 KB (413 above). Returns
-  `{html}` from api.github.com's markdown API, cached in `markdown/`, or
-  `{error}` with 502
 - `/upload?project=&name=`: raw body. Collisions are renamed `name-1.ext`.
   A HEIC/HEIF body, recognised by suffix or by its `ftyp` brand, is rewritten
   as JPEG (PNG when the image has alpha) with `convert_heic_upload()` before
@@ -224,11 +217,6 @@ These exist on purpose. Keep them when changing or adding code.
   `<script>` block. Don't add inline handlers or unnonced scripts there. `/view`
   pages use a nonce-only `script-src` (no `'self'`, so an uploaded `.js` can
   never run) and the file text is HTML-escaped on the server.
-- Markdown text goes to api.github.com only when the reader presses the
-  GitHub button. Keep it that way: no page may call `/markdown/github` on
-  load. The token is optional and needs no scopes. Its order of precedence is
-  `$GITHUB_TOKEN`, then `github_token`, then `github_token_pass` (a `pass`
-  entry). Never log or print it.
 - An SVG is an image inside an `<img>` and a document with scripts in a tab,
   so `/poub`, `/shot` and `/thumb` serve one with `vector_headers`, which adds
   a `sandbox` Content-Security-Policy. Keep that on any new route that returns
