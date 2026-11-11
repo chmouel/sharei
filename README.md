@@ -25,7 +25,9 @@ screen (SVG too, drawn by your browser), videos and audio play right in the
 page, and PDFs open page by page
 even on phones that would otherwise only download them. An iPhone HEIC photo
 arrives as a JPEG (a PNG when it has transparency) when the thumbnails extra
-is installed. Any file there can be set to expire too.
+is installed. Any file there can be set to expire too. Pressing Ctrl+V (⌘+V
+on a Mac) on the Drop page uploads what you copied: files, a screenshot, or
+text, which is saved as a `.txt` file.
 
 Clipboard is a shared note. Paste on one device and copy on the other.
 It clears itself after ten minutes unless you change that. The last five

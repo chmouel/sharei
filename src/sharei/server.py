@@ -4567,10 +4567,22 @@ zone.addEventListener('drop', (event) => {
   zone.classList.remove('over');
   if (event.dataTransfer) handleFiles(event.dataTransfer.files);
 });
+function pastedName(extension) {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+  return `pasted-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.${extension}`;
+}
 document.addEventListener('paste', (event) => {
-  if (!event.clipboardData || !event.clipboardData.files.length) return;
+  const data = event.clipboardData;
+  if (!data || event.target.closest('input, textarea, select, [contenteditable]')) return;
+  // A copied screenshot arrives with a generic name such as image.png.
+  const files = [...data.files].map((file) => /^image\\.\\w+$/i.test(file.name) && file.type.startsWith('image/')
+    ? new File([file], pastedName(file.type.split('/')[1].replace('jpeg', 'jpg')), { type: file.type })
+    : file);
+  const text = data.getData('text/plain');
+  if (!files.length && !text.trim()) return;
   event.preventDefault();
-  handleFiles(event.clipboardData.files);
+  handleFiles(files.length ? files : [new File([text], pastedName('txt'), { type: 'text/plain' })]);
 });
 
 async function remove(url, question) {
@@ -4702,7 +4714,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
     <button class="drop-button" id="pick" type="button">
       <span class="drop-icon" aria-hidden="true">⇪</span>
       <strong>Choose files</strong>
-      <small>or drop them here · paste a screenshot with Ctrl/⌘+V</small>
+      <small>or drop them here · paste a screenshot or text with Ctrl/⌘+V</small>
     </button>
   </section>
   <ul class="upload-queue" id="queue" aria-live="polite"></ul>
