@@ -25,7 +25,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-thumbnails = ["Pillow>=10"]
+thumbnails = ["Pillow>=11", "pillow-heif>=1"]
 push = ["cryptography>=42"]
 
 [project.urls]
@@ -38,7 +38,7 @@ sharei = "sharei.server:main"
 sharec = "sharei.client:run"
 
 [dependency-groups]
-dev = ["cryptography>=42", "pytest>=8", "ruff>=0.6"]
+dev = ["cryptography>=42", "pillow-heif>=1", "Pillow>=11", "pytest>=8", "ruff>=0.6"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "contrib", "tests", "config.example.toml", "README.md", "SECURITY.md", "LICENSE"]

@@ -8,8 +8,9 @@ proxy with authentication (see SECURITY.md).
 
 ## Files
 
-- `src/sharei/server.py`: the server, one Python file (stdlib `http.server`,
-  Pillow optional for thumbnails). It holds all the HTML, CSS and JS as inline
+- `src/sharei/server.py`: the server, one Python file (stdlib `http.server`;
+  Pillow optional for thumbnails, pillow-heif optional for turning HEIC
+  uploads into JPEG). It holds all the HTML, CSS and JS as inline
   strings. There is no build step and no frontend toolchain. Entry point
   `sharei` (`main`).
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
@@ -114,8 +115,11 @@ Data:
 POST:
 
 - `/upload?project=&name=`: raw body. Collisions are renamed `name-1.ext`.
+  A HEIC/HEIF body, recognised by suffix or by its `ftyp` brand, is rewritten
+  as JPEG (PNG when the image has alpha) with `convert_heic_upload()` before
+  it is published, so the name that comes back carries the new suffix.
   Returns `{project, name, size, url, view?}`.
-- `/share`: Android share target
+- `/share`: Android share target, converting HEIC the same way
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
 - `/clip`, `/clip/clear`, `/clip/ttl`
@@ -176,8 +180,9 @@ These exist on purpose. Keep them when changing or adding code.
 
 ## Conventions
 
-- Python 3.12+, stdlib first. Pillow is the only optional import, loaded
-  lazily. Don't add runtime dependencies.
+- Python 3.12+, stdlib first. Pillow and pillow-heif are the only optional
+  imports, loaded lazily behind `heif_available()` and `render_thumbnail()`,
+  so everything keeps working without them. Don't add runtime dependencies.
 - Format and lint with `ruff format` and `ruff check`. `subprocess.run` needs
   an explicit `check=`.
 - The UI is mobile first: a bottom tab bar on phones, a left rail from 900px

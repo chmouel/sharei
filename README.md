@@ -19,7 +19,9 @@ while.
 Drop holds files you send either way. Markdown opens formatted the way GitHub
 shows it, code opens with colours and line numbers, pictures open full
 screen, videos and audio play right in the page, and PDFs open page by page
-even on phones that would otherwise only download them. Any file there can be set to expire too.
+even on phones that would otherwise only download them. An iPhone HEIC photo
+arrives as a JPEG (a PNG when it has transparency) when the thumbnails extra
+is installed. Any file there can be set to expire too.
 
 Clipboard is a shared note. Paste on one device and copy on the other.
 It clears itself after ten minutes unless you change that. The last five
@@ -62,7 +64,8 @@ sharei
 
 Open <http://localhost:8000> to check that it runs. For small thumbnails of
 big screenshots, install `'sharei[thumbnails] @ git+https://github.com/chmouel/sharei'`
-instead.
+instead: it also turns the HEIC photos an iPhone sends into JPEG on arrival,
+which every browser can show.
 
 To start it with your session on Linux, copy
 [`contrib/sharei.service`](contrib/sharei.service) to

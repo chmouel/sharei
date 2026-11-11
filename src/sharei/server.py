@@ -45,6 +45,18 @@ from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
 from sharei import push
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+# HEIC/HEIF stills are converted to JPEG on upload; these cover what is left
+# when pillow-heif is missing or the file cannot be decoded.
+HEIC_SUFFIXES = {".heic", ".heif"}
+HEIC_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"hevm", b"hevs"}
+HEIC_TYPES = {".heic": "image/heic", ".heif": "image/heif"}
+# What a HEIC file becomes when it already holds one of them.
+BROWSER_IMAGE_SUFFIXES = {
+    "JPEG": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
+    "GIF": ".gif",
+}
 HTML_SUFFIXES = {".html", ".htm"}
 VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".webm", ".ogv"}
 # Spelled out because mimetypes misses some of these on a few systems.
@@ -1251,6 +1263,92 @@ def render_thumbnail(path: Path) -> bytes:
         buffer = io.BytesIO()
         image.convert("RGB").save(buffer, "WEBP", quality=72, method=4)
     return buffer.getvalue()
+
+
+_heif_state: bool | None = None
+HEIF_LOCK = threading.Lock()
+
+
+def heif_available() -> bool:
+    """Register pillow-heif's Pillow opener once; False when either is missing."""
+    global _heif_state
+    if _heif_state is None:
+        with HEIF_LOCK:
+            if _heif_state is None:
+                try:
+                    importlib.import_module("PIL.Image")
+                    importlib.import_module("pillow_heif").register_heif_opener()
+                    _heif_state = True
+                except (ImportError, OSError):
+                    _heif_state = False
+    return _heif_state
+
+
+def looks_like_heic(path: Path, name: str) -> bool:
+    """True when the name or the ISO base media ftyp box says HEIC/HEIF."""
+    if Path(name).suffix.lower() in HEIC_SUFFIXES:
+        return True
+    try:
+        with path.open("rb") as stream:
+            head = stream.read(48)
+    except OSError:
+        return False
+    if len(head) < 16 or head[4:8] != b"ftyp":
+        return False
+    # Major brand, then the compatible ones that follow the minor version.
+    brands = {head[8:12]}
+    brands.update(head[offset : offset + 4] for offset in range(16, len(head), 4))
+    return bool(brands & HEIC_BRANDS)
+
+
+def convert_heic_upload(temporary: Path, name: str) -> tuple[Path, str]:
+    """Rewrite a HEIC upload in place as a JPEG, or a PNG when it has alpha.
+
+    Returns the temporary to publish and the name to publish it under. A
+    missing Pillow or pillow-heif, an undecodable file or a failed write leaves
+    the upload untouched, so it still lands as the file that was sent.
+    """
+    if not looks_like_heic(temporary, name) or not heif_available():
+        return temporary, name
+    image_module = importlib.import_module("PIL.Image")
+    try:
+        with image_module.open(temporary) as image:
+            already_shown = BROWSER_IMAGE_SUFFIXES.get(image.format or "")
+            if already_shown is not None:
+                return temporary, Path(name).stem + already_shown
+            buffer = io.BytesIO()
+            if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
+                suffix = ".png"
+                image.save(buffer, "PNG")
+            else:
+                suffix = ".jpg"
+                options = {
+                    key: image.info[key]
+                    for key in ("exif", "icc_profile")
+                    if image.info.get(key)
+                }
+                image.convert("RGB").save(buffer, "JPEG", quality=90, **options)
+    except Exception as error:  # noqa: BLE001 - three libraries raise their own errors
+        print(f"heic conversion failed for {name}: {error}")
+        return temporary, name
+    # A new file, not an in-place rewrite: a full disk must not eat the upload.
+    replacement = temporary.with_name(f".part-{os.getpid()}-{secrets.token_hex(8)}")
+    owned = False
+    try:
+        with replacement.open("xb") as stream:
+            owned = True
+            os.chmod(replacement, 0o644)
+            stream.write(buffer.getvalue())
+    except OSError as error:
+        if owned:
+            try:
+                replacement.unlink(missing_ok=True)
+            except OSError:
+                pass
+        print(f"heic conversion failed for {name}: {error}")
+        return temporary, name
+    temporary.unlink(missing_ok=True)
+    return replacement, Path(name).stem + suffix
 
 
 def forget_thumbnail(path: Path) -> None:
@@ -4093,6 +4191,7 @@ class Handler(BaseHTTPRequestHandler):
                 suffix = path.suffix.lower()
                 content_type = (
                     AUDIO_TYPES.get(suffix)
+                    or HEIC_TYPES.get(suffix)
                     or mimetypes.guess_type(path.name)[0]
                     or "application/octet-stream"
                 )
@@ -4106,7 +4205,11 @@ class Handler(BaseHTTPRequestHandler):
                     headers["Content-Security-Policy"] = (
                         "sandbox allow-scripts allow-forms"
                     )
-                elif suffix not in IMAGE_SUFFIXES and suffix not in MEDIA_SUFFIXES:
+                elif (
+                    suffix not in IMAGE_SUFFIXES
+                    and suffix not in HEIC_SUFFIXES
+                    and suffix not in MEDIA_SUFFIXES
+                ):
                     headers["Content-Disposition"] = (
                         f"attachment; filename*=UTF-8''{quote(path.name)}"
                     )
@@ -4511,6 +4614,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, status=400)
             return
 
+        temporary, name = convert_heic_upload(temporary, name)
         try:
             path = publish_poub(temporary, name)
         except OSError as error:
@@ -4531,7 +4635,7 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "project": project,
                 "name": path.name,
-                "size": length,
+                "size": path.stat().st_size,
                 "url": f"/poub/{quote(project)}/{quote(path.name)}",
                 **({"view": view} if view else {}),
             }
@@ -4621,6 +4725,7 @@ class Handler(BaseHTTPRequestHandler):
                 temporary, descriptor = open_upload(DEFAULT_PROJECT)
                 with os.fdopen(descriptor, "wb") as stream:
                     stream.write(payload)
+                temporary, safe = convert_heic_upload(temporary, safe)
                 publish_poub(temporary, safe)
             except OSError as error:
                 if temporary is not None:

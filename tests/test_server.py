@@ -1,3 +1,4 @@
+import io
 import json
 import urllib.error
 import urllib.request
@@ -238,3 +239,156 @@ def test_audio_and_pdf_previews(live_server):
         with pytest.raises(urllib.error.HTTPError) as error:
             get(live_server + path)
         assert error.value.code == 404
+
+
+def heic_bytes(alpha=False):
+    image_module = pytest.importorskip("PIL.Image")
+    pytest.importorskip("pillow_heif").register_heif_opener()
+    mode = "RGBA" if alpha else "RGB"
+    colour = (10, 120, 200, 128) if alpha else (10, 120, 200)
+    buffer = io.BytesIO()
+    image_module.new(mode, (40, 30), colour).save(buffer, "HEIF")
+    return buffer.getvalue()
+
+
+def test_heif_opener_is_registered_once_on_first_use(live_server, monkeypatch):
+    from sharei import server
+
+    heif = pytest.importorskip("pillow_heif")
+    calls = []
+    real = heif.register_heif_opener
+
+    def counting():
+        calls.append(1)
+        real()
+
+    data = heic_bytes()
+    monkeypatch.setattr(server, "_heif_state", None)
+    monkeypatch.setattr(heif, "register_heif_opener", counting)
+    assert upload(live_server, "a.heic", data)["name"] == "a.jpg"
+    assert upload(live_server, "b.heic", data)["name"] == "b.jpg"
+    assert calls == [1] and server._heif_state is True
+
+
+def test_upload_heic_becomes_jpeg(live_server, sharei_root):
+    result = upload(live_server, "IMG_1234.HEIC", heic_bytes())
+    assert result["name"] == "IMG_1234.jpg"
+    assert result["url"] == "/poub/inbox/IMG_1234.jpg"
+    assert (sharei_root / "inbox/drop/IMG_1234.jpg").is_file()
+    _, headers, body = get(live_server + result["url"])
+    assert headers["Content-Type"] == "image/jpeg"
+    assert headers["Content-Disposition"] is None
+    assert body[:2] == b"\xff\xd8" and result["size"] == len(body)
+
+
+def test_upload_heic_with_alpha_becomes_png(live_server):
+    result = upload(live_server, "sticker.heic", heic_bytes(alpha=True))
+    assert result["name"] == "sticker.png"
+    _, headers, body = get(live_server + result["url"])
+    assert headers["Content-Type"] == "image/png"
+    assert body[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_upload_heic_named_after_another_image_is_still_converted(live_server):
+    result = upload(live_server, "photo.jpg", heic_bytes())
+    assert result["name"] == "photo.jpg"
+    assert get(live_server + result["url"])[2][:2] == b"\xff\xd8"
+
+
+def test_upload_heic_name_keeps_an_already_browser_format(live_server):
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(buffer, "JPEG")
+    result = upload(live_server, "photo.heic", buffer.getvalue())
+    assert result["name"] == "photo.jpg"
+    assert get(live_server + result["url"])[2] == buffer.getvalue()
+
+
+def test_converted_names_still_get_collision_suffixes(live_server, sharei_root):
+    names = [upload(live_server, "IMG_1.HEIC", heic_bytes())["name"] for _ in range(2)]
+    assert names == ["IMG_1.jpg", "IMG_1-1.jpg"]
+    assert sorted(item.name for item in (sharei_root / "inbox/drop").iterdir()) == [
+        "IMG_1-1.jpg",
+        "IMG_1.jpg",
+    ]
+
+
+def broken_open(real_open, failure):
+    """Break the exclusive create of a converted file, either at open or mid-write."""
+
+    class Truncated:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            self.handle.close()
+            return False
+
+        def write(self, data):
+            self.handle.write(data[:2])
+            raise OSError(28, "No space left on device")
+
+    def failing_open(self, mode="r", *args, **kwargs):
+        if mode != "xb":
+            return real_open(self, mode, *args, **kwargs)
+        if failure == "open":
+            raise OSError(28, "No space left on device")
+        return Truncated(real_open(self, mode, *args, **kwargs))
+
+    return failing_open
+
+
+@pytest.mark.parametrize("failure", ["open", "write"])
+def test_failed_heic_conversion_keeps_the_upload(
+    live_server, sharei_root, monkeypatch, failure
+):
+    from pathlib import Path
+
+    data = heic_bytes()
+    monkeypatch.setattr(Path, "open", broken_open(Path.open, failure))
+    result = upload(live_server, "IMG_2.heic", data)
+    assert result["name"] == "IMG_2.heic"
+    assert get(live_server + result["url"])[2] == data
+    assert sorted(item.name for item in (sharei_root / "inbox/drop").iterdir()) == [
+        "IMG_2.heic"
+    ]
+
+
+def test_upload_heic_is_kept_without_pillow_heif(live_server, monkeypatch):
+    from sharei import server
+
+    monkeypatch.setattr(server, "_heif_state", False)
+    data = heic_bytes()
+    result = upload(live_server, "IMG_1234.heic", data)
+    assert result["name"] == "IMG_1234.heic"
+    assert get(live_server + result["url"])[2] == data
+    _, headers, _ = get(live_server + result["url"])
+    assert headers["Content-Type"] == "image/heic"
+    assert headers["Content-Disposition"] is None
+
+
+def test_share_heic_becomes_jpeg(live_server, sharei_root):
+    boundary = "sharei-boundary"
+    body = (
+        (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="title"\r\n\r\na photo\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
+            'filename="IMG_9.HEIC"\r\nContent-Type: application/octet-stream\r\n\r\n'
+        ).encode()
+        + heic_bytes()
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    request = urllib.request.Request(
+        live_server + "/share",
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(request) as response:
+        assert response.status == 200
+    assert (sharei_root / "inbox/drop/IMG_9.jpg").is_file()
+    assert not (sharei_root / "inbox/drop/IMG_9.HEIC").exists()
