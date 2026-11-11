@@ -45,6 +45,16 @@ from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
 from sharei import push
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+# What an <img> shows and a browser tab renders. Pillow cannot rasterise a vector
+# to draw a thumbnail, and unlike a raster an SVG is a document that can carry
+# scripts, so it only ever leaves under VECTOR_CSP.
+VECTOR_SUFFIXES = {".svg"}
+VECTOR_TYPES = {".svg": "image/svg+xml"}
+IMAGE_LIKE_SUFFIXES = IMAGE_SUFFIXES | VECTOR_SUFFIXES
+# Opaque origin for what the browser renders as a document. HTML keeps its
+# scripts; an SVG needs none to be drawn.
+HTML_CSP = "sandbox allow-scripts allow-forms"
+VECTOR_CSP = "sandbox"
 # HEIC/HEIF stills are converted to JPEG on upload; these cover what is left
 # when pillow-heif is missing or the file cannot be decoded.
 HEIC_SUFFIXES = {".heic", ".heif"}
@@ -1279,7 +1289,7 @@ def shot_files(project: str | None = None) -> list[Path]:
     return [
         path
         for path in ROOT.glob(f"{project or '*'}/shots/**/*")
-        if path.suffix.lower() in IMAGE_SUFFIXES
+        if path.suffix.lower() in IMAGE_LIKE_SUFFIXES
         and path.is_file()
         and under_root(path)
         and not expired(path)
@@ -1311,6 +1321,15 @@ def thumbnail_cache_path(path: Path) -> Path:
         f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}".encode()
     ).hexdigest()[:32]
     return THUMBS / f"{digest}.webp"
+
+
+def vector_headers(base: dict[str, str]) -> dict[str, str]:
+    """Serve an SVG inline but unable to reach the page: its scripts never run."""
+    return {
+        **base,
+        "Content-Security-Policy": VECTOR_CSP,
+        "X-Content-Type-Options": "nosniff",
+    }
 
 
 def render_thumbnail(path: Path) -> bytes:
@@ -1630,7 +1649,7 @@ def shot_path(encoded: str) -> Path | None:
         len(relative.parts) < 3
         or relative.parts[1] != "shots"
         or not valid_project(relative.parts[0])
-        or path.suffix.lower() not in IMAGE_SUFFIXES
+        or path.suffix.lower() not in IMAGE_LIKE_SUFFIXES
         or not path.is_file()
         or expired(path)
     ):
@@ -1741,7 +1760,7 @@ def poub_files() -> list[PoubFile]:
                 size=human_size(stat.st_size),
                 date=datetime.fromtimestamp(stat.st_mtime).strftime("%b %-d, %H:%M"),
                 url=f"{quote(project)}/{quote(path.name)}",
-                image=path.suffix.lower() in IMAGE_SUFFIXES,
+                image=path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
                 text=looks_like_text(path),
                 timestamp=stat.st_mtime,
                 expires=expires_at(path),
@@ -1787,7 +1806,7 @@ def view_url(project: str, path: Path) -> str | None:
         return f"/pdf/{quote(project)}/{quote(path.name)}"
     if is_markdown(path.name):
         return f"/md/{quote(project)}/{quote(path.name)}"
-    if path.suffix.lower() not in IMAGE_SUFFIXES and looks_like_text(path):
+    if path.suffix.lower() not in IMAGE_LIKE_SUFFIXES and looks_like_text(path):
         return f"/view/{quote(project)}/{quote(path.name)}"
     return None
 
@@ -3458,7 +3477,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                 "bytes": stat.st_size,
                 "mtime": stat.st_mtime,
                 "age_seconds": int(now - stat.st_mtime),
-                "image": path.suffix.lower() in IMAGE_SUFFIXES,
+                "image": path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
                 **({"expires": when} if (when := expires_at(path)) else {}),
                 "url": f"/poub/{quote(path.parent.parent.name)}/{quote(path.name)}",
                 **(
@@ -4259,6 +4278,7 @@ class Handler(BaseHTTPRequestHandler):
                 content_type = (
                     AUDIO_TYPES.get(suffix)
                     or HEIC_TYPES.get(suffix)
+                    or VECTOR_TYPES.get(suffix)
                     or mimetypes.guess_type(path.name)[0]
                     or "application/octet-stream"
                 )
@@ -4269,11 +4289,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif suffix in HTML_SUFFIXES:
                     # Render in the browser, but in an opaque origin so the page
                     # cannot reach the sharei API or its storage.
-                    headers["Content-Security-Policy"] = (
-                        "sandbox allow-scripts allow-forms"
-                    )
+                    headers["Content-Security-Policy"] = HTML_CSP
+                elif suffix in VECTOR_SUFFIXES:
+                    headers.update(vector_headers({}))
                 elif (
-                    suffix not in IMAGE_SUFFIXES
+                    suffix not in IMAGE_LIKE_SUFFIXES
                     and suffix not in HEIC_SUFFIXES
                     and suffix not in MEDIA_SUFFIXES
                 ):
@@ -4360,10 +4380,13 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/shot/"):
             path = shot_path(parsed.path.removeprefix("/shot/"))
             if path is not None:
+                headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+                if path.suffix.lower() in VECTOR_SUFFIXES:
+                    headers = vector_headers(headers)
                 self.send_file(
                     path,
                     mimetypes.guess_type(path.name)[0] or "application/octet-stream",
-                    {"Cache-Control": "public, max-age=31536000, immutable"},
+                    headers,
                 )
                 return
 
@@ -4900,6 +4923,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_thumbnail(self, path: Path) -> None:
         immutable = {"Cache-Control": "public, max-age=31536000, immutable"}
+        if path.suffix.lower() in VECTOR_SUFFIXES:
+            # Nothing to rasterise or cache: the browser scales the vector itself.
+            self.send_file(path, "image/svg+xml", vector_headers(immutable))
+            return
         try:
             cached = thumbnail_cache_path(path)
             if cached.is_file():

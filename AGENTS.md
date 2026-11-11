@@ -97,10 +97,13 @@ Pages:
 
 Files:
 
-- `/shot/<key>`, `/thumb/<key>`
+- `/shot/<key>`, `/thumb/<key>`: an SVG is served as itself, since Pillow cannot
+  rasterise one, so `/thumb` has nothing to cache for it
 - `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
   Images, videos and audio are served inline, everything else as an
-  attachment.
+  attachment. An SVG counts as an image (`IMAGE_LIKE_SUFFIXES`) and is served
+  inline as `image/svg+xml` under the `sandbox` CSP, because opened in a tab it
+  is a document that can carry scripts.
   `send_file` answers a single `Range` with 206, so players can seek.
 - `/download/...` for APKs
 - `/vendor/...`
@@ -160,6 +163,10 @@ These exist on purpose. Keep them when changing or adding code.
   untrusted. Don't add inline handlers or unnonced scripts there. `/view`
   pages use a nonce-only `script-src` (no `'self'`, so an uploaded `.js` can
   never run) and the file text is HTML-escaped on the server.
+- An SVG is an image inside an `<img>` and a document with scripts in a tab,
+  so `/poub`, `/shot` and `/thumb` serve one with `vector_headers`, which adds
+  a `sandbox` Content-Security-Policy. Keep that on any new route that returns
+  a vector, and keep SVG out of `ANNOTATE_TYPES`: a canvas will not take it.
 - Markdown text is sent to api.github.com. The token is optional and needs no
   scopes. Its order of precedence is `$GITHUB_TOKEN`, then `github_token`,
   then `github_token_pass` (a `pass` entry). Never log or print it.

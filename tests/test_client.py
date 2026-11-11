@@ -218,3 +218,8 @@ def test_unauthorized_explains_how_to_log_in(sharec, monkeypatch):
     monkeypatch.setattr(sharec.urllib.request, "urlopen", deny)
     with pytest.raises(sharec.Abort, match="SHAREI_PASS_ENTRY"):
         sharec.fetch("/recent")
+
+
+def test_show_in_terminal_saves_a_vector_instead_of_dumping_its_source(sharec):
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+    assert sharec.show_in_terminal([], 0, svg) is False

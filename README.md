@@ -15,11 +15,13 @@ on a computer.
 Screenshots shows the screenshots you saved, grouped by project. Open one and
 tap the left or right side to turn to the previous or next screenshot, like a
 book; a tap in the middle closes the viewer. Swiping works too. You can draw
-arrows and notes on them, and set them to disappear after a while.
+arrows and notes on them, and set them to disappear after a while. SVG files
+count as screenshots too.
 
 Drop holds files you send either way. Markdown opens formatted the way GitHub
 shows it, code opens with colours and line numbers, pictures open full
-screen, videos and audio play right in the page, and PDFs open page by page
+screen (SVG too, drawn by your browser), videos and audio play right in the
+page, and PDFs open page by page
 even on phones that would otherwise only download them. An iPhone HEIC photo
 arrives as a JPEG (a PNG when it has transparency) when the thumbnails extra
 is installed. Any file there can be set to expire too.
@@ -212,7 +214,8 @@ Images show up right in terminals that speak the kitty graphics protocol
 loop. D deletes it from sharei after you confirm with D or y. Any other key
 closes it and puts the terminal back as it was.
 JPEG, GIF and WebP need the thumbnails
-extra; files that can't be shown are saved in the current folder. When the
+extra; files that can't be shown are saved in the current folder, and SVG
+files, which no terminal can draw, are always saved. When the
 output goes to a pipe or a file, you get the file itself. Downloads never
 overwrite a file; they become `name-1.ext` instead.
 

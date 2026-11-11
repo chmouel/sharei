@@ -484,6 +484,9 @@ def show_in_terminal(items: list[dict], index: int, data: bytes) -> bool:
         return True
     if image:
         sys.stdout.buffer.write(kitty_image(*image) + b"\n")
+    elif image_kind(data) == "svg":
+        # No rasteriser here, and dumping the source over the page helps nobody.
+        return False
     elif b"\0" not in data[:65536]:
         try:
             text = TERMINAL_UNSAFE.sub("", data.decode())

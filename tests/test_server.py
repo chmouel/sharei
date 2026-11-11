@@ -406,3 +406,46 @@ def test_share_buttons_on_shots_and_drop(live_server, sharei_root):
     assert b'data-share="/poub/inbox/pic.png"' in drop
     assert b'data-name="pi&quot;c.png"' in drop
     assert b'data-share="/poub/inbox/note.txt"' not in drop
+
+
+SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">'
+    b'<script>alert(1)</script><rect width="4" height="4"/></svg>'
+)
+
+
+def test_svg_screenshot_gets_a_tile_and_an_inline_sandboxed_image(
+    live_server, sharei_root
+):
+    shot = sharei_root / "inbox/shots/chart.svg"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(SVG)
+    _, _, body = get(live_server + "/shots")
+    assert b"chart.svg" in body
+    assert b'src="/thumb/inbox/shots/chart.svg' in body
+    _, headers, thumb = get(live_server + "/thumb/inbox/shots/chart.svg")
+    assert headers["Content-Type"] == "image/svg+xml" and thumb == SVG
+    assert headers["Content-Security-Policy"] == "sandbox"
+    _, headers, full = get(live_server + "/shot/inbox/shots/chart.svg")
+    assert headers["Content-Type"] == "image/svg+xml" and full == SVG
+    assert headers["Content-Security-Policy"] == "sandbox"
+
+
+def test_dropped_svg_is_an_image_but_stays_sandboxed(live_server):
+    result = upload(live_server, "chart.svg", SVG)
+    assert "view" not in result
+    recent = json.loads(get(live_server + "/recent")[2])
+    assert recent["drop"][0]["image"] is True and "view" not in recent["drop"][0]
+    _, headers, body = get(live_server + "/poub/inbox/chart.svg")
+    assert headers["Content-Type"] == "image/svg+xml" and body == SVG
+    assert "Content-Disposition" not in headers
+    assert headers["Content-Security-Policy"] == "sandbox"
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    _, _, drop = get(live_server + "/drop")
+    assert b'<img src="/poub/inbox/chart.svg"' in drop
+    assert b'href="/view/inbox/chart.svg"' not in drop
+    # The source stays readable, and a raster keeps its plain inline response.
+    assert b"&lt;svg" in get(live_server + "/view/inbox/chart.svg")[2]
+    upload(live_server, "shot.png", b"\x89PNG\r\n\x1a\n")
+    _, headers, _ = get(live_server + "/poub/inbox/shot.png")
+    assert "Content-Security-Policy" not in headers
