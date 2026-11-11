@@ -704,17 +704,18 @@ EXTRA_CSS = """
   .annotator-credit a { color:var(--soft); text-decoration:underline; text-underline-offset:2px; }
   .file-row { position:relative; display:flex; }
   .file-row .file { flex:1; padding-right:80px; }
-  .file-row.has-tools .file { padding-right:112px; }
+  .file-row.has-tools .file { padding-right:144px; }
   .file-tools { position:absolute; top:50%; right:10px; transform:translateY(-50%); display:flex; gap:6px; }
   .file-tools .file-delete { position:static; }
-  .file-annotate, .file-expiry { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .file-annotate:focus-visible, .file-expiry:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .file-annotate, .file-expiry, .file-share { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .file-annotate:focus-visible, .file-expiry:focus-visible, .file-share:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .file-share[hidden] { display:none; }
   .file-qr { display:none; }
   @media (min-width:900px) {
     .file-qr { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; }
     .file-qr:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
     .file-row .file { padding-right:112px; }
-    .file-row.has-tools .file { padding-right:144px; }
+    .file-row.has-tools .file { padding-right:176px; }
   }
   .file-expiry { border-color:color-mix(in srgb, var(--warn) 30%, transparent); color:color-mix(in srgb, var(--warn) 70%, var(--muted)); }
   .file-expiry.set, .expiry-button.set { border-color:color-mix(in srgb, var(--warn) 60%, transparent); color:var(--warn); }
@@ -730,6 +731,9 @@ EXTRA_CSS = """
   .expiry-menu button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
   .expiry-menu button:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   .viewer-tools { display:flex; align-items:center; gap:8px; }
+  .share { padding:6px 10px; border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font:inherit; font-size:11px; font-weight:650; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .share:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .share[hidden] { display:none; }
   .wrap.wide { width:min(100% - 36px, 1180px); }
   .gallery { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px 10px; }
   .tile { display:grid; gap:6px; min-width:0; color:var(--muted); text-decoration:none; font-size:11px; -webkit-tap-highlight-color:transparent; }
@@ -754,6 +758,50 @@ EXTRA_CSS = """
   .caption strong { font-size:14px; font-weight:650; overflow-wrap:anywhere; }
   .caption small { color:var(--muted); font-size:12px; }
   @media (max-width:599px) { .gallery { grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:10px 8px; } .nav { display:none; } }
+"""
+
+SHARE_JS = """
+window.shareiCanShareFiles = (() => {
+  try {
+    const probe = new File([""], "sharei.png", { type: "image/png" });
+    return navigator.canShare({ files: [probe] });
+  } catch (error) {
+    return false;
+  }
+})();
+window.shareiShare = async (url, name) => {
+  try {
+    if (window.shareiCanShareFiles) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const blob = await response.blob();
+      const type = blob.type || "application/octet-stream";
+      await navigator.share({ files: [new File([blob], name, { type })] });
+      return;
+    }
+    if (typeof navigator.share === "function") {
+      await navigator.share({ url: new URL(url, location.href).href });
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+    alert("Could not share: " + (error && error.message ? error.message : error));
+  }
+};
+if (typeof navigator.share === "function") {
+  document.querySelectorAll("[data-share]").forEach((button) => {
+    button.hidden = false;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      window.shareiShare(button.dataset.share, button.dataset.name || "file");
+    });
+  });
+}
 """
 
 EXPIRY_JS = """
@@ -910,6 +958,10 @@ CAROUSEL_JS = """
     open(Number(tile.dataset.index), true);
   }));
   $("close").addEventListener("click", close);
+  $("share-shot").hidden = typeof navigator.share !== "function";
+  $("share-shot").addEventListener("click", () => {
+    if (current >= 0) window.shareiShare(shots[current].url, shots[current].name);
+  });
   $("prev").addEventListener("click", () => step(-1));
   $("next").addEventListener("click", () => step(1));
   document.addEventListener("sharei:annotated", (event) => {
@@ -967,11 +1019,18 @@ CAROUSEL_JS = """
   });
   const release = (event) => {
     if (startX === null) return;
+    const travel = { x: deltaX, y: event.clientY - startY };
     startX = null;
     photo.style.transition = "";
     photo.style.transform = "";
-    if (Math.abs(deltaX) > 50) step(deltaX < 0 ? 1 : -1);
-    else if (Math.abs(deltaX) < 6 && event.type === "pointerup" && event.target === stage) close();
+    if (Math.abs(travel.x) > 50) return step(travel.x < 0 ? 1 : -1);
+    // A tap pages like a book: left third back, right third forward, middle closes.
+    if (event.type !== "pointerup" || Math.abs(travel.x) >= 6 || Math.abs(travel.y) >= 10) return;
+    const box = stage.getBoundingClientRect();
+    const side = (event.clientX - box.left) / box.width;
+    if (side < 1 / 3) step(-1);
+    else if (side > 2 / 3) step(1);
+    else close();
   };
   stage.addEventListener("pointerup", release);
   stage.addEventListener("pointercancel", release);
@@ -3087,11 +3146,16 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
             action = "Get"
             download = " download"
         annotate = ""
+        share = ""
         if Path(entry["name"]).suffix.lower() in ANNOTATE_TYPES:
             annotate = (
                 f'<button class="file-annotate" type="button" data-annotate data-target="drop" '
                 f'data-key="{entry["url"]}" data-url="/poub/{entry["url"]}" '
                 f'aria-label="Annotate {name}">✎</button>'
+            )
+            share = (
+                f'<button class="file-share" type="button" data-share="/poub/{entry["url"]}" '
+                f'data-name="{name}" aria-label="Share {name}" hidden>↗</button>'
             )
         expires = f"{entry['expires']:.0f}" if entry["expires"] else ""
         groups.setdefault(entry["project"], []).append(f"""
@@ -3101,7 +3165,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
               <span class="file-copy"><strong>{name}</strong><small>{entry["size"]} <i>·</i> {entry["date"]}<span class="expires-left" data-expires-left="{expires}" data-prefix=" · expires in " hidden></span></small></span>
               <span class="file-action">{action}</span>
             </a>
-            <span class="file-tools"><button class="file-qr" type="button" data-qr="{html.escape(href)}" aria-label="QR code for {name}">▦</button>{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
+            <span class="file-tools"><button class="file-qr" type="button" data-qr="{html.escape(href)}" aria-label="QR code for {name}">▦</button>{share}{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
           </div>""")
     wipe = (
         '<button class="wipe" id="delete-all" type="button">Delete all</button>'
@@ -3140,6 +3204,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
   <script>{DROP_JS}</script>
   <script>{ANNOTATE_JS}</script>
   <script>{EXPIRY_JS}</script>
+  <script>{SHARE_JS}</script>
   {live_script("drop", live_stamp(poub_paths()))}"""
     return layout("Drop files", "drop", tab_counts, body, extra_css=DROP_CSS)
 
@@ -3243,6 +3308,7 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
     <div class="viewer-bar"><span class="counter" id="counter"></span>
       <span class="viewer-tools"><button class="annotate" id="annotate-shot" type="button" data-annotate
         data-target="shots" hidden>Annotate</button>
+      <button class="share" id="share-shot" type="button" hidden>Share</button>
       <button class="expiry-button" id="expiry-shot" type="button" data-expiry data-target="shot"
         data-label="Expire">Expire</button>
       <button class="wipe" id="delete-shot" type="button">Delete</button>
@@ -3256,6 +3322,7 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
   <script>{CAROUSEL_JS}</script>
   <script>{ANNOTATE_JS}</script>
   <script>{EXPIRY_JS}</script>
+  <script>{SHARE_JS}</script>
   {live_script("shots", live_stamp(shot_files()))}"""
     return layout("Screenshots", "shots", tab_counts, body, wide=True)
 

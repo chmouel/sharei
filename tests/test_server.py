@@ -392,3 +392,17 @@ def test_share_heic_becomes_jpeg(live_server, sharei_root):
         assert response.status == 200
     assert (sharei_root / "inbox/drop/IMG_9.jpg").is_file()
     assert not (sharei_root / "inbox/drop/IMG_9.HEIC").exists()
+
+
+def test_share_buttons_on_shots_and_drop(live_server, sharei_root):
+    shot = sharei_root / "inbox/shots/a.png"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(b"\x89PNG\r\n\x1a\n")
+    upload(live_server, "pic.png", b"\x89PNG\r\n\x1a\n")
+    upload(live_server, 'pi"c.png', b"\x89PNG\r\n\x1a\n")
+    upload(live_server, "note.txt", b"hi")
+    assert b'id="share-shot"' in get(live_server + "/shots")[2]
+    _, _, drop = get(live_server + "/drop")
+    assert b'data-share="/poub/inbox/pic.png"' in drop
+    assert b'data-name="pi&quot;c.png"' in drop
+    assert b'data-share="/poub/inbox/note.txt"' not in drop

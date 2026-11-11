@@ -12,9 +12,10 @@ cables, a cloud drive or emailing yourself.
 The page has four tabs, along the bottom on a phone and down the left side
 on a computer.
 
-Screenshots shows the screenshots you saved, grouped by project. You can swipe
-through them, draw arrows and notes on them, and set them to disappear after a
-while.
+Screenshots shows the screenshots you saved, grouped by project. Open one and
+tap the left or right side to turn to the previous or next screenshot, like a
+book; a tap in the middle closes the viewer. Swiping works too. You can draw
+arrows and notes on them, and set them to disappear after a while.
 
 Drop holds files you send either way. Markdown opens formatted the way GitHub
 shows it, code opens with colours and line numbers, pictures open full
@@ -52,6 +53,9 @@ setting picks the default for browsers that haven't chosen yet.
 
 If you add sharei to your Android home screen, it shows up in the Share menu,
 so you can send a link, some text or a photo from any app to your computer.
+Going the other way, the ↗ button on a screenshot (or in the viewer toolbar)
+and on a picture in Drop hands the file to another app through the system
+share sheet: WhatsApp, Mail, Files, whatever you pick.
 
 ## Install
 

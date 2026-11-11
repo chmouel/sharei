@@ -188,7 +188,14 @@ These exist on purpose. Keep them when changing or adding code.
 - The UI is mobile first: a bottom tab bar on phones, a left rail from 900px
   wide. Reuse the existing CSS classes and patterns, such as `.clip-ttl`-style pills and absolutely positioned row
   tools. Pages reload themselves when the `/state` stamp changes.
-  `window.liveBusy()` pauses that while a viewer or menu is open.
+  `window.liveBusy()` pauses that while a viewer or menu is open. The
+  screenshot viewer pages on a left/right tap like a book (a middle tap closes
+  it), and keeps swipe and the arrow keys working.
+- Sharing out of the browser goes through `SHARE_JS` (`window.shareiShare`):
+  the file bytes when `navigator.canShare({files})` allows it, else the URL,
+  else a plain download. Any button with `data-share` and `data-name` is
+  wired by it and stays `hidden` where the browser has no `navigator.share`,
+  so a desktop without the API shows no half-broken button.
 - Colours always come from CSS variables, never literals. A theme is an
   entry in `THEMES` (the `THEME_KEYS` palette plus `light` or `dark` mode),
   and every theme besides light and dark also needs a `READER_THEMES`
