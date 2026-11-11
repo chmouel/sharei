@@ -43,7 +43,8 @@ proxy with authentication (see SECURITY.md).
   bundle), qrcode-generator (`qrcode.js`, loaded lazily by `QR_JS`, which
   every page includes through `qr_script()`; `[data-qr]` buttons open it,
   an empty value meaning the current page, and loopback URLs are rebased on
-  `public_url`), pdf.js (`pdf.min.mjs` and `pdf.worker.min.mjs`, the
+  `public_url`; with `qr = false`, `QR_ENABLED` drops the buttons, the
+  script and the `qrcode.js` route), pdf.js (`pdf.min.mjs` and `pdf.worker.min.mjs`, the
   modern build of pdfjs-dist, Apache-2.0). Keep their licence files next to them;
   they ship in the wheel. marker.js is linkware: its credit line under the
   editor must stay visible.

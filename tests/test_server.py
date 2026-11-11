@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -695,3 +696,17 @@ def test_markdown_page_keeps_front_matter_for_the_panel(live_server):
     _, _, body = get(live_server + "/md/inbox/note.md")
     assert b"frontMatterPlugin(markdown)" in body
     assert b"created: 2026-11-06T12:50:17" in body
+
+
+def test_qr_can_be_turned_off(live_server, monkeypatch):
+    from sharei import server
+
+    monkeypatch.setattr(server, "QR_ENABLED", False)
+    upload(live_server, "plan.md", PLAN)
+    for page in ("/drop", "/clip", "/md/inbox/plan.md"):
+        _, _, body = get(live_server + page)
+        assert not re.search(rb"<button[^>]*data-qr", body), page
+        assert b"qrcode.js" not in body, page
+    with pytest.raises(urllib.error.HTTPError) as error:
+        get(live_server + "/vendor/qrcode.js")
+    assert error.value.code == 404

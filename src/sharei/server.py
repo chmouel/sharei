@@ -3590,7 +3590,15 @@ QR_JS = """
 """
 
 
+def qr_button() -> str:
+    if not QR_ENABLED:
+        return ""
+    return '<button type="button" data-qr aria-label="Show a QR code for this page">QR</button>'
+
+
 def qr_script(nonce: str = "") -> str:
+    if not QR_ENABLED:
+        return ""
     attribute = f' nonce="{nonce}"' if nonce else ""
     base = json.dumps(PUBLIC_URL).replace("</", "<\\/")
     return f"<script{attribute}>window.shareiPublicUrl = {base};{QR_JS}</script>"
@@ -3645,7 +3653,7 @@ def markdown_page(
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}{review[0]}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{RENDERER_BUTTON}{review[0]}{qr_button()}</nav></header>
 <main class="page reader">{banner}<p class="notice" id="render-notice" role="status" hidden></p>
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
@@ -3723,7 +3731,7 @@ def code_page(name: str, text: str, links: list[tuple[str, str]]) -> tuple[bytes
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav>{actions}<button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav>{actions}{qr_button()}</nav></header>
 <main class="page code-page">{notice}
 <div class="code"><div class="gutter">{gutter}</div><div class="scroll"><div class="line-mark" id="line-mark" hidden></div><pre><code id="code"{language}>{html.escape(text)}</code></pre></div></div>
 </main>
@@ -3767,7 +3775,7 @@ def play_page(project: str, name: str) -> tuple[bytes, str]:
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a><button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}</nav></header>
 <main class="page play-page">{player}</main>
 {qr_script(nonce)}
 </body></html>"""
@@ -3853,7 +3861,7 @@ def pdf_page(project: str, name: str) -> tuple[bytes, str]:
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{PDF_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a><button type="button" data-qr aria-label="Show a QR code for this page">QR</button></nav></header>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}</nav></header>
 <main class="page pdf-page" data-url="{url}"><p class="pdf-status">Loading…</p></main>
 <script type="module" nonce="{nonce}">{PDF_JS}</script>
 {qr_script(nonce)}
@@ -4187,7 +4195,8 @@ function showLink(state) {
   const link = linkBar.querySelector('a');
   link.href = url;
   link.textContent = url;
-  linkBar.querySelector('[data-qr]').dataset.qr = url;
+  const qr = linkBar.querySelector('[data-qr]');
+  if (qr) qr.dataset.qr = url;
 }
 
 const historyBox = document.getElementById('clip-history');
@@ -4407,7 +4416,7 @@ def clip_page(state: ClipState, tab_counts: Counts) -> bytes:
   <section class="clip-card">
     <div class="clip-meta"><span id="clip-updated">{updated_label}</span><span id="clip-expiry">{expiry_label}</span></div>
     <div class="clip-ttl"><span>Clear after</span>{choices}</div>
-    <div class="clip-link" id="clip-link" hidden><a target="_blank" rel="noopener noreferrer"></a><span class="clip-ttl"><button type="button" data-qr>QR</button></span></div>
+    <div class="clip-link" id="clip-link" hidden><a target="_blank" rel="noopener noreferrer"></a>{'<span class="clip-ttl"><button type="button" data-qr>QR</button></span>' if QR_ENABLED else ""}</div>
     <textarea id="clip-text" placeholder="Paste or type here, then hit Send." spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Shared clipboard text">{html.escape(text)}</textarea>
     <div class="clip-actions">
       <button id="copy" class="primary" type="button">Copy</button>
@@ -4640,6 +4649,11 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
             download = " download"
         annotate = ""
         share = ""
+        qr = (
+            f'<button class="file-qr" type="button" data-qr="{html.escape(href)}" aria-label="QR code for {name}">▦</button>'
+            if QR_ENABLED
+            else ""
+        )
         if Path(entry["name"]).suffix.lower() in ANNOTATE_TYPES:
             annotate = (
                 f'<button class="file-annotate" type="button" data-annotate data-target="drop" '
@@ -4658,7 +4672,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
               <span class="file-copy"><strong>{name}</strong><small>{entry["size"]} <i>·</i> {entry["date"]}<span class="expires-left" data-expires-left="{expires}" data-prefix=" · expires in " hidden></span></small></span>
               <span class="file-action">{action}</span>
             </a>
-            <span class="file-tools"><button class="file-qr" type="button" data-qr="{html.escape(href)}" aria-label="QR code for {name}">▦</button>{share}{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
+            <span class="file-tools">{qr}{share}{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
           </div>""")
     wipe = (
         '<button class="wipe" id="delete-all" type="button">Delete all</button>'
@@ -5290,6 +5304,7 @@ def layout(
 # Web Push. Enabled when the optional cryptography package is installed (the push extra);
 # subscriptions and the VAPID key live in PUSH_DIR.
 PUSH_ENABLED = False
+QR_ENABLED = True
 PUSH_SUBJECT = "mailto:sharei@localhost"
 PUSH_SUBS_MAX = 20
 # Events of one kind arriving within this many seconds go out as a single notification.
@@ -5670,6 +5685,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/vendor/"):
             name = parsed.path.removeprefix("/vendor/")
             content_type = VENDOR_TYPES.get(name)
+            if name == "qrcode.js" and not QR_ENABLED:
+                content_type = None
             vendor_file = VENDOR / name
             if content_type is not None and vendor_file.is_file():
                 self.send_file(
@@ -6579,6 +6596,7 @@ CONFIG_TYPES: dict[str, type | tuple[type, ...]] = {
     "artifacts": list,
     "theme": str,
     "public_url": str,
+    "qr": bool,
     "push_subject": str,
     "github_token": str,
     "github_token_pass": str,
@@ -6608,7 +6626,9 @@ def check_types(
                 f"sharei: {where}: unknown key {key!r} (known: {', '.join(types)})"
             )
         # bool is an int subclass; reject it so `port = true` is not taken as 1.
-        if not isinstance(value, types[key]) or isinstance(value, bool):
+        if not isinstance(value, types[key]) or (
+            isinstance(value, bool) and types[key] is not bool
+        ):
             raise SystemExit(f"sharei: {where}: {key!r} has the wrong type")
 
 
@@ -6673,7 +6693,7 @@ def parse_artifacts(where: str, entries: list[object]) -> tuple[ArtifactRule, ..
 
 def main() -> None:
     global ARTIFACT_RULES, DEFAULT_PROJECT, ROOT, GITHUB_TOKEN, GITHUB_TOKEN_PASS
-    global THEME_DEFAULT, PUBLIC_URL, PUSH_ENABLED, PUSH_SUBJECT
+    global THEME_DEFAULT, PUBLIC_URL, PUSH_ENABLED, PUSH_SUBJECT, QR_ENABLED
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -6765,6 +6785,7 @@ def main() -> None:
         address = phone_ip()
         PUBLIC_URL = f"http://{address}:{port}" if address else ""
 
+    QR_ENABLED = bool(config.get("qr", True))
     PUSH_ENABLED = push.available()
     PUSH_SUBJECT = str(
         config.get("push_subject")

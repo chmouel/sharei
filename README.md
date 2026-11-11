@@ -35,7 +35,8 @@ note is a web address, it shows up as a link you can tap.
 
 To move a page or a link to another device, press QR: on the clipboard link,
 in the header of a markdown, code or video page, or next to a file in Drop on
-a computer. The phone camera opens it straight away.
+a computer. The phone camera opens it straight away. Set `qr = false` in the
+config file to hide these buttons.
 
 Artifacts lists the files your projects build, newest first: Android APKs,
 Python wheels, release archives, whatever you point it at. Tap one on your
