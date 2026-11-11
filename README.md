@@ -19,7 +19,8 @@ arrows and notes on them, and set them to disappear after a while. SVG files
 count as screenshots too.
 
 Drop holds files you send either way. Markdown opens formatted the way GitHub
-shows it, code opens with colours and line numbers, pictures open full
+shows it, with any front matter at the top laid out as a tidy list of
+properties, code opens with colours and line numbers, pictures open full
 screen (SVG too, drawn by your browser), videos and audio play right in the
 page, and PDFs open page by page
 even on phones that would otherwise only download them. An iPhone HEIC photo

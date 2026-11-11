@@ -104,6 +104,11 @@ Pages:
   follows the section being read, draws a progress line under the bar, and
   colours mermaid's base theme from the page's CSS variables.
   Linkify ignores scheme-less links so `README.md` stays text.
+  YAML front matter at line 1 (closed by `---` or `...` within 200 lines,
+  with at least one `key:`) is claimed by the `sharei_frontmatter` block
+  rule and drawn by `frontPanel()` as a `dl.frontmatter` properties panel
+  covering its lines; the GitHub button cuts those lines before posting and
+  puts the same panel back in front of GitHub's HTML.
   A `sharei_lines` core rule copies markdown-it's `token.map` onto blocks as
   `data-line`/`data-line-end` (1-based, inclusive; a tight list item takes
   its hidden paragraph's range) and `data-code` on code blocks. The review

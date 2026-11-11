@@ -2240,6 +2240,18 @@ READER_CSS = """
   .reader .markdown-body kbd { font-family:var(--mono); }
   .reader .markdown-body .footnotes { margin-top:3em; padding-top:1.2em; border-top:1px solid var(--borderColor-muted); color:var(--fgColor-muted); font-size:.88em; }
   .reader .mermaid-diagram { margin:0 0 1.3em; padding:20px 16px; border:1px solid var(--borderColor-muted); border-radius:12px; background:var(--bgColor-muted); }
+  .reader .markdown-body .frontmatter { display:grid; grid-template-columns:fit-content(40%) minmax(0, 1fr); align-items:baseline; gap:8px 24px; margin:0 0 2.2em; padding:14px 18px; border:1px solid var(--borderColor-muted); border-radius:12px; background:color-mix(in srgb, var(--bgColor-muted) 60%, transparent); font-size:.875em; line-height:1.55; font-variant-numeric:tabular-nums; }
+  .reader .markdown-body .frontmatter dt { margin:0; padding:0; color:var(--fgColor-muted); font-size:inherit; font-style:normal; font-weight:500; }
+  .reader .markdown-body .frontmatter dd { min-width:0; margin:0; padding:0; color:var(--fgColor-default); overflow-wrap:anywhere; }
+  .reader .markdown-body .frontmatter time { white-space:nowrap; }
+  .reader .markdown-body .frontmatter-list { display:flex; flex-wrap:wrap; gap:4px 6px; }
+  .reader .markdown-body .frontmatter-pill { padding:0 9px; border-radius:999px; background:color-mix(in srgb, var(--fgColor-muted) 14%, transparent); }
+  .reader .markdown-body .frontmatter-tag { background:color-mix(in srgb, var(--fgColor-accent) 14%, transparent); color:var(--fgColor-accent); font-weight:500; }
+  .reader .markdown-body .frontmatter-empty { color:var(--fgColor-muted); font-style:italic; }
+  .reader .markdown-body .frontmatter-text { white-space:pre-line; }
+  .reader .markdown-body .frontmatter-code { display:block; padding:6px 10px; white-space:pre-wrap; }
+  .reader .markdown-body .frontmatter-raw pre { margin:0 0 2.2em; }
+  @media (max-width:540px) { .reader .markdown-body .frontmatter { gap:6px 16px; padding:12px 14px; } }
 
   .reader .toc { margin:0 auto 28px; max-width:46rem; padding:6px 16px; border-color:var(--borderColor-muted); border-radius:12px; background:color-mix(in srgb, var(--bgColor-muted) 60%, transparent); }
   .reader .toc summary { color:var(--fgColor-muted); font-size:13px; }
@@ -2384,6 +2396,151 @@ const ALERTS = {
 const ALERT_MARK = /^\\[!(note|tip|important|warning|caution)\\][ \\t]*(?:\\n|$)/i;
 const TASK_MARK = /^\\[([ xX])\\][ \\t]+/;
 
+// Front matter: a YAML block between --- lines at the very top of the file, shown as a
+// small properties panel. Only a subset of YAML is read; anything else is shown as written.
+const FRONT_KEY = /^([A-Za-z0-9_][\\w .\\/-]*?)[ \\t]*:(?:[ \\t]+(.*?))?[ \\t]*$/;
+const FRONT_DATE = /^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ](\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$/;
+const FRONT_LIMIT = 200;
+
+function readFrontMatter(text) {
+  const lines = text.split('\\n', FRONT_LIMIT + 2);
+  if (!/^---[ \\t]*$/.test(lines[0])) return null;
+  let close = 1;
+  while (close < lines.length && close <= FRONT_LIMIT && !/^(?:---|\\.\\.\\.)[ \\t]*$/.test(lines[close])) close++;
+  if (close >= lines.length || close > FRONT_LIMIT) return null;
+  const inner = lines.slice(1, close);
+  const first = inner.find((line) => line.trim() && !/^\\s*#/.test(line));
+  if (!first || /^\\s/.test(first) || !FRONT_KEY.test(first)) return null;
+  return { lines: close + 1, yaml: inner.join('\\n'), entries: frontEntries(inner) };
+}
+
+function frontEntries(lines) {
+  const entries = [];
+  for (const line of lines) {
+    const key = /^\\s/.test(line) ? null : FRONT_KEY.exec(line);
+    if (key) entries.push({ key: key[1], inline: key[2] || '', rest: [] });
+    else if (!line.trim() || /^\\s*#/.test(line)) entries.length && entries[entries.length - 1].rest.push(line);
+    else if (entries.length) entries[entries.length - 1].rest.push(line);
+    else return null;
+  }
+  return entries.map(frontValue);
+}
+
+function frontUnquote(text) {
+  text = text.trim();
+  if (/^"(?:[^"\\\\]|\\\\.)*"$/.test(text)) return text.slice(1, -1).replace(/\\\\(.)/g, (all, c) => (c === 'n' ? '\\n' : c === 't' ? '\\t' : c));
+  if (/^'(?:[^']|'')*'$/.test(text)) return text.slice(1, -1).replace(/''/g, "'");
+  return text.replace(/\\s+#.*$/, '');
+}
+
+function frontSplit(text) {
+  const items = [];
+  let current = '', quote = '';
+  for (const c of text) {
+    if (quote) { if (c === quote) quote = ''; current += c; }
+    else if (c === '"' || c === "'") { quote = c; current += c; }
+    else if (c === ',') { items.push(current); current = ''; }
+    else current += c;
+  }
+  if (current.trim() || items.length) items.push(current);
+  return items.map(frontUnquote).filter((item) => item !== '');
+}
+
+function frontValue({ key, inline, rest }) {
+  const trimmed = inline.trim();
+  const quoted = /^("(?:[^"\\\\]|\\\\.)*"|'(?:[^']|'')*')(?:\\s+#.*)?$/.exec(trimmed);
+  const value = quoted ? quoted[1] : trimmed.replace(/(?:^|\\s+)#.*$/, '');
+  const body = rest.filter((line) => line.trim() && !/^\\s*#/.test(line));
+  const indent = body.length ? Math.min(...body.map((line) => /^\\s*/.exec(line)[0].length)) : 0;
+  const block = rest.map((line) => line.slice(indent)).join('\\n').replace(/\\s+$/, '');
+  const raw = () => ({ key, kind: 'raw', value: [value, block].filter(Boolean).join('\\n') });
+  if (/^[|>][+-]?\\d*$/.test(value)) {
+    return { key, kind: 'text', value: value[0] === '>' ? block.replace(/([^\\n])\\n(?=[^\\n])/g, '$1 ') : block };
+  }
+  if (!value.trim()) {
+    if (!body.length) return { key, kind: 'empty' };
+    if (body.every((line) => /^\\s*-(?:\\s+|$)/.test(line))) {
+      return { key, kind: 'list', value: body.map((line) => frontUnquote(line.replace(/^\\s*-\\s*/, ''))).filter((item) => item !== '') };
+    }
+    return raw();
+  }
+  if (/^\\[.*\\]$/.test(value.trim()) && !body.length) return { key, kind: 'list', value: frontSplit(value.trim().slice(1, -1)) };
+  if (/^[{&*!]/.test(value.trim())) return raw();
+  if (body.length) {
+    if (/^["']/.test(value.trim())) return raw();
+    return { key, kind: 'scalar', value: [value, ...body].map((line) => line.trim()).join(' ') };
+  }
+  return { key, kind: 'scalar', value: frontUnquote(value) };
+}
+
+const frontEscape = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function frontDate(text) {
+  const match = FRONT_DATE.exec(text);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second, zone] = match;
+  const date = hour === undefined
+    ? new Date(Number(year), Number(month) - 1, Number(day))
+    : zone
+      ? new Date(text.replace(' ', 'T'))
+      : new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second || 0));
+  if (Number.isNaN(date.getTime()) || date.getMonth() !== Number(month) - 1) return null;
+  const style = hour === undefined ? { dateStyle: 'medium' } : { dateStyle: 'medium', timeStyle: 'short' };
+  return '<time datetime="' + frontEscape(text.replace(' ', 'T')) + '" title="' + frontEscape(text) + '">' + frontEscape(new Intl.DateTimeFormat(undefined, style).format(date)) + '</time>';
+}
+
+function frontScalar(text) {
+  if (text === '' || /^(?:null|~)$/i.test(text)) return '<span class="frontmatter-empty">empty</span>';
+  if (/^(?:true|false)$/i.test(text)) return /^t/i.test(text) ? 'Yes' : 'No';
+  const date = frontDate(text);
+  if (date) return date;
+  if (/^https?:\\/\\/\\S+$/i.test(text)) {
+    const label = text.replace(/^https?:\\/\\//i, '').replace(/\\/$/, '');
+    return '<a href="' + frontEscape(text) + '" title="' + frontEscape(text) + '">' + frontEscape(label) + '</a>';
+  }
+  return frontEscape(text.replace(/\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]/g, (all, target, alias) => alias || target));
+}
+
+function frontPanel(front, map) {
+  const where = map ? ' data-line="' + (map[0] + 1) + '" data-line-end="' + map[1] + '"' : '';
+  if (!front.entries || !front.entries.length) {
+    return '<div class="frontmatter frontmatter-raw"' + where + '><pre><code>' + frontEscape(front.yaml) + '</code></pre></div>\\n';
+  }
+  let html = '<dl class="frontmatter"' + where + '>';
+  for (const entry of front.entries) {
+    const tags = /^tags?$/i.test(entry.key);
+    let items = entry.kind === 'list' ? entry.value : null;
+    if (tags && entry.kind === 'scalar') items = entry.value.split(/[\\s,]+/).filter(Boolean);
+    let value;
+    if (items) {
+      value = items.length
+        ? '<span class="frontmatter-list">' + items.map((item) => '<span class="frontmatter-pill' + (tags ? ' frontmatter-tag' : '') + '">' + (tags ? frontEscape('#' + item.replace(/^#/, '')) : frontScalar(item)) + '</span>').join('') + '</span>'
+        : '<span class="frontmatter-empty">empty</span>';
+    } else if (entry.kind === 'text') value = '<span class="frontmatter-text">' + frontEscape(entry.value) + '</span>';
+    else if (entry.kind === 'raw') value = '<code class="frontmatter-code">' + frontEscape(entry.value) + '</code>';
+    else if (entry.kind === 'empty') value = '<span class="frontmatter-empty">empty</span>';
+    else value = frontScalar(entry.value);
+    html += '<dt>' + frontEscape(entry.key) + '</dt><dd>' + value + '</dd>';
+  }
+  return html + '</dl>\\n';
+}
+
+function frontMatterPlugin(markdown) {
+  markdown.block.ruler.before('table', 'sharei_frontmatter', (state, startLine, endLine, silent) => {
+    if (startLine !== 0 || state.parentType !== 'root' || state.sCount[0] !== 0) return false;
+    const front = readFrontMatter(state.src);
+    if (!front || front.lines > endLine) return false;
+    if (silent) return true;
+    const token = state.push('front_matter', '', 0);
+    token.block = true;
+    token.map = [0, front.lines];
+    token.meta = front;
+    state.line = front.lines;
+    return true;
+  });
+  markdown.renderer.rules.front_matter = (tokens, index) => frontPanel(tokens[index].meta, tokens[index].map);
+}
+
 // Task lists, alerts and table alignment, written the way GitHub's renderer writes them.
 function githubFlavour(markdown) {
   markdown.core.ruler.push('sharei_github', (state) => {
@@ -2502,6 +2659,7 @@ function renderLocal() {
       markdown.linkify.set({ fuzzyLink: false });
       if (window.markdownitFootnote) markdown.use(window.markdownitFootnote);
       if (window.markdownitEmoji) markdown.use(window.markdownitEmoji);
+      frontMatterPlugin(markdown);
       githubFlavour(markdown);
     }
     return sanitize(markdown.render(source));
@@ -2783,6 +2941,9 @@ if (location.hash && !/^#L\\d/.test(location.hash)) {
 const toggle = document.getElementById('renderer');
 const status = document.getElementById('render-notice');
 let github = null;
+// GitHub would show front matter as rules and text, so it is cut here and drawn locally instead.
+const front = readFrontMatter(source.replace(/\\r\\n?/g, '\\n'));
+const githubSource = front ? source.replace(/\\r\\n?/g, '\\n').split('\\n').slice(front.lines).join('\\n') : source;
 function pressed(on) {
   const label = on ? 'Render locally' : 'Render with GitHub';
   toggle.setAttribute('aria-pressed', String(on));
@@ -2804,13 +2965,13 @@ if (toggle) {
         const response = await fetch('/markdown/github', {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-          body: source,
+          body: githubSource,
         });
         const answer = await response.json();
         if (!response.ok || typeof answer.html !== 'string') throw new Error(answer.error || response.statusText);
         github = answer.html;
       }
-      show(sanitize(github));
+      show(sanitize((front ? frontPanel(front) : '') + github));
       pressed(true);
     } catch (error) {
       status.textContent = 'GitHub rendering failed: ' + (error.message || error);

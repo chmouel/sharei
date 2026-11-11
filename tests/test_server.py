@@ -687,3 +687,11 @@ def test_markdown_page_offers_review(live_server):
     upload(live_server, "plan.md", PLAN)
     _, _, body = get(live_server + "/md/inbox/plan.md")
     assert b'id="review"' in body and b'data-comments="/comments/inbox/plan.md"' in body
+
+
+def test_markdown_page_keeps_front_matter_for_the_panel(live_server):
+    note = "---\ncreated: 2026-11-06T12:50:17\ntags: [pac]\n---\n# Title\n"
+    upload(live_server, "note.md", note.encode())
+    _, _, body = get(live_server + "/md/inbox/note.md")
+    assert b"frontMatterPlugin(markdown)" in body
+    assert b"created: 2026-11-06T12:50:17" in body
