@@ -143,7 +143,10 @@ Pages:
   (`<svg>-flowchart-<id>-<n>`) and `path[data-edge]` `data-id`s
   (`L_<from>_<to>_<n>`, walked backwards when only `B -> A` exists), a
   token moves along `getPointAtLength`, and state is `play-*` classes on the
-  SVG. Step mode stops at segments flagged `stop` (one per step) and goes
+  SVG. A step is `{moves: [{from, to, path, reverse}], label, caption}`;
+  several moves (`A -> B, C` or `A, B -> C`) share one segment as long as
+  the slowest, each dot timed by its own edge and arriving on its own.
+  `active` is a Set, since several boxes can be lit. Step mode stops at segments flagged `stop` (one per step) and goes
   back by replaying instantly with `advance(Infinity, true)`; its key
   handler (arrows, j/k, PageUp/PageDown, Space to play or pause) runs before panZoom's so a
   plain arrow steps and Shift+arrow pans.

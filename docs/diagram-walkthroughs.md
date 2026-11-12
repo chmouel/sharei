@@ -66,6 +66,8 @@ so the diagram still draws everywhere else and only sharei plays it.
 %% A -> B               the dot travels from node A to node B
 %% A -> B : label       the same, with a tag riding along with the dot
 %% A -> B : label | text  the same, with a sentence shown under the diagram
+%% A -> B, C            one dot down each edge at the same time
+%% A, B -> C            dots from A and from B meet at C
 %% skip A B             fades these nodes until the story ends
 %% skip A B | text      the same, with a sentence
 ```
@@ -83,6 +85,16 @@ the script.
 A step needs an edge between its two nodes. When the edge is drawn the other
 way (`B --> A`, or a two-way `A <--> B`), the dot runs along it backwards.
 `A -> B` and `A --> B` mean the same thing in a step.
+
+A step can list several boxes on one side, separated by commas or by `&` as
+mermaid writes it. `A -> B, C` sends a dot down each edge at once, and
+`A, B -> C` brings two dots into C together. Each dot moves at the pace its
+own edge would have alone, so a short edge finishes first and its box lights
+up while the longer one is still travelling. The step ends when the last dot
+arrives. The label rides on the first dot only. Every listed box takes part:
+if one pair has no edge, the whole step is skipped and listed in the
+tooltip. Listing several boxes on both sides (`A, B -> C, D`) is ambiguous,
+so sharei skips it the same way.
 
 When a step names a node that does not exist or a pair with no edge, sharei
 skips it and lists it in the play button's tooltip. A block whose stories have

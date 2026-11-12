@@ -113,7 +113,10 @@ flowchart LR
   boxes (backwards works). `: text` is the label on the dot, keep it to a
   word or two. `| sentence` after it is a caption shown under the diagram
   while that step plays: one short plain sentence saying what happens, on
-  the steps that need explaining. `%% play: Title` starts another scenario in the same
+  the steps that need explaining. `%% A -> B, C` sends dots down both
+  arrows at once and `%% A, B -> C` joins two; use it where things really
+  happen in parallel, such as a fan-out to several jobs.
+  `%% play: Title` starts another scenario in the same
   diagram; `%% skip A B` fades boxes that scenario does not use.
 - Give picture boxes to the actors and main stages, and keep plain boxes for
   small steps; four to eight pictures read best. Always set `w`, `h` and

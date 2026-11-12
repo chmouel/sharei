@@ -1212,6 +1212,7 @@ function panZoom(holder, scenarios) {
 // Walkthroughs are written as mermaid comments, which every other renderer ignores:
 //   %% play: Title        starts a scenario
 //   %% A -> B : label     sends a token from node A to node B along the edge between them
+//   %% A -> B, C          sends one token down each edge at once (A, B -> C joins two)
 //   %% skip A B           fades nodes for the rest of the scenario
 function flowchartLines(source) {
   const lines = source.split(/\\r?\\n/);
@@ -1246,9 +1247,11 @@ function playScript(source) {
     const bar = text.indexOf('|');
     const body = bar < 0 ? text : text.slice(0, bar).trim();
     const caption = bar < 0 ? '' : text.slice(bar + 1).trim();
-    const move = /^([^\\s:]+?)\\s*-+>\\s*([^\\s:]+)\\s*(?::\\s*(.*))?$/.exec(body);
+    // A, B -> C or A -> B, C (or B & C, as mermaid writes it) moves one dot down each edge at once.
+    const move = /^([^:]+?)\\s*-+>\\s*([^:]+?)\\s*(?::\\s*(.*))?$/.exec(body);
     const skip = /^skip\\s+(.+)$/i.exec(body);
-    if (move) step = { from: move[1], to: move[2], label: move[3] || '', caption: caption, text: text };
+    const names = (list) => list.split(/[\\s,&]+/).filter(Boolean);
+    if (move) step = { from: names(move[1]), to: names(move[2]), label: move[3] || '', caption: caption, text: text };
     else if (skip) step = { skip: skip[1].split(/[\\s,]+/).filter(Boolean), caption: caption, text: text };
     if (!step) continue;
     if (!current) {
@@ -1843,15 +1846,19 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
         if (found.length) steps.push({ skip: found, caption: step.caption });
         continue;
       }
-      const from = nodes.get(step.from);
-      const to = nodes.get(step.to);
-      const forward = from && to && edgeBetween(step.from, step.to);
-      const path = forward || (from && to && edgeBetween(step.to, step.from));
-      if (!path) {
+      const pairs = step.from.length > 1 && step.to.length > 1 ? [] : step.from.flatMap((from) => step.to.map((to) => [from, to]));
+      const moves = pairs.map(([fromName, toName]) => {
+        const from = nodes.get(fromName);
+        const to = nodes.get(toName);
+        const forward = from && to && edgeBetween(fromName, toName);
+        const path = forward || (from && to && edgeBetween(toName, fromName));
+        return path ? { from: from, to: to, path: path, reverse: !forward } : null;
+      });
+      if (!moves.length || moves.includes(null)) {
         problems.push(step.text);
         continue;
       }
-      steps.push({ from: from, to: to, path: path, reverse: !forward, label: step.label, caption: step.caption });
+      steps.push({ moves: moves, label: step.label, caption: step.caption });
     }
     return { title: script.title, steps: steps, problems: problems };
   }).filter((scenario) => scenario.steps.length);
@@ -1910,8 +1917,9 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   let finished = false;
   let frame = 0;
   let last = 0;
-  let active = null;
-  let token = null;
+  // Several boxes can be lit at once when a step fans out or in.
+  const active = new Set();
+  let tokens = [];
   // Step mode stops the timeline after each step. waiting means the next segment is not entered yet.
   let reached = 0;
   let waiting = false;
@@ -1984,22 +1992,22 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     node.classList.remove('play-done', 'play-skipped');
     node.querySelector(':scope > .play-check')?.remove();
     node.classList.add('play-active');
-    active = node;
+    active.add(node);
   }
   function setDone(node) {
     node.classList.remove('play-active');
     node.classList.add('play-done');
     badge(node);
-    if (active === node) active = null;
+    active.delete(node);
   }
   function clearMarks() {
     for (const element of svg.querySelectorAll('.play-active, .play-done, .play-skipped, .play-edge, .play-edge-done')) {
       element.classList.remove('play-active', 'play-done', 'play-skipped', 'play-edge', 'play-edge-done');
     }
     for (const element of svg.querySelectorAll('.play-check')) element.remove();
-    token?.remove();
-    token = null;
-    active = null;
+    for (const dot of tokens) dot.remove();
+    tokens = [];
+    active.clear();
     say('');
   }
 
@@ -2051,7 +2059,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     }
     return left < Infinity ? { x: left, y: top, width: right - left, height: bottom - top } : null;
   }
-  const stepArea = (step) => area(step.skip || [step.from, step.to, step.path]);
+  const stepArea = (step) => area(step.skip || step.moves.flatMap((move) => [move.from, move.to, move.path]));
   // The camera moves only while a story plays on screen, never while it is rebuilt or saved.
   function look(step) {
     if (playing && !exporting) stage.diagramCamera?.look(stepArea(step));
@@ -2065,7 +2073,6 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   // The timeline is a list of segments that only advances while playing, so pausing is free.
   function build(calm) {
     const segments = [];
-    let at = null;
     const DWELL = calm ? 650 : 420;
     for (const step of scenario().steps) {
       if (step.skip) {
@@ -2076,57 +2083,74 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
             node.classList.remove('play-active', 'play-done');
             node.querySelector(':scope > .play-check')?.remove();
             node.classList.add('play-skipped');
-            if (active === node) active = null;
+            active.delete(node);
           }
         } });
         continue;
       }
-      if (at !== step.from) {
-        segments.push({ duration: DWELL, start: () => {
-          say(step.caption);
-          look(step);
-          if (active && active !== step.from) setDone(active);
-          setActive(step.from);
-        } });
-      } else {
-        segments.push({ duration: DWELL, start: () => {
-          say(step.caption);
-          look(step);
-        } });
-      }
-      const length = step.path.getTotalLength();
-      let matrix = null;
+      const sources = new Set(step.moves.map((move) => move.from));
+      segments.push({ duration: DWELL, start: () => {
+        say(step.caption);
+        look(step);
+        for (const node of [...active]) if (!sources.has(node)) setDone(node);
+        for (const node of sources) setActive(node);
+      } });
+      // Each dot keeps the pace of its own edge, so a short edge arrives first and the step
+      // lasts as long as the longest one.
+      const runs = step.moves.map((move) => {
+        const length = move.path.getTotalLength();
+        return { move: move, length: length, duration: calm ? 300 : Math.min(1700, Math.max(550, length * 3.2)) };
+      });
+      const longest = Math.max(...runs.map((run) => run.duration));
+      const arrive = (run) => {
+        if (run.arrived) return;
+        run.arrived = true;
+        run.token?.remove();
+        tokens = tokens.filter((dot) => dot !== run.token);
+        run.token = null;
+        run.move.path.classList.remove('play-edge');
+        run.move.path.classList.add('play-edge-done');
+        setActive(run.move.to);
+      };
       segments.push({
-        duration: calm ? 300 : Math.min(1700, Math.max(550, length * 3.2)),
+        duration: longest,
         stop: true,
         start: () => {
-          setDone(step.from);
-          step.path.classList.remove('play-edge-done');
-          step.path.classList.add('play-edge');
-          if (calm) return;
-          const own = step.path.getScreenCTM();
-          const root = svg.getScreenCTM();
-          matrix = own && root ? root.inverse().multiply(own) : new DOMMatrix();
-          token = makeToken(step.label);
+          for (const node of sources) setDone(node);
+          runs.forEach((run, at) => {
+            run.arrived = false;
+            run.token = null;
+            run.move.path.classList.remove('play-edge-done');
+            run.move.path.classList.add('play-edge');
+            if (calm) return;
+            const own = run.move.path.getScreenCTM();
+            const root = svg.getScreenCTM();
+            run.matrix = own && root ? root.inverse().multiply(own) : new DOMMatrix();
+            run.token = makeToken(at ? '' : step.label);
+            tokens.push(run.token);
+          });
         },
         frame: (progress) => {
-          if (!token) return;
-          const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-          const point = step.path.getPointAtLength(length * (step.reverse ? 1 - eased : eased));
-          const placed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
-          token.setAttribute('transform', 'translate(' + placed.x + ' ' + placed.y + ')');
+          for (const run of runs) {
+            if (run.arrived) continue;
+            const own = Math.min(1, progress * longest / run.duration);
+            if (own >= 1 && progress < 1) {
+              arrive(run);
+              continue;
+            }
+            if (!run.token) continue;
+            const eased = own < 0.5 ? 2 * own * own : 1 - Math.pow(-2 * own + 2, 2) / 2;
+            const point = run.move.path.getPointAtLength(run.length * (run.move.reverse ? 1 - eased : eased));
+            const placed = new DOMPoint(point.x, point.y).matrixTransform(run.matrix);
+            run.token.setAttribute('transform', 'translate(' + placed.x + ' ' + placed.y + ')');
+          }
         },
         end: () => {
-          token?.remove();
-          token = null;
-          step.path.classList.remove('play-edge');
-          step.path.classList.add('play-edge-done');
-          setActive(step.to);
+          for (const run of runs) arrive(run);
         },
       });
-      at = step.to;
     }
-    segments.push({ duration: DWELL, start: () => { if (active) setDone(active); } });
+    segments.push({ duration: DWELL, start: () => { for (const node of [...active]) setDone(node); } });
     return segments;
   }
 
