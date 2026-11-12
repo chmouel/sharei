@@ -173,6 +173,12 @@ Pages:
   share `diagramBusy()` to pause the live reload.
   `drawRail()` keeps the `.play-rail` ticks in step with `reached`; a
   tick click is `restore()` to the step before, then `stepNext()`.
+  Camera follow: panZoom exposes `stage.diagramCamera.look(rect)`, which
+  `glideTo()`s a viewBox around the rect (null means home) when the toggle
+  is on (localStorage `sharei-diagram-follow`) and motion is allowed.
+  playDiagram calls it from each segment start while playing, from
+  `play()` through `aim()`, and with null on finish and stop. A manual
+  zoom, pan or reset cancels the glide. Exports skip it.
   The share button (`.play-record` in `.diagram-share`) copies a deep link
   or saves a story client-side: `diagramCanvas()` draws a
   clone of the SVG with computed styles inlined and every `<image>` turned

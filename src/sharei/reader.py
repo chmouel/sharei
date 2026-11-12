@@ -41,6 +41,7 @@ MARKDOWN_CSS = """
   .diagram-tools button:hover:not(:disabled) { background:var(--bgColor-muted); color:var(--fgColor-default); }
   .diagram-tools button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:-2px; }
   .diagram-tools button:disabled { opacity:.4; cursor:default; }
+  .diagram-tools button[aria-pressed=true] { background:color-mix(in srgb, var(--fgColor-accent) 16%, transparent); color:var(--fgColor-accent); }
   .diagram-tools svg { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
   .diagram-dialog { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; padding:0; border:0; background:var(--bgColor-default); color:var(--fgColor-default); }
   .diagram-dialog::backdrop { background:var(--bgColor-default); }
@@ -858,6 +859,7 @@ const DIAGRAM_ICONS = {
   share: '<path d="M8 2.5v7.5M5 5.2l3-2.7 3 2.7M4.5 8H3.5v5.5h9V8h-1"/>',
   back: '<path d="M10.5 3.5L6 8l4.5 4.5M4 3.5v9"/>',
   next: '<path d="M5.5 3.5L10 8l-4.5 4.5M12 3.5v9"/>',
+  follow: '<path d="M2.5 5.5h2.2l1.1-1.7h4.4l1.1 1.7h2.2v7h-11z"/><circle cx="8" cy="9" r="2.1"/>',
 };
 const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
 let diagramDialog = null;
@@ -884,6 +886,7 @@ function panZoom(holder, scenarios) {
     tools.append(element);
     return element;
   };
+  const followButton = scenarios.length ? button('follow', 'Follow the story') : null;
   const outButton = button('out', 'Zoom out');
   const inButton = button('in', 'Zoom in');
   const fitButton = button('fit', 'Fit');
@@ -902,15 +905,16 @@ function panZoom(holder, scenarios) {
     outButton.disabled = fitButton.disabled = !zoomed();
     inButton.disabled = view.w <= home.w / MAX + 1e-9;
   }
-  function clamp() {
-    view.x = Math.min(Math.max(view.x, home.x), home.x + home.w - view.w);
-    view.y = Math.min(Math.max(view.y, home.y), home.y + home.h - view.h);
+  function clamp(box = view) {
+    box.x = Math.min(Math.max(box.x, home.x), home.x + home.w - box.w);
+    box.y = Math.min(Math.max(box.y, home.y), home.y + home.h - box.h);
   }
   function center() {
     const rect = svg.getBoundingClientRect();
     return [rect.left + rect.width / 2, rect.top + rect.height / 2];
   }
   function zoomAt(factor, clientX, clientY) {
+    cancelAnimationFrame(glide);
     const matrix = svg.getScreenCTM();
     if (!matrix) return;
     const point = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
@@ -921,6 +925,7 @@ function panZoom(holder, scenarios) {
     apply();
   }
   function panBy(dx, dy) {
+    cancelAnimationFrame(glide);
     const matrix = svg.getScreenCTM();
     if (!matrix || !matrix.a) return;
     view.x -= dx / matrix.a;
@@ -929,9 +934,60 @@ function panZoom(holder, scenarios) {
     apply();
   }
   function reset() {
+    cancelAnimationFrame(glide);
     view = Object.assign({}, home);
     apply();
   }
+
+  // Following a story eases the view onto each step, zoomed in no further than a third of the
+  // diagram so its neighbours stay in sight. Any pan or zoom by hand cancels the glide.
+  let glide = 0;
+  let following = followButton !== null && localStorage.getItem('sharei-diagram-follow') === '1';
+  function glideTo(target) {
+    cancelAnimationFrame(glide);
+    const from = Object.assign({}, view);
+    const start = performance.now();
+    const frame = (now) => {
+      const t = Math.min(1, (now - start) / 750);
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      view = { x: from.x + (target.x - from.x) * eased, y: from.y + (target.y - from.y) * eased, w: from.w + (target.w - from.w) * eased, h: from.h + (target.h - from.h) * eased };
+      apply();
+      glide = t < 1 ? requestAnimationFrame(frame) : 0;
+    };
+    glide = requestAnimationFrame(frame);
+  }
+  function look(rect) {
+    if (!following || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!rect) {
+      if (zoomed() || glide) glideTo(home);
+      return;
+    }
+    const aspect = home.h / home.w;
+    const pad = Math.min(home.w, home.h) / 8;
+    const w = Math.min(home.w, Math.max(rect.width + pad, (rect.height + pad) / aspect, home.w / 3));
+    const target = { x: rect.x + rect.width / 2 - w / 2, y: rect.y + rect.height / 2 - w * aspect / 2, w: w, h: w * aspect };
+    clamp(target);
+    glideTo(target);
+  }
+  function syncFollow() {
+    if (!followButton) return;
+    const text = following ? 'Stop following the story' : 'Follow the story';
+    followButton.title = text;
+    followButton.setAttribute('aria-label', text);
+    followButton.setAttribute('aria-pressed', String(following));
+  }
+  if (followButton) {
+    followButton.classList.add('follow');
+    syncFollow();
+    followButton.addEventListener('click', () => {
+      following = !following;
+      localStorage.setItem('sharei-diagram-follow', following ? '1' : '0');
+      syncFollow();
+      if (!following) reset();
+      else stage.diagramPlay?.aim();
+    });
+  }
+  stage.diagramCamera = { look: look };
 
   outButton.addEventListener('click', () => zoomAt(1 / 1.5, ...center()));
   inButton.addEventListener('click', () => zoomAt(1.5, ...center()));
@@ -1767,6 +1823,38 @@ function playDiagram(stage, svg, tools, scripts, home) {
     return group;
   }
 
+  // The box around some elements in the diagram's own units, which is what the viewBox uses.
+  function area(elements) {
+    const root = svg.getScreenCTM();
+    if (!root) return null;
+    const inverse = root.inverse();
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const element of elements) {
+      const own = element && element.getScreenCTM();
+      if (!own) continue;
+      const box = element.getBBox();
+      const to = inverse.multiply(own);
+      for (const [x, y] of [[box.x, box.y], [box.x + box.width, box.y], [box.x, box.y + box.height], [box.x + box.width, box.y + box.height]]) {
+        const point = new DOMPoint(x, y).matrixTransform(to);
+        left = Math.min(left, point.x);
+        top = Math.min(top, point.y);
+        right = Math.max(right, point.x);
+        bottom = Math.max(bottom, point.y);
+      }
+    }
+    return left < Infinity ? { x: left, y: top, width: right - left, height: bottom - top } : null;
+  }
+  const stepArea = (step) => area(step.skip || [step.from, step.to, step.path]);
+  // The camera moves only while a story plays on screen, never while it is rebuilt or saved.
+  function look(step) {
+    if (playing && !exporting) stage.diagramCamera?.look(stepArea(step));
+  }
+  function aim() {
+    const steps = scenario().steps;
+    if (!timeline.length || finished || exporting) return;
+    stage.diagramCamera?.look(stepArea(steps[Math.min(reached, steps.length - 1)]));
+  }
+
   // The timeline is a list of segments that only advances while playing, so pausing is free.
   function build(calm) {
     const segments = [];
@@ -1776,6 +1864,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
       if (step.skip) {
         segments.push({ duration: calm ? 400 : 320, stop: true, start: () => {
           say(step.caption);
+          look(step);
           for (const node of step.skip) {
             node.classList.remove('play-active', 'play-done');
             node.querySelector(':scope > .play-check')?.remove();
@@ -1788,11 +1877,15 @@ function playDiagram(stage, svg, tools, scripts, home) {
       if (at !== step.from) {
         segments.push({ duration: DWELL, start: () => {
           say(step.caption);
+          look(step);
           if (active && active !== step.from) setDone(active);
           setActive(step.from);
         } });
       } else {
-        segments.push({ duration: DWELL, start: () => say(step.caption) });
+        segments.push({ duration: DWELL, start: () => {
+          say(step.caption);
+          look(step);
+        } });
       }
       const length = step.path.getTotalLength();
       let matrix = null;
@@ -1887,6 +1980,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     if (done) {
       finished = true;
       pause();
+      if (!exporting) stage.diagramCamera?.look(null);
       return;
     }
     frame = requestAnimationFrame(tick);
@@ -1897,6 +1991,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     if (playing) return;
     if (finished || !timeline.length) restart(!motion && matchMedia('(prefers-reduced-motion: reduce)').matches);
     playing = true;
+    aim();
     busy(true);
     last = performance.now();
     frame = requestAnimationFrame(tick);
@@ -1911,6 +2006,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
   }
   function stop() {
     pause();
+    if (!exporting) stage.diagramCamera?.look(null);
     clearMarks();
     timeline = [];
     index = 0;
@@ -2114,7 +2210,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     else forward ? stepNext() : stepBack();
   });
   sync();
-  return { where: where, restore: restore };
+  return { where: where, restore: restore, aim: aim };
 }
 
 // #diagram=2&story=1&step=3&focus=A,B names the second diagram on the page, its first story

@@ -127,7 +127,18 @@ what most presentation clickers send.
 A thin rail under the story controls has one tick per step. Played steps
 fill in, the one playing is brighter, and hovering a tick shows its caption.
 Clicking a tick rebuilds the story up to the step before and plays that one,
-so you can jump to any point while you talk. Shift with an arrow still pans. Pan, zoom and full screen keep working while a
+so you can jump to any point while you talk.
+
+The camera button in the view controls makes the view follow the story. While
+a story plays, it eases onto the arrow being drawn and the boxes at each end,
+and it eases back to the whole diagram when the story ends or stops. It never
+zooms in past a third of the diagram's width, so the neighbouring boxes stay
+in sight, and on a short, wide diagram it may barely move. It is off by
+default, the browser remembers the choice, and dragging or zooming by hand
+takes over until the next step. With reduced motion it does nothing, and
+exports always show the whole diagram.
+
+Shift with an arrow still pans. Pan, zoom and full screen keep working while a
 story plays, because the dot is drawn inside the diagram and moves with it.
 While a story plays, the page holds off its live reload so the story does not
 vanish halfway.
