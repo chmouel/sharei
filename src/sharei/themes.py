@@ -320,6 +320,21 @@ def theme_script(nonce: str = "") -> str:
     return f"<script{attribute}>{THEME_JS % json.dumps(themes)}</script>"
 
 
+def theme_select(nonce: str) -> str:
+    options = '<option value="auto">Auto</option>' + "".join(
+        f'<option value="{name}">{label}</option>'
+        for name, (label, _, _) in THEMES.items()
+    )
+    return (
+        f'<select id="theme-select" aria-label="Theme">{options}</select>'
+        f'<script nonce="{nonce}">'
+        "const themeSelect = document.getElementById('theme-select');"
+        "themeSelect.value = document.documentElement.dataset.choice;"
+        "themeSelect.addEventListener('change', () => window.shareiTheme(themeSelect.value));"
+        "</script>"
+    )
+
+
 THEME_PICKER_JS = """
 (() => {
   const button = document.getElementById('theme-button');

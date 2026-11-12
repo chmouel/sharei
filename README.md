@@ -86,6 +86,31 @@ To start it with your session on Linux, copy
 systemctl --user enable --now sharei
 ```
 
+## Read local Markdown with aniflow
+
+Run `aniflow` to browse Markdown in the current directory and its subfolders:
+
+```sh
+uvx --from sharei aniflow
+```
+
+Open the URL it prints; it picks an available local port. Documents use
+sharei's reader, with syntax highlighting, colour themes and interactive
+Mermaid flowcharts. Relative links and images stay relative to each document,
+including pictures in flowcharts. The built-in `/icons/` pictures work too.
+
+To serve another directory or choose a different port:
+
+```sh
+aniflow ./docs --port 8080
+```
+
+`aniflow` is also installed by `uv tool install sharei`. It binds to
+`127.0.0.1` by default; use `--host` to change that. It serves files read only
+from the chosen directory, excluding hidden paths and symlinks that lead
+outside it. It uses standard Markdown, without Obsidian features, and needs
+no sharei configuration or running sharei service.
+
 ## Notifications
 
 sharei can tell your phone when a file, a screenshot or new clipboard text

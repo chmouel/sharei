@@ -39,54 +39,21 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import NamedTuple, TypedDict
-from urllib.parse import ParseResult, parse_qs, quote, unquote, urlparse, urlsplit
+from urllib.parse import (ParseResult, parse_qs, quote, unquote, urlparse,
+                          urlsplit)
 
 from sharei import notes, push
-from sharei.assets import (
-    ANNOTATE_JS,
-    CAROUSEL_JS,
-    CLIP_CSS,
-    CLIP_JS,
-    CODE_CSS,
-    CODE_JS,
-    DROP_CSS,
-    DROP_JS,
-    EXPIRY_JS,
-    EXTRA_CSS,
-    FOLDER_ICON,
-    LIVE_JS,
-    NOTE_ICON,
-    NOTES_CSS,
-    NOTES_JS,
-    PDF_CSS,
-    PDF_JS,
-    PLAY_CSS,
-    PUSH_JS,
-    QR_CSS,
-    QR_JS,
-    SEARCH_CSS,
-    SEARCH_JS,
-    SHARE_JS,
-    SORT_ICON,
-    SW_JS,
-)
-from sharei.reader import (
-    MARKDOWN_CSS,
-    MARKDOWN_JS,
-    MARKDOWN_SCRIPTS,
-    PRESENT_BUTTON,
-    READER_CSS,
-    REVIEW_BUTTON,
-    REVIEW_DOCK,
-)
-from sharei.themes import (
-    THEME_KEYS,
-    THEME_PICKER_JS,
-    THEME_READER_CSS,
-    THEMES,
-    theme_app_css,
-    theme_script,
-)
+from sharei.assets import (ANNOTATE_JS, CAROUSEL_JS, CLIP_CSS, CLIP_JS,
+                           CODE_CSS, CODE_JS, DROP_CSS, DROP_JS, EXPIRY_JS,
+                           EXTRA_CSS, FOLDER_ICON, LIVE_JS, NOTE_ICON,
+                           NOTES_CSS, NOTES_JS, PDF_CSS, PDF_JS, PLAY_CSS,
+                           PUSH_JS, QR_CSS, QR_JS, SEARCH_CSS, SEARCH_JS,
+                           SHARE_JS, SORT_ICON, SW_JS)
+from sharei.reader import (MARKDOWN_CSS, MARKDOWN_JS, MARKDOWN_SCRIPTS,
+                           PRESENT_BUTTON, READER_CSS, REVIEW_BUTTON,
+                           REVIEW_DOCK)
+from sharei.themes import (THEME_KEYS, THEME_PICKER_JS, THEME_READER_CSS,
+                           THEMES, theme_app_css, theme_script, theme_select)
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 # What an <img> shows and a browser tab renders. Pillow cannot rasterise a vector
@@ -1516,6 +1483,7 @@ def markdown_page(
     note_links: dict[str, dict[str, str] | None] | None = None,
     crumbs: list[tuple[str, str]] | None = None,
     icon: str = "",
+    local_root: str = "",
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
@@ -1529,6 +1497,8 @@ def markdown_page(
         else ""
     )
     extra = ""
+    if local_root:
+        bases += f' data-local-root="{html.escape(local_root)}"'
     if note_links is not None:
         bases += " data-notes"
         if notes.VAULT and not notes.VAULT.strict_breaks:
@@ -1548,6 +1518,9 @@ def markdown_page(
     if comments:
         bases += f' data-comments="{html.escape(comments)}" data-comment-max="{COMMENT_MAX_CHARS}"'
     review = (REVIEW_BUTTON, REVIEW_DOCK) if comments else ("", "")
+    tools = theme_select(nonce) if local_root else qr_button() + search_button()
+    tools_script = "" if local_root else qr_script(nonce) + search_script(nonce)
+    favicon = "data:," if local_root else "/icon-192.png"
     actions = "".join(
         f'<a href="{html.escape(href)}"{" download" if label == "Download" else ""}>{html.escape(label)}</a>'
         for label, href in links
@@ -1566,7 +1539,7 @@ def markdown_page(
 <html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark"><title>{html.escape(title)}</title>
 {theme_script(nonce)}
-<link rel="icon" href="/icon-192.png">
+<link rel="icon" href="{favicon}">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
 <header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{PRESENT_BUTTON}{review[0]}{qr_button()}{search_button()}</nav></header>
@@ -1578,7 +1551,7 @@ def markdown_page(
 {extra}
 {scripts}
 <script nonce="{nonce}">{MARKDOWN_JS}</script>
-{qr_script(nonce)}{search_script(nonce)}
+{tools_script}
 </body></html>"""
     return document.encode("utf-8"), nonce
 

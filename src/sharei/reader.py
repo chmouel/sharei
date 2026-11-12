@@ -9,6 +9,7 @@ MARKDOWN_CSS = """
   .bar a:hover { text-decoration:underline; }
   .bar .name { flex:1; min-width:0; overflow:hidden; color:var(--fgColor-muted); text-overflow:ellipsis; white-space:nowrap; }
   .bar nav { display:flex; gap:14px; }
+  .bar nav select { max-width:120px; min-width:0; border:1px solid var(--borderColor-default); border-radius:6px; background:var(--bgColor-default); color:var(--fgColor-default); font:inherit; }
   .bar nav button { padding:0; border:0; background:none; color:var(--fgColor-accent); font:inherit; font-weight:600; cursor:pointer; }
   .bar nav button:hover { text-decoration:underline; }
   .bar nav .renderer { display:inline-flex; align-items:center; gap:3px; margin:-4px 0; padding:4px 6px; border-radius:6px; color:var(--fgColor-muted); }
@@ -413,8 +414,10 @@ MARKDOWN_JS = """
 const article = document.querySelector('article.markdown-body');
 const toc = document.getElementById('toc');
 const source = JSON.parse(document.getElementById('markdown-source').textContent);
+const scriptNonce = document.currentScript.nonce;
 const poub = article.dataset.poub || '';
 const md = article.dataset.md || '';
+const localRoot = article.dataset.localRoot || '';
 const outside = /^(?:[a-z][a-z0-9+.-]*:|#|\\/)/i;
 const markdownName = /\\.(?:md|markdown)$/i;
 const notesData = document.getElementById('notes-links');
@@ -849,7 +852,13 @@ function renderLocal() {
   }
 }
 
-// Files are flat in the drop folder, so a relative ./img/a.png is looked up as a.png next to this file.
+function directoryUrl(value) {
+  if (!value || value.includes('\\\\') || /^(?:[a-z][a-z0-9+.-]*:|#|\\/\\/)/i.test(value)) return null;
+  const url = new URL(value.startsWith('/') ? localRoot + value.slice(1) : value, location.href);
+  return url.origin === location.origin && url.pathname.startsWith(localRoot) ? url.href : null;
+}
+
+// Files are flat in the drop folder, so a relative ./img/a.png is looked up as a.png next to this file
 function local(value) {
   if (!value || outside.test(value)) return null;
   const match = value.match(/^([^?#]*)(?:\\?[^#]*)?(#.*)?$/);
@@ -1329,6 +1338,11 @@ const DIAGRAM_IMAGE_SAFE = /^(?:https:\\/\\/|\\/(?![\\/\\\\])|data:image\\/(?:pn
 const DIAGRAM_IMAGE_MISSING = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#888" stroke-width="2" stroke-linejoin="round"><rect x="5" y="9" width="38" height="30" rx="4" stroke-dasharray="4 3"/><path d="M11 33l9-10 7 7 4-4 6 7"/><circle cx="31" cy="18" r="3"/></svg>');
 
 function diagramImageUrl(value) {
+  if (localRoot) {
+    if (value.startsWith('/icons/')) return value;
+    const url = directoryUrl(value);
+    if (url) return url;
+  }
   const found = poub ? local(value) : null;
   if (found) return poub + encodeURIComponent(found.name);
   return DIAGRAM_IMAGE_SAFE.test(value) && !/["'{}\\s]/.test(value) ? value : null;
@@ -2645,6 +2659,7 @@ function drawDiagrams() {
     return;
   }
   const script = document.createElement('script');
+  script.nonce = scriptNonce;
   script.src = '/vendor/mermaid.min.js';
   script.onload = draw;
   document.head.append(script);
@@ -2752,6 +2767,14 @@ let onShow = null;
 let onDiagram = null;
 function show(content) {
   if (onShow) onShow();
+  if (localRoot) {
+    for (const [selector, attribute] of [['img[src]', 'src'], ['a[href]', 'href']]) {
+      for (const element of content.querySelectorAll(selector)) {
+        const url = directoryUrl(element.getAttribute(attribute));
+        if (url) element.setAttribute(attribute, url);
+      }
+    }
+  }
   if (poub) {
     for (const image of content.querySelectorAll('img[src]')) {
       const found = local(image.getAttribute('src'));

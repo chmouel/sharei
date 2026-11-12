@@ -21,6 +21,10 @@ proxy with authentication (see SECURITY.md).
   Code that reads a setting `main()` assigns (`ROOT`, `PUBLIC_URL`,
   `PUSH_ENABLED`, `QR_ENABLED`, `THEME_DEFAULT`...) stays in server.py, so
   tests can keep monkeypatching `server.*`.
+- `src/sharei/aniflow.py`: the read-only local Markdown browser, entry point
+  `aniflow`. Serves the current directory (or a directory argument) on an
+  available localhost port, reusing the reader without sharei configuration
+  or Obsidian processing. `/files/` holds its directory and document routes.
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
   `PUSH_ENABLED` stays false and every push route is a 404.
