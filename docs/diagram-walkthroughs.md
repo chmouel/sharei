@@ -100,9 +100,18 @@ stays on screen until you play again, press stop or pick another story.
 A node that a later step reaches again clears its skip and its check mark, so
 a story can loop back through the diagram.
 
-The controls sit in the diagram's toolbar next to the zoom buttons: play,
-pause, stop and the story picker. Picking a story starts it. In full screen,
-the space bar plays and pauses. Pan, zoom and full screen keep working while a
+The controls sit in the diagram's toolbar next to the zoom buttons: previous
+step, play, next step, stop and the story picker. Picking a story starts it.
+In full screen, the space bar plays and pauses.
+
+When you talk over a diagram, the next step button plays one step and stops,
+so the dot waits on its box until you move on. Pressing it during a normal
+play makes the story stop at the end of the current step. Previous step
+rebuilds the story from the start up to the step before, with no animation,
+and from the middle of a step it goes back to that step's start. With the
+diagram focused, or in full screen, the right and left arrows do the same,
+and so do Page Down and Page Up, which most presentation clickers send.
+Shift with an arrow still pans. Pan, zoom and full screen keep working while a
 story plays, because the dot is drawn inside the diagram and moves with it.
 While a story plays, the page holds off its live reload so the story does not
 vanish halfway.
@@ -252,7 +261,9 @@ change, steps start showing up as ignored.
 
 The playback is a list of timed segments driven by `requestAnimationFrame`.
 Each segment has a start action and, for travel, a frame callback that places
-the dot with `getPointAtLength`. The dot lives in the root SVG's coordinates
+the dot with `getPointAtLength`. The last segment of each step carries a
+`stop` flag: step mode pauses there, and going back replays the timeline
+instantly up to the wanted flag. The dot lives in the root SVG's coordinates
 (the path's transform is folded in through `getScreenCTM`), so zooming, which
 rewrites the `viewBox`, needs no recalculation. Node states are classes
 (`play-active`, `play-done`, `play-skipped`, `play-edge`, `play-edge-done`)

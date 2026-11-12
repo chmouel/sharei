@@ -840,6 +840,8 @@ const DIAGRAM_ICONS = {
   pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>',
   stop: '<rect x="4" y="4" width="8" height="8" rx="1.2"/>',
   record: '<circle cx="8" cy="8" r="4.6"/>',
+  back: '<path d="M10.5 3.5L6 8l4.5 4.5M4 3.5v9"/>',
+  next: '<path d="M5.5 3.5L10 8l-4.5 4.5M12 3.5v9"/>',
 };
 const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
 let diagramDialog = null;
@@ -1531,7 +1533,9 @@ function playDiagram(stage, svg, tools, scripts, home) {
     controls.append(element);
     return element;
   };
+  const backButton = make('back', 'Previous step', 'play-back');
   const playButton = make('play', 'Play', 'play-toggle');
+  const nextButton = make('next', 'Next step', 'play-next');
   const stopButton = make('stop', 'Stop', 'play-stop');
   const recordButton = make('record', 'Save as GIF or video', 'play-record');
   const exportMenu = document.createElement('div');
@@ -1563,6 +1567,10 @@ function playDiagram(stage, svg, tools, scripts, home) {
   let last = 0;
   let active = null;
   let token = null;
+  // Step mode stops the timeline after each step. waiting means the next segment is not entered yet.
+  let reached = 0;
+  let waiting = false;
+  let stepping = false;
 
   const scenario = () => scenarios[picker ? Number(picker.value) : 0];
   function label(icon, text) {
@@ -1575,6 +1583,12 @@ function playDiagram(stage, svg, tools, scripts, home) {
   function sync() {
     label(playing ? 'pause' : 'play', playing ? 'Pause' : finished ? 'Replay' : timeline.length ? 'Resume' : 'Play');
     stopButton.hidden = !timeline.length;
+    backButton.hidden = !timeline.length || (!reached && !index && !elapsed);
+    const total = scenario().steps.length;
+    const shown = Math.min(total, reached + 1);
+    const next = finished ? 'Next step (from the start)' : 'Next step (' + shown + ' of ' + total + ')';
+    nextButton.title = next;
+    nextButton.setAttribute('aria-label', next);
     controls.classList.toggle('playing', playing);
   }
 
@@ -1656,7 +1670,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     const DWELL = calm ? 650 : 420;
     for (const step of scenario().steps) {
       if (step.skip) {
-        segments.push({ duration: calm ? 400 : 320, start: () => {
+        segments.push({ duration: calm ? 400 : 320, stop: true, start: () => {
           for (const node of step.skip) {
             node.classList.remove('play-active', 'play-done');
             node.querySelector(':scope > .play-check')?.remove();
@@ -1678,6 +1692,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
       let matrix = null;
       segments.push({
         duration: calm ? 300 : Math.min(1700, Math.max(550, length * 3.2)),
+        stop: true,
         start: () => {
           setDone(step.from);
           step.path.classList.remove('play-edge-done');
@@ -1713,8 +1728,13 @@ function playDiagram(stage, svg, tools, scripts, home) {
     segment.start();
     if (segment.frame) segment.frame(0);
   }
-  // Moves the timeline on by a number of milliseconds and says whether it reached the end.
-  function advance(delta) {
+  // Moves the timeline on by a number of milliseconds and says whether it reached the end
+  // (true), or, with toStep, the end of a step that is not the last one ('step').
+  function advance(delta, toStep) {
+    if (waiting) {
+      waiting = false;
+      if (index < timeline.length) enter(timeline[index]);
+    }
     elapsed += delta;
     while (index < timeline.length && elapsed >= timeline[index].duration) {
       const done = timeline[index];
@@ -1722,6 +1742,12 @@ function playDiagram(stage, svg, tools, scripts, home) {
       if (done.frame) done.frame(1);
       if (done.end) done.end();
       index++;
+      if (done.stop) reached++;
+      if (toStep && done.stop && reached < scenario().steps.length) {
+        elapsed = 0;
+        waiting = true;
+        return 'step';
+      }
       if (index < timeline.length) enter(timeline[index]);
     }
     if (index >= timeline.length) return true;
@@ -1734,14 +1760,20 @@ function playDiagram(stage, svg, tools, scripts, home) {
     timeline = build(calm);
     index = 0;
     elapsed = 0;
+    reached = 0;
+    waiting = false;
     finished = false;
     enter(timeline[0]);
   }
   function tick(now) {
     frame = 0;
     if (!playing) return;
-    const done = advance(Math.min(100, now - last));
+    const done = advance(Math.min(100, now - last), stepping);
     last = now;
+    if (done === 'step') {
+      pause();
+      return;
+    }
     if (done) {
       finished = true;
       pause();
@@ -1750,7 +1782,8 @@ function playDiagram(stage, svg, tools, scripts, home) {
     frame = requestAnimationFrame(tick);
   }
   const busy = diagramBusy;
-  function play(motion) {
+  function play(motion, step) {
+    stepping = Boolean(step);
     if (playing) return;
     if (finished || !timeline.length) restart(!motion && matchMedia('(prefers-reduced-motion: reduce)').matches);
     playing = true;
@@ -1770,8 +1803,29 @@ function playDiagram(stage, svg, tools, scripts, home) {
     pause();
     clearMarks();
     timeline = [];
+    index = 0;
+    elapsed = 0;
+    reached = 0;
+    waiting = false;
     finished = false;
     sync();
+  }
+  // Going back rebuilds the picture from the start, jumping over each step without animation.
+  // From the middle of a step, back returns to that step's start.
+  function stepBack() {
+    if (!timeline.length) return;
+    const target = finished ? scenario().steps.length - 1 : waiting || (!playing && !elapsed) ? reached - 1 : reached;
+    pause();
+    restart(matchMedia('(prefers-reduced-motion: reduce)').matches);
+    for (let step = 0; step < target; step++) advance(Infinity, true);
+    sync();
+  }
+  function stepNext() {
+    if (playing && !stepping) {
+      stepping = true;
+      return;
+    }
+    play(false, true);
   }
 
   // Saving replays the scenario from the start and draws every frame onto a canvas. A GIF steps
@@ -1790,7 +1844,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     stage.classList.remove('recording');
     recordButton.classList.remove('busy');
     recordButton.innerHTML = diagramIcon('record');
-    for (const element of [playButton, stopButton]) element.disabled = false;
+    for (const element of [backButton, playButton, nextButton, stopButton]) element.disabled = false;
     if (picker) picker.disabled = false;
     const text = error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : 'Save as GIF or video';
     recordButton.title = text;
@@ -1803,7 +1857,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     const job = exporting;
     pause();
     busy(true);
-    for (const element of [playButton, stopButton]) element.disabled = true;
+    for (const element of [backButton, playButton, nextButton, stopButton]) element.disabled = true;
     if (picker) picker.disabled = true;
     recordButton.classList.add('busy');
     recordButton.textContent = '0%';
@@ -1866,6 +1920,8 @@ function playDiagram(stage, svg, tools, scripts, home) {
   }
 
   playButton.addEventListener('click', () => (playing ? pause() : play()));
+  backButton.addEventListener('click', stepBack);
+  nextButton.addEventListener('click', stepNext);
   stopButton.addEventListener('click', stop);
   recordButton.addEventListener('click', () => {
     if (exporting) {
@@ -1893,6 +1949,15 @@ function playDiagram(stage, svg, tools, scripts, home) {
   if (picker) picker.addEventListener('change', () => {
     stop();
     play();
+  });
+  // Right/Left and the PageDown/PageUp that presentation clickers send walk the story; Shift+arrows still pan.
+  stage.addEventListener('keydown', (event) => {
+    const forward = event.key === 'PageDown' || (event.key === 'ArrowRight' && !event.shiftKey);
+    const backward = event.key === 'PageUp' || (event.key === 'ArrowLeft' && !event.shiftKey);
+    if ((!forward && !backward) || exporting || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('select')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    forward ? stepNext() : stepBack();
   });
   stage.addEventListener('keydown', (event) => {
     if (event.key !== ' ' || exporting || !stage.closest('dialog') || event.target.closest('button, select')) return;
