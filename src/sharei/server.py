@@ -39,21 +39,57 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import NamedTuple, TypedDict
-from urllib.parse import (ParseResult, parse_qs, quote, unquote, urlparse,
-                          urlsplit)
+from urllib.parse import ParseResult, parse_qs, quote, unquote, urlparse, urlsplit
 
 from sharei import notes, push
-from sharei.assets import (ANNOTATE_JS, CAROUSEL_JS, CLIP_CSS, CLIP_JS,
-                           CODE_CSS, CODE_JS, DROP_CSS, DROP_JS, EXPIRY_JS,
-                           EXTRA_CSS, FOLDER_ICON, LIVE_JS, NOTE_ICON,
-                           NOTES_CSS, NOTES_JS, PDF_CSS, PDF_JS, PLAY_CSS,
-                           PUSH_JS, QR_CSS, QR_JS, SEARCH_CSS, SEARCH_JS,
-                           SHARE_JS, SORT_ICON, SW_JS)
-from sharei.reader import (MARKDOWN_CSS, MARKDOWN_JS, MARKDOWN_SCRIPTS,
-                           PRESENT_BUTTON, READER_CSS, REVIEW_BUTTON,
-                           REVIEW_DOCK)
-from sharei.themes import (THEME_KEYS, THEME_PICKER_JS, THEME_READER_CSS,
-                           THEMES, theme_app_css, theme_script, theme_select)
+from sharei.aniflow_brand import BRAND, BRAND_CSS
+from sharei.aniflow_ui import UI_CSS, UI_JS
+from sharei.assets import (
+    ANNOTATE_JS,
+    CAROUSEL_JS,
+    CLIP_CSS,
+    CLIP_JS,
+    CODE_CSS,
+    CODE_JS,
+    DROP_CSS,
+    DROP_JS,
+    EXPIRY_JS,
+    EXTRA_CSS,
+    FOLDER_ICON,
+    LIVE_JS,
+    NOTE_ICON,
+    NOTES_CSS,
+    NOTES_JS,
+    PDF_CSS,
+    PDF_JS,
+    PLAY_CSS,
+    PUSH_JS,
+    QR_CSS,
+    QR_JS,
+    SEARCH_CSS,
+    SEARCH_JS,
+    SHARE_JS,
+    SORT_ICON,
+    SW_JS,
+)
+from sharei.reader import (
+    MARKDOWN_CSS,
+    MARKDOWN_JS,
+    MARKDOWN_SCRIPTS,
+    PRESENT_BUTTON,
+    READER_CSS,
+    REVIEW_BUTTON,
+    REVIEW_DOCK,
+)
+from sharei.themes import (
+    THEME_KEYS,
+    THEME_PICKER_JS,
+    THEME_READER_CSS,
+    THEMES,
+    theme_app_css,
+    theme_script,
+    theme_select,
+)
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 # What an <img> shows and a browser tab renders. Pillow cannot rasterise a vector
@@ -1088,9 +1124,9 @@ def comment_valid(entry: object) -> bool:
     )
 
 
-def comments_load(path: Path) -> list[dict]:
+def comments_load(path: Path, *, storage: Path | None = None) -> list[dict]:
     try:
-        data = json.loads(comments_file(path).read_text("utf-8"))
+        data = json.loads((storage or comments_file(path)).read_text("utf-8"))
     except (OSError, ValueError):
         return []
     return (
@@ -1100,13 +1136,17 @@ def comments_load(path: Path) -> list[dict]:
     )
 
 
-def comments_save(path: Path, entries: list[dict]) -> None:
-    target = comments_file(path)
+def comments_save(
+    path: Path, entries: list[dict], *, storage: Path | None = None
+) -> None:
+    target = storage or comments_file(path)
     if not entries:
         target.unlink(missing_ok=True)
         return
-    target.parent.mkdir(exist_ok=True)
-    if target.parent.is_symlink() or not under_root(target.parent):
+    target.parent.mkdir(parents=storage is not None, exist_ok=True)
+    if target.parent.is_symlink() or (
+        storage is None and not under_root(target.parent)
+    ):
         raise OSError(f"{target.parent} leads outside {ROOT}")
     temporary = target.with_name(f".{target.name}.{secrets.token_hex(4)}.part")
     try:
@@ -1154,10 +1194,10 @@ def comment_anchor(entry: dict, lines: list[str]) -> dict:
     }
 
 
-def comments_view(path: Path) -> dict[str, object]:
+def comments_view(path: Path, *, storage: Path | None = None) -> dict[str, object]:
     lines = markdown_lines(path)
     with COMMENTS_LOCK:
-        entries = comments_load(path)
+        entries = comments_load(path, storage=storage)
     comments = sorted(
         (comment_anchor(entry, lines) for entry in entries),
         key=lambda comment: (
@@ -1176,12 +1216,12 @@ def comments_count(path: Path) -> int:
         return len(comments_load(path))
 
 
-def comments_prompt(view: dict) -> str:
+def comments_prompt(view: dict, app: str = "sharei") -> str:
     """The comments as one block of text to paste back to whoever wrote the file."""
     name = view["name"]
     if not view["comments"]:
         return f"No review comments on {name}.\n"
-    parts = [f"Review comments on {name} (sharei):"]
+    parts = [f"Review comments on {name} ({app}):"]
     for comment in view["comments"]:
         where = (
             str(comment["start"])
@@ -1197,7 +1237,12 @@ def comments_prompt(view: dict) -> str:
 
 
 def comment_change(
-    path: Path, action: str, comment_id: str, data: object
+    path: Path,
+    action: str,
+    comment_id: str,
+    data: object,
+    *,
+    storage: Path | None = None,
 ) -> str | None:
     """Add, edit or delete a comment. Returns an error message, or None when done."""
     if action != "delete":
@@ -1211,7 +1256,7 @@ def comment_change(
     now = time.time()
     lines = markdown_lines(path)
     with COMMENTS_LOCK:
-        entries = comments_load(path)
+        entries = comments_load(path, storage=storage)
         if action == "add":
             start, end = data.get("start"), data.get("end", data.get("start"))
             if not all(
@@ -1251,7 +1296,7 @@ def comment_change(
                 del entries[index]
             else:
                 entries[index] = {**entries[index], "body": body, "updated": now}
-        comments_save(path, entries)
+        comments_save(path, entries, storage=storage)
     return None
 
 
@@ -1519,12 +1564,35 @@ def markdown_page(
         bases += f' data-comments="{html.escape(comments)}" data-comment-max="{COMMENT_MAX_CHARS}"'
     review = (REVIEW_BUTTON, REVIEW_DOCK) if comments else ("", "")
     tools = theme_select(nonce) if local_root else qr_button() + search_button()
-    tools_script = "" if local_root else qr_script(nonce) + search_script(nonce)
+    tools_script = (
+        f'<script nonce="{nonce}">{UI_JS}</script>'
+        if local_root
+        else qr_script(nonce) + search_script(nonce)
+    )
     favicon = "data:," if local_root else "/icon-192.png"
+    branding, brand_css = (BRAND, BRAND_CSS) if local_root else ("", "")
     actions = "".join(
         f'<a href="{html.escape(href)}"{" download" if label == "Download" else ""}>{html.escape(label)}</a>'
         for label, href in links
     )
+    if local_root:
+        help_link = (
+            '<a class="reader-help" href="/help">Help</a>'
+            if any(label == "Help" for label, _ in links)
+            else ""
+        )
+        menu_links = "".join(
+            f'<a href="{html.escape(href)}">{html.escape("View Markdown source" if label == "Raw" else label)}</a>'
+            for label, href in links
+            if label != "Help"
+        )
+        actions = help_link + (
+            f'<details class="aniflow-menu"><summary>More</summary><div class="menu-items">{menu_links}</div></details>'
+            if menu_links
+            else ""
+        )
+        brand_css += UI_CSS
+    body_class = ' class="aniflow-local"' if local_root else ""
     banner = (
         f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
     )
@@ -1541,9 +1609,9 @@ def markdown_page(
 {theme_script(nonce)}
 <link rel="icon" href="{favicon}">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
-<style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{PRESENT_BUTTON}{review[0]}{qr_button()}{search_button()}</nav></header>
-<main class="page reader">{trail}{banner}
+<style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}{brand_css}</style></head><body{body_class}>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{PRESENT_BUTTON}{review[0]}{tools}</nav></header>
+<main class="page reader">{branding}{trail}{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
 {review[1]}
@@ -3500,12 +3568,18 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
 
-    def handle_comment(self, parsed: ParseResult) -> None:
+    def handle_comment(
+        self,
+        parsed: ParseResult,
+        *,
+        path: Path | None = None,
+        storage: Path | None = None,
+    ) -> None:
         action, _, encoded = parsed.path.removeprefix("/comments/").partition("/")
         if action not in ("add", "edit", "delete"):
             self.send_json({"error": "not found"}, status=404)
             return
-        path = poub_path(encoded)
+        path = path or poub_path(encoded)
         if path is None or not is_markdown(path.name):
             self.send_json({"error": "not found"}, status=404)
             return
@@ -3522,8 +3596,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
         comment_id = (parse_qs(parsed.query).get("id") or [""])[-1]
         try:
-            error = comment_change(path, action, comment_id, data)
-            view = comments_view(path)
+            error = comment_change(path, action, comment_id, data, storage=storage)
+            view = comments_view(path, storage=storage)
         except OSError as failure:
             self.send_json({"error": str(failure)}, status=500)
             return

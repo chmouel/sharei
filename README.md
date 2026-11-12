@@ -111,6 +111,17 @@ from the chosen directory, excluding hidden paths and symlinks that lead
 outside it. It uses standard Markdown, without Obsidian features, and needs
 no sharei configuration or running sharei service.
 
+Demo & help opens a playable diagram first, followed by a walkthrough from
+your first Markdown file to pictures, multiple stories and exports. Source
+examples stay folded until you need them. The guide ships with aniflow and
+works even when you serve an empty folder.
+
+Use Comments on any Markdown page, including the demo, to comment on source
+lines, edit or delete feedback, and copy it with the quoted text. Comments
+persist in `$XDG_CACHE_HOME/aniflow` (usually `~/.cache/aniflow`), separated
+by served folder and document. Your source files stay untouched. Refresh
+the browser after saving changes to a document.
+
 ## Notifications
 
 sharei can tell your phone when a file, a screenshot or new clipboard text

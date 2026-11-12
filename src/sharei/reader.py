@@ -854,6 +854,7 @@ function renderLocal() {
 
 function directoryUrl(value) {
   if (!value || value.includes('\\\\') || /^(?:[a-z][a-z0-9+.-]*:|#|\\/\\/)/i.test(value)) return null;
+  if (value.startsWith('/icons/')) return value;
   const url = new URL(value.startsWith('/') ? localRoot + value.slice(1) : value, location.href);
   return url.origin === location.origin && url.pathname.startsWith(localRoot) ? url.href : null;
 }
@@ -1339,7 +1340,6 @@ const DIAGRAM_IMAGE_MISSING = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="h
 
 function diagramImageUrl(value) {
   if (localRoot) {
-    if (value.startsWith('/icons/')) return value;
     const url = directoryUrl(value);
     if (url) return url;
   }
@@ -3094,12 +3094,16 @@ if (presentButton) {
   }, { passive: true });
 }
 
-// Review mode: numbers for the source lines behind each block, and comments kept on the server
-// next to the file. Comment text only ever goes in through textContent.
 const commentsUrl = article.dataset.comments || '';
 const reviewToggle = document.getElementById('review');
 const dock = document.getElementById('review-dock');
 if (commentsUrl && reviewToggle && dock) {
+  const reviewName = localRoot ? 'Comments' : 'Review';
+  if (localRoot) {
+    const label = document.createElement('span');
+    label.textContent = 'Comments';
+    reviewToggle.insertBefore(label, reviewToggle.querySelector('.count'));
+  }
   const coarse = matchMedia('(pointer: coarse)');
   const commentMax = Number(article.dataset.commentMax) || 4000;
   const badge = reviewToggle.querySelector('.count');
@@ -3180,7 +3184,7 @@ if (commentsUrl && reviewToggle && dock) {
     const count = view.comments.length;
     badge.textContent = String(count);
     badge.hidden = !count;
-    const label = count ? 'Review, ' + plural(count) : 'Review';
+    const label = count ? reviewName + ', ' + plural(count) : reviewName;
     reviewToggle.setAttribute('aria-label', label);
     reviewToggle.title = label;
     if (!reviewing) return;

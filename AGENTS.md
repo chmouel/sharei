@@ -25,6 +25,12 @@ proxy with authentication (see SECURITY.md).
   `aniflow`. Serves the current directory (or a directory argument) on an
   available localhost port, reusing the reader without sharei configuration
   or Obsidian processing. `/files/` holds its directory and document routes.
+  `/help` renders the packaged `src/sharei/aniflow-help.md` demo and walkthrough.
+  `aniflow_brand.py` and `aniflow_ui.py` hold its logo and local UI. All Markdown
+  pages support `/comments/{help|file/<path>}` and the add/edit/delete routes,
+  reusing the reader and comment helpers with explicit cache storage under
+  `$XDG_CACHE_HOME/aniflow/comments/<root hash>/<document hash>.json`.
+  Source files are never written; comments are isolated by served root.
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
   `PUSH_ENABLED` stays false and every push route is a 404.
