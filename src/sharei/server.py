@@ -619,7 +619,8 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
                 "date": datetime.fromtimestamp(modified).strftime("%b %-d, %H:%M"),
                 "key": quote(relative.as_posix()),
                 "url": f"/shot/{quote(relative.as_posix())}?v={int(modified)}",
-                "thumb": f"/thumb/{quote(relative.as_posix())}?v={int(modified)}",
+                "thumb": f"/thumb/{quote(relative.as_posix())}?v={int(modified)}"
+                f"&t={THUMB_VERSION}",
                 "timestamp": str(modified),
                 "expires": str(expires_at(path) or ""),
             }
@@ -627,10 +628,12 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
     return sorted(shots, key=lambda shot: float(shot["timestamp"]), reverse=True)
 
 
-def thumbnail_cache_path(path: Path, style: str = "top") -> Path:
-    digest = hashlib.sha256(
-        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:{style}:{THUMB_VERSION}".encode()
-    ).hexdigest()[:32]
+def thumbnail_cache_path(
+    path: Path, style: str = "top", version: str = str(THUMB_VERSION)
+) -> Path:
+    """Where a thumbnail lives. An empty version is the pre-`THUMB_VERSION` name."""
+    identity = f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:{style}"
+    digest = hashlib.sha256(f"{identity}:{version}".encode()).hexdigest()[:32]
     return THUMBS / f"{digest}.webp"
 
 
@@ -754,12 +757,14 @@ def convert_heic_upload(temporary: Path, name: str) -> tuple[Path, str]:
 
 
 def forget_thumbnail(path: Path) -> None:
+    """Drop every rendering of path; a cache problem never blocks the deletion."""
     for style in ("top", "fit"):
-        try:
-            cached = thumbnail_cache_path(path, style)
-        except OSError:
-            continue
-        cached.unlink(missing_ok=True)
+        for version in ("", str(THUMB_VERSION)):
+            try:
+                cached = thumbnail_cache_path(path, style, version)
+                cached.unlink(missing_ok=True)
+            except OSError as error:
+                print(f"Cannot drop a thumbnail of {path}: {error}")
 
 
 def clear_thumbnails() -> None:
@@ -2461,7 +2466,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                     {
                         "thumb": f"/thumb/{quote(path.parent.parent.name)}"
                         f"/{quote(path.name)}"
-                        f"?v={stat.st_mtime_ns}"
+                        f"?v={stat.st_mtime_ns}&t={THUMB_VERSION}"
                     }
                     if path.suffix.lower() in IMAGE_LIKE_SUFFIXES
                     else {}

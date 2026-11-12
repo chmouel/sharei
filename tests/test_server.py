@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -306,6 +307,41 @@ def test_drop_images_get_a_whole_frame_thumbnail(live_server):
     assert get(live_server + entry["thumb"])[2] == body
 
 
+def test_deleting_a_drop_sweeps_every_thumbnail_name(live_server, sharei_root):
+    from sharei import server
+
+    upload(live_server, "old.png", png_bytes())
+    path = sharei_root / "inbox" / "drop" / "old.png"
+    assert get(live_server + "/thumb/inbox/old.png")[2]
+    cached = [server.thumbnail_cache_path(path, style) for style in ("top", "fit")]
+    legacy = server.thumbnail_cache_path(path, "fit", "")
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_bytes(b"a thumbnail from before the version bump")
+    urllib.request.urlopen(
+        urllib.request.Request(f"{live_server}/poub/delete/inbox/old.png", data=b"")
+    ).read()
+    assert not path.exists()
+    assert not legacy.exists() and not any(item.exists() for item in cached)
+
+
+def test_a_broken_thumbnail_cache_does_not_block_deletion(live_server, sharei_root):
+    pytest.importorskip("PIL.Image")
+
+    upload(live_server, "kept.png", png_bytes())
+    assert get(live_server + "/thumb/inbox/kept.png")[2]
+    cache = sharei_root.parent / "cache" / "thumbs"
+    cache.chmod(0o500)
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"{live_server}/poub/delete/inbox/kept.png", data=b""
+            )
+        ).read()
+    finally:
+        cache.chmod(0o700)
+    assert not (sharei_root / "inbox" / "drop" / "kept.png").exists()
+
+
 def test_thumbnails_refuse_what_they_cannot_serve(live_server, sharei_root):
     pytest.importorskip("PIL.Image")
     upload(live_server, "notes.txt", b"plain text\n")
@@ -321,10 +357,13 @@ def test_thumbnails_refuse_what_they_cannot_serve(live_server, sharei_root):
         assert error.value.code == 404
 
 
-def test_thumbnail_follows_the_content_and_its_rotation(live_server):
+def test_thumbnail_follows_the_content_and_its_rotation(live_server, sharei_root):
     image_module = pytest.importorskip("PIL.Image")
 
     upload(live_server, "photo.jpg", jpeg_bytes(orientation=6))
+    dropped = sharei_root / "inbox" / "drop" / "photo.jpg"
+    stamp = dropped.stat().st_mtime_ns // 1_000_000_000 * 1_000_000_000 + 123
+    os.utime(dropped, ns=(stamp, stamp))
     first = next(
         item["thumb"]
         for item in json.loads(get(live_server + "/recent?limit=5")[2])["drop"]
@@ -341,6 +380,8 @@ def test_thumbnail_follows_the_content_and_its_rotation(live_server):
             method="POST",
         )
     ).read()
+    later = stamp + 1_000_000  # still the same second, a different nanosecond
+    os.utime(dropped, ns=(later, later))
     second = next(
         item["thumb"]
         for item in json.loads(get(live_server + "/recent?limit=5")[2])["drop"]
