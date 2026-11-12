@@ -277,6 +277,29 @@ def test_search_skips_note_swapped_for_symlink(live_server, vault):
     assert data["results"] == []
 
 
+def test_path_matches_skip_a_swapped_symlink(live_server, vault):
+    note = vault / "Shared" / "Sub" / "Other.md"
+
+    def matches():
+        return {
+            result["p"]
+            for result in json.loads(get(live_server + "/notes-search?q=sub+other")[1])[
+                "results"
+            ]
+        }
+
+    assert "Shared/Sub/Other.md" in matches()
+    note.unlink()
+    note.symlink_to(vault / "Private" / "Secret.md")
+    # Its name is still in the index, but it is not a shared note any more.
+    assert "Shared/Sub/Other.md" not in matches()
+
+
+def test_search_with_no_terms_matches_nothing(live_server, vault):
+    # A lone combining mark folds away, so there is nothing to match on.
+    assert json.loads(get(live_server + "/notes-search?q=%CC%81")[1])["results"] == []
+
+
 def test_search_snippet_after_folding_changes_length():
     line = "\ufb03" * 300 + " needle " + "x" * 300
     cut = notes.snippet(line, notes.fold(line), ["needle"])

@@ -266,6 +266,19 @@ def test_tall_shot_thumbnail_keeps_the_top_sharp(tmp_path):
         assert thumb.size == (THUMB_MAX * 9 // 16, THUMB_MAX)
 
 
+def jpeg_bytes(width=40, height=80, orientation=None):
+    image_module = pytest.importorskip("PIL.Image")
+    buffer = io.BytesIO()
+    image = image_module.new("RGB", (width, height), (30, 60, 200))
+    if orientation:
+        exif = image.getexif()
+        exif[0x0112] = orientation
+        image.save(buffer, "JPEG", exif=exif)
+    else:
+        image.save(buffer, "JPEG")
+    return buffer.getvalue()
+
+
 def png_bytes(width=64, height=32):
     image_module = pytest.importorskip("PIL.Image")
     buffer = io.BytesIO()
@@ -308,7 +321,57 @@ def test_thumbnails_refuse_what_they_cannot_serve(live_server, sharei_root):
         assert error.value.code == 404
 
 
-def test_a_drop_thumbnail_disappears_with_the_file(live_server, monkeypatch):
+def test_thumbnail_follows_the_content_and_its_rotation(live_server):
+    image_module = pytest.importorskip("PIL.Image")
+
+    upload(live_server, "photo.jpg", jpeg_bytes(orientation=6))
+    first = next(
+        item["thumb"]
+        for item in json.loads(get(live_server + "/recent?limit=5")[2])["drop"]
+        if item["name"] == "photo.jpg"
+    )
+    with image_module.open(io.BytesIO(get(live_server + first)[2])) as thumb:
+        # Orientation 6 is a quarter turn: the stored 40x80 becomes 80x40.
+        assert thumb.width > thumb.height
+    # Replacing the file inside the same second still gives the browser a new URL.
+    urllib.request.urlopen(
+        urllib.request.Request(
+            f"{live_server}/upload?project=inbox&name=photo.jpg&replace=1",
+            data=jpeg_bytes(90, 40),
+            method="POST",
+        )
+    ).read()
+    second = next(
+        item["thumb"]
+        for item in json.loads(get(live_server + "/recent?limit=5")[2])["drop"]
+        if item["name"] == "photo.jpg"
+    )
+    assert second != first
+
+
+def test_transparent_drops_keep_their_alpha(live_server):
+    image_module = pytest.importorskip("PIL.Image")
+    buffer = io.BytesIO()
+    image_module.new("RGBA", (80, 40), (0, 0, 0, 0)).save(buffer, "PNG")
+    upload(live_server, "logo.png", buffer.getvalue())
+    body = get(live_server + "/thumb/inbox/logo.png")[2]
+    with image_module.open(io.BytesIO(body)) as thumb:
+        assert thumb.mode == "RGBA" and thumb.getpixel((2, 2))[3] == 0
+
+
+def test_a_broken_image_falls_back_to_the_original(live_server, monkeypatch):
+    image_module = pytest.importorskip("PIL.Image")
+
+    upload(live_server, "wide.png", png_bytes(900, 400))
+    monkeypatch.setattr(image_module, "MAX_IMAGE_PIXELS", 10)
+    _, headers, body = get(live_server + "/thumb/inbox/wide.png")
+    # Pillow refuses to decode it; the route answers with the file itself.
+    assert headers["Content-Type"] == "image/png" and body == png_bytes(900, 400)
+
+
+def test_a_drop_thumbnail_disappears_with_the_file(
+    live_server, sharei_root, monkeypatch
+):
     pytest.importorskip("PIL.Image")
     from sharei import server
 
@@ -319,12 +382,17 @@ def test_a_drop_thumbnail_disappears_with_the_file(live_server, monkeypatch):
         server, "render_thumbnail", lambda *args: pytest.fail("the cache was not used")
     )
     assert get(live_server + "/thumb/inbox/gone.png")[2] == first
+    cached = server.thumbnail_cache_path(
+        sharei_root / "inbox" / "drop" / "gone.png", "fit"
+    )
+    assert cached.is_file()
     urllib.request.urlopen(
         urllib.request.Request(f"{live_server}/poub/delete/inbox/gone.png", data=b"")
     ).read()
     with pytest.raises(urllib.error.HTTPError) as error:
         get(live_server + "/thumb/inbox/gone.png")
     assert error.value.code == 404
+    assert not cached.exists()  # the cached thumbnail went with it
 
 
 def heic_bytes(alpha=False):

@@ -263,6 +263,8 @@ ALLOWED_HOST_SUFFIXES = (
     ".ts.net",
 )
 THUMB_MAX = 480
+# Bumped when the bytes a thumbnail holds change, so an old cached one is not served.
+THUMB_VERSION = 2
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 VENDOR = SCRIPT_DIR / "vendor"
@@ -627,7 +629,7 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
 
 def thumbnail_cache_path(path: Path, style: str = "top") -> Path:
     digest = hashlib.sha256(
-        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:{style}".encode()
+        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:{style}:{THUMB_VERSION}".encode()
     ).hexdigest()[:32]
     return THUMBS / f"{digest}.webp"
 
@@ -644,17 +646,24 @@ def vector_headers(base: dict[str, str]) -> dict[str, str]:
 def render_thumbnail(path: Path, style: str = "top") -> bytes:
     # Lazy import so a missing Pillow degrades to serving the original image.
     image_module = importlib.import_module("PIL.Image")
+    ops = importlib.import_module("PIL.ImageOps")
     with image_module.open(path) as image:
         image.draft("RGB", (THUMB_MAX, THUMB_MAX))
+        # A phone photo carries its rotation in EXIF, and a dropped diagram can
+        # be transparent: a browser applied both, so a thumbnail has to as well.
+        image = ops.exif_transpose(image)
+        alpha = image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info
+        width, height = image.size
         # Shots tile in a 9:16 grid and show the top of the page, so a tall one
         # is cropped before shrinking instead of being squeezed into a sliver.
         # A dropped file keeps its whole frame: it is a picture, not a page.
-        width, height = image.size
         if style == "top" and height * 9 > width * 16:
             image = image.crop((0, 0, width, -(-width * 16 // 9)))
         image.thumbnail((THUMB_MAX, THUMB_MAX))
         buffer = io.BytesIO()
-        image.convert("RGB").save(buffer, "WEBP", quality=72, method=4)
+        image.convert("RGBA" if alpha else "RGB").save(
+            buffer, "WEBP", quality=72, method=4
+        )
     return buffer.getvalue()
 
 
@@ -820,6 +829,7 @@ def delete_poub(encoded: str) -> bool:
     path = poub_path(encoded)
     if path is None:
         return False
+    forget_thumbnail(path)
     path.unlink()
     expiry_forget(path)
     comments_forget(path)
@@ -830,6 +840,7 @@ def delete_all_poub(project: str | None = None) -> int:
     deleted = 0
     for path in poub_paths(project):
         try:
+            forget_thumbnail(path)
             path.unlink()
         except OSError:
             continue
@@ -933,8 +944,7 @@ def sweep_expired() -> int:
             if when > now:
                 continue
             try:
-                if relative.parts[1] == "shots":
-                    forget_thumbnail(path)
+                forget_thumbnail(path)  # both styles, shots and drops alike
                 path.unlink()
                 if relative.parts[1] == "drop":
                     comments_forget(path)
@@ -1296,7 +1306,7 @@ def poub_files() -> list[PoubFile]:
                 size=human_size(stat.st_size),
                 date=datetime.fromtimestamp(stat.st_mtime).strftime("%b %-d, %H:%M"),
                 url=f"{quote(project)}/{quote(path.name)}",
-                thumb=f"/thumb/{quote(project)}/{quote(path.name)}?v={int(stat.st_mtime)}"
+                thumb=f"/thumb/{quote(project)}/{quote(path.name)}?v={stat.st_mtime_ns}"
                 if path.suffix.lower() in IMAGE_LIKE_SUFFIXES
                 else "",
                 image=path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
@@ -1459,13 +1469,19 @@ def name_matches(
     picker draws those rows as a plain link, as it already does for a note
     whose path is what matched.
     """
+    if not terms:
+        return found
     seen = {entry["p"] for entry in found}
-    rest = [
-        {**entry, "hits": []}
-        for entry in notes_entries(index)
-        if entry["p"] not in seen
-        and all(term in notes.fold(str(entry["p"])) for term in terms)
-    ]
+    rest = []
+    for entry in notes_entries(index):
+        relative = str(entry["p"])
+        if relative in seen or not all(term in notes.fold(relative) for term in terms):
+            continue
+        # A file swapped for a symlink since the scan keeps its name in the
+        # index, so ask the same question the text search asks before listing it.
+        if entry["k"] != "folder" and notes.allowed(index, relative) is None:
+            continue
+        rest.append({**entry, "hits": []})
     rest.sort(key=lambda entry: -int(entry.get("t", 0)))  # type: ignore[arg-type]
     return found + rest[: max(0, notes.SEARCH_NOTES_MAX - len(found))]
 
@@ -2445,7 +2461,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                     {
                         "thumb": f"/thumb/{quote(path.parent.parent.name)}"
                         f"/{quote(path.name)}"
-                        f"?v={int(stat.st_mtime)}"
+                        f"?v={stat.st_mtime_ns}"
                     }
                     if path.suffix.lower() in IMAGE_LIKE_SUFFIXES
                     else {}
@@ -3733,7 +3749,9 @@ class Handler(BaseHTTPRequestHandler):
                     os.replace(temporary, cached)
                 except OSError:
                     pass
-        except (ImportError, OSError, ValueError) as error:
+        # Any renderer failure, Pillow's DecompressionBombError included, is
+        # answered with the original image: a thumbnail is never worth a 500.
+        except Exception as error:  # noqa: BLE001
             print(f"thumbnail failed for {path}: {error}")
             self.send_file(
                 path,
