@@ -1950,19 +1950,16 @@ function playDiagram(stage, svg, tools, scripts, home) {
     stop();
     play();
   });
-  // Right/Left and the PageDown/PageUp that presentation clickers send walk the story; Shift+arrows still pan.
+  // Right/Left, j/k, Space/Shift+Space and the PageDown/PageUp that presentation clickers send walk
+  // the story; Shift+arrows still pan, and Space leaves a focused button to the browser.
   stage.addEventListener('keydown', (event) => {
-    const forward = event.key === 'PageDown' || (event.key === 'ArrowRight' && !event.shiftKey);
-    const backward = event.key === 'PageUp' || (event.key === 'ArrowLeft' && !event.shiftKey);
+    const space = event.key === ' ' && !event.target.closest('button');
+    const forward = event.key === 'PageDown' || event.key === 'j' || (space && !event.shiftKey) || (event.key === 'ArrowRight' && !event.shiftKey);
+    const backward = event.key === 'PageUp' || event.key === 'k' || (space && event.shiftKey) || (event.key === 'ArrowLeft' && !event.shiftKey);
     if ((!forward && !backward) || exporting || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('select')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     forward ? stepNext() : stepBack();
-  });
-  stage.addEventListener('keydown', (event) => {
-    if (event.key !== ' ' || exporting || !stage.closest('dialog') || event.target.closest('button, select')) return;
-    event.preventDefault();
-    playing ? pause() : play();
   });
   sync();
 }

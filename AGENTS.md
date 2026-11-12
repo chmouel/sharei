@@ -145,7 +145,8 @@ Pages:
   token moves along `getPointAtLength`, and state is `play-*` classes on the
   SVG. Step mode stops at segments flagged `stop` (one per step) and goes
   back by replaying instantly with `advance(Infinity, true)`; its key
-  handler runs before panZoom's so a plain arrow steps and Shift+arrow pans.
+  handler (arrows, j/k, Space, PageUp/PageDown) runs before panZoom's so a
+  plain arrow steps and Shift+arrow pans.
   Labels are set with `textContent`. Unresolved steps are dropped and
   listed in the Play button's title. Picture nodes (`@{ img: ... }`) render
   as `g.image-shape` rather than `g.node`, so play styles and badges cover

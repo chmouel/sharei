@@ -316,10 +316,10 @@ those two boxes (backwards too), and can carry a label after `:`. `%% skip`
 fades boxes that a scenario does not use, and `%% play: title` starts
 another scenario, picked from a menu next to the play button. A step that
 names a missing box or arrow is ignored and listed when you hover the play
-button. The arrows on each side of the play button, or the right and left
-arrow keys, go through the story one step at a time while you talk over it.
-When your system asks for less motion, the boxes change one after
-another and nothing travels.
+button. The arrows on each side of the play button go through the story
+one step at a time while you talk over it, and so do the right and left
+arrow keys, `j` and `k`, or Space and Shift+Space. When your system asks
+for less motion, the boxes change one after another and nothing travels.
 
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 
