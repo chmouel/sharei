@@ -327,7 +327,9 @@ end, which helps on large diagrams. When your system
 asks for less motion, the boxes change one after another and nothing
 travels.
 "Copy link" in the share menu gives an address that opens the diagram in
-full screen at the same story, step and highlighted boxes.
+full screen at the same story, step and highlighted boxes. The pen button
+turns your pointer into a fading laser trail, and dragging with it draws
+on the diagram; Escape wipes the drawing.
 
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 

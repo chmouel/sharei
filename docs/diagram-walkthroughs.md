@@ -166,6 +166,24 @@ dot travels stay bright. A saved GIF or video keeps the spotlight as it was
 when you started saving. Like a playing story, the spotlight holds off the
 page's live reload.
 
+## Drawing on a diagram
+
+The pen button turns the pointer into a laser and a pen. Moving the mouse
+leaves a short red trail that fades within a third of a second, so people
+can follow what you point at. Pressing and dragging draws a stroke that
+stays. Strokes live inside the diagram, so they move and scale with it when
+you zoom or pan, at the same width on screen.
+
+With the pen on, a one-finger or mouse drag draws instead of moving the
+diagram. Two fingers still pinch and pan, and a drag that turns into a pinch
+drops the stroke it started. Clicking a box without moving still puts it in
+the spotlight. Escape wipes the strokes and leaves the pen on, and turning
+the pen off wipes them too. While the pen is on, the page holds off its live
+reload.
+
+A PNG keeps the strokes, since it saves what you see. The laser trail never
+reaches a picture, and GIF and video exports leave out the strokes too.
+
 ## Linking to a moment
 
 "Copy link" in the share menu copies the page address with a hash such as

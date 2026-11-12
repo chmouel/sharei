@@ -182,6 +182,14 @@ Pages:
   playDiagram calls it from each segment start while playing, from
   `play()` through `aim()`, and with null on finish and stop. A manual
   zoom, pan or reset cancels the glide. Exports skip it.
+  Pen and laser (panZoom, `penButton`): `setDrawing()` adds `.drawing`
+  and holds `diagramBusy()`. Ink is a `g.diagram-ink` appended to the
+  SVG, in diagram coordinates through `getScreenCTM()`, with
+  `vector-effect: non-scaling-stroke`. One pointer draws `.ink-stroke`
+  paths instead of panning; a second pointer removes the stroke and
+  pinches. Hover feeds `.ink-laser` and its head circle, pruned per frame
+  after 320ms. `diagramPicture()` drops the laser always and all ink
+  unless `still` (PNG).
   The share button (`.play-record` in `.diagram-share`) comes from
   `diagramShare()`, which panZoom builds for every diagram with Copy link
   and PNG; playDiagram adds GIF and Video through `share.choice()` and

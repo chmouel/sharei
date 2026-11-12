@@ -91,6 +91,11 @@ MARKDOWN_CSS = """
   .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:last-child { stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
   .diagram-stage :is(g.node, g.image-shape).play-skipped { opacity:.3; }
   .diagram-stage.focusable :is(g.node, g.image-shape) { cursor:pointer; }
+  .diagram-stage.drawing, .diagram-dialog .diagram-stage.drawing, .diagram-stage.drawing > svg * { touch-action:none; cursor:crosshair; }
+  .diagram-ink { pointer-events:none; }
+  .diagram-ink path { fill:none; stroke:var(--fgColor-danger); }
+  .diagram-ink .ink-laser { stroke-width:5; opacity:.75; filter:drop-shadow(0 0 4px var(--fgColor-danger)); }
+  .diagram-ink circle { fill:var(--fgColor-danger); filter:drop-shadow(0 0 6px var(--fgColor-danger)); }
   .diagram-stage :is(path[data-edge], g.edgeLabel) { transition:opacity .25s; }
   .diagram-stage.focusing :is(g.node, g.image-shape):not(.focus-on, .focus-near, .play-active) { opacity:.2; }
   .diagram-stage.focusing :is(path[data-edge], g.edgeLabel):not(.focus-near, .play-edge) { opacity:.15; }
@@ -859,6 +864,7 @@ const DIAGRAM_ICONS = {
   share: '<path d="M8 2.5v7.5M5 5.2l3-2.7 3 2.7M4.5 8H3.5v5.5h9V8h-1"/>',
   back: '<path d="M10.5 3.5L6 8l4.5 4.5M4 3.5v9"/>',
   next: '<path d="M5.5 3.5L10 8l-4.5 4.5M12 3.5v9"/>',
+  pen: '<path d="M10.5 2.8l2.7 2.7-7.4 7.4-3.3.6.6-3.3z"/><path d="M9 4.3l2.7 2.7"/>',
   follow: '<path d="M2.5 5.5h2.2l1.1-1.7h4.4l1.1 1.7h2.2v7h-11z"/><circle cx="8" cy="9" r="2.1"/>',
 };
 const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
@@ -886,6 +892,7 @@ function panZoom(holder, scenarios) {
     tools.append(element);
     return element;
   };
+  const penButton = button('pen', 'Draw on the diagram');
   const followButton = scenarios.length ? button('follow', 'Follow the story') : null;
   const outButton = button('out', 'Zoom out');
   const inButton = button('in', 'Zoom in');
@@ -1055,10 +1062,111 @@ function panZoom(holder, scenarios) {
     zoomAt(event.shiftKey ? 1 / 2 : 2, event.clientX, event.clientY);
   });
 
+  // The pen draws inside the SVG so strokes pan and zoom with the diagram, at a constant width on
+  // screen. The laser is a short trail that fades on its own and never reaches an export.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  let drawing = false;
+  let ink = null;
+  let laser = [];
+  let laserFrame = 0;
+  function inkLayer() {
+    if (!ink || !ink.isConnected) {
+      ink = document.createElementNS(SVG_NS, 'g');
+      ink.setAttribute('class', 'diagram-ink');
+      svg.append(ink);
+    }
+    return ink;
+  }
+  function toDiagram(event) {
+    const matrix = svg.getScreenCTM();
+    return matrix ? new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse()) : null;
+  }
+  function inkPath(name, width) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('class', name);
+    path.setAttribute('stroke-width', String(width));
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('vector-effect', 'non-scaling-stroke');
+    inkLayer().append(path);
+    return path;
+  }
+  const pathData = (points) => points.map((point, at) => (at ? 'L' : 'M') + point.x.toFixed(1) + ' ' + point.y.toFixed(1)).join('');
+  function drawLaser() {
+    laserFrame = 0;
+    const now = performance.now();
+    laser = laser.filter((point) => now - point.t < 320);
+    let trail = ink && ink.querySelector('.ink-laser');
+    let head = ink && ink.querySelector('circle');
+    if (!laser.length || !drawing) {
+      trail?.remove();
+      head?.remove();
+      laser = [];
+      return;
+    }
+    if (!trail) trail = inkPath('ink-laser', 5);
+    if (!head) head = inkLayer().appendChild(document.createElementNS(SVG_NS, 'circle'));
+    const last = laser[laser.length - 1];
+    const matrix = svg.getScreenCTM();
+    trail.setAttribute('d', pathData(laser));
+    head.setAttribute('cx', last.x);
+    head.setAttribute('cy', last.y);
+    head.setAttribute('r', String(5 / (matrix && matrix.a ? matrix.a : 1)));
+    laserFrame = requestAnimationFrame(drawLaser);
+  }
+  function clearInk() {
+    cancelAnimationFrame(laserFrame);
+    laserFrame = 0;
+    laser = [];
+    ink?.remove();
+    ink = null;
+  }
+  function setDrawing(on) {
+    if (on === drawing) return;
+    drawing = on;
+    diagramBusy(on);
+    stage.classList.toggle('drawing', on);
+    penButton.setAttribute('aria-pressed', String(on));
+    const text = on ? 'Stop drawing and clear' : 'Draw on the diagram';
+    penButton.title = text;
+    penButton.setAttribute('aria-label', text);
+    if (!on) clearInk();
+  }
+  penButton.classList.add('pen');
+  penButton.setAttribute('aria-pressed', 'false');
+  penButton.addEventListener('click', () => setDrawing(!drawing));
+  stage.addEventListener('pointermove', (event) => {
+    if (!drawing || pointers.size > 1 || event.target.closest?.('.diagram-tools')) return;
+    const point = toDiagram(event);
+    if (!point) return;
+    laser.push({ x: point.x, y: point.y, t: performance.now() });
+    if (!laserFrame) laserFrame = requestAnimationFrame(drawLaser);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !ink || !ink.querySelector('.ink-stroke') || !stage.isConnected) return;
+    if (!stage.closest('dialog') && document.querySelector('dialog[open]')) return;
+    event.preventDefault();
+    for (const stroke of ink.querySelectorAll('.ink-stroke')) stroke.remove();
+  });
+
   // One pointer drags, two pinch. Touch at the fitted size is left to the page so it still scrolls.
+  // With the pen on, one pointer draws instead, and a second one turns the stroke into a pinch.
   const pointers = new Map();
   stage.addEventListener('pointerdown', (event) => {
     if (event.button !== 0 || event.target.closest('.diagram-tools')) return;
+    if (drawing) {
+      for (const point of pointers.values()) {
+        point.stroke?.remove();
+        point.stroke = null;
+        point.passive = false;
+      }
+      const at = toDiagram(event);
+      const stroke = !pointers.size && at ? inkPath('ink-stroke', 3) : null;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, stroke: stroke, points: at ? [at] : [] });
+      stage.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     if (event.pointerType === 'touch' && !zoomed() && !full() && !pointers.size) {
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, passive: true });
       return;
@@ -1070,6 +1178,14 @@ function panZoom(holder, scenarios) {
   stage.addEventListener('pointermove', (event) => {
     const last = pointers.get(event.pointerId);
     if (!last) return;
+    if (last.stroke) {
+      const at = toDiagram(event);
+      if (at) last.points.push(at);
+      last.stroke.setAttribute('d', pathData(last.points));
+      last.x = event.clientX;
+      last.y = event.clientY;
+      return;
+    }
     const others = [...pointers].filter(([id]) => id !== event.pointerId).map(([, point]) => point);
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (others.length === 1) {
@@ -1082,7 +1198,11 @@ function panZoom(holder, scenarios) {
       panBy(event.clientX - last.x, event.clientY - last.y);
     }
   });
-  const release = (event) => pointers.delete(event.pointerId);
+  const release = (event) => {
+    const last = pointers.get(event.pointerId);
+    if (last && last.stroke && last.points.length < 2) last.stroke.remove();
+    pointers.delete(event.pointerId);
+  };
   stage.addEventListener('pointerup', release);
   stage.addEventListener('pointercancel', release);
 
@@ -1321,7 +1441,7 @@ async function diagramImageData(svg) {
   return found;
 }
 
-function diagramPicture(svg, home, size, images) {
+function diagramPicture(svg, home, size, images, still) {
   const copy = svg.cloneNode(true);
   const from = svg.querySelectorAll('*');
   const to = copy.querySelectorAll('*');
@@ -1339,6 +1459,7 @@ function diagramPicture(svg, home, size, images) {
   copy.setAttribute('width', String(size.w));
   copy.setAttribute('height', String(size.h));
   copy.removeAttribute('style');
+  for (const ink of copy.querySelectorAll(still ? '.diagram-ink :is(.ink-laser, circle)' : '.diagram-ink')) ink.remove();
   for (const image of copy.querySelectorAll('image')) {
     const href = image.getAttribute('href') || image.getAttributeNS(XLINK_NS, 'href');
     image.removeAttributeNS(XLINK_NS, 'href');
@@ -1391,7 +1512,7 @@ async function diagramCanvas(svg, home, limit, captioned, still) {
     width: element.width,
     height: element.height,
     async draw(text) {
-      const picture = await diagramPicture(svg, home, size, images);
+      const picture = await diagramPicture(svg, home, size, images, still);
       context.fillStyle = background;
       context.fillRect(0, 0, element.width, element.height);
       context.drawImage(picture, (element.width - size.w) / 2, (element.height - band - size.h) / 2, size.w, size.h);
