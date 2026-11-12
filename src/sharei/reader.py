@@ -73,6 +73,7 @@ MARKDOWN_CSS = """
   .diagram-share { position:relative; display:flex; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
   .diagram-play.playing .play-toggle svg { fill:none; }
   .diagram-play .play-stop svg { fill:currentColor; stroke:none; }
+  .diagram-tools .diagram-play .play-speed { width:auto; min-width:36px; padding:0 5px; font:600 12px/1 system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums; }
   .diagram-share .play-record.busy { width:auto; min-width:30px; padding:0 6px; color:var(--fgColor-default); font:600 11px/1 system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums; }
   .diagram-export { position:absolute; top:calc(100% + 6px); right:0; z-index:3; display:flex; flex-direction:column; gap:2px; min-width:11em; padding:4px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); box-shadow:0 8px 24px color-mix(in srgb, var(--fgColor-default) 18%, transparent); }
   .diagram-export[hidden] { display:none; }
@@ -1594,6 +1595,22 @@ async function diagramCanvas(svg, home, limit, captioned, still) {
   };
 }
 
+// Playback speed, one choice for every diagram. 1x plays slower than the timeline's raw
+// durations so there is time to talk over each step.
+const DIAGRAM_SPEEDS = [0.5, 0.75, 1, 1.5, 2];
+const DIAGRAM_PACE = 0.6;
+let diagramSpeed = DIAGRAM_SPEEDS.includes(Number(localStorage.getItem('sharei-diagram-speed')))
+  ? Number(localStorage.getItem('sharei-diagram-speed')) : 1;
+const diagramRate = () => diagramSpeed * DIAGRAM_PACE;
+// by is +1 or -1 to go faster or slower, stopping at either end; 0 cycles through the list.
+function setDiagramSpeed(by) {
+  const at = DIAGRAM_SPEEDS.indexOf(diagramSpeed);
+  diagramSpeed = by ? DIAGRAM_SPEEDS[Math.max(0, Math.min(DIAGRAM_SPEEDS.length - 1, at + by))]
+    : DIAGRAM_SPEEDS[(at + 1) % DIAGRAM_SPEEDS.length];
+  localStorage.setItem('sharei-diagram-speed', String(diagramSpeed));
+  dispatchEvent(new Event('sharei-diagram-speed'));
+}
+
 function diagramVideoType() {
   if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return '';
   const types = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
@@ -1990,6 +2007,19 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   const playButton = make('play', 'Play', 'play-toggle');
   const nextButton = make('next', 'Next step', 'play-next');
   const stopButton = make('stop', 'Stop', 'play-stop');
+  const speedButton = document.createElement('button');
+  speedButton.type = 'button';
+  speedButton.className = 'play-speed';
+  controls.append(speedButton);
+  const showSpeed = () => {
+    speedButton.textContent = diagramSpeed + '×';
+    const text = 'Speed ' + diagramSpeed + '× (< and > change it)';
+    speedButton.title = text;
+    speedButton.setAttribute('aria-label', text);
+  };
+  showSpeed();
+  speedButton.addEventListener('click', () => setDiagramSpeed(0));
+  addEventListener('sharei-diagram-speed', showSpeed);
   const rail = document.createElement('div');
   rail.className = 'play-rail';
   rail.setAttribute('aria-hidden', 'true');
@@ -2315,7 +2345,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   function tick(now) {
     frame = 0;
     if (!playing) return;
-    const done = advance(Math.min(100, now - last), stepping);
+    const done = advance(Math.min(100, now - last) * diagramRate(), stepping);
     last = now;
     if (done === 'step') {
       pause();
@@ -2394,7 +2424,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     stage.classList.remove('recording');
     recordButton.classList.remove('busy');
     recordButton.innerHTML = diagramIcon('share');
-    for (const element of [backButton, playButton, nextButton, stopButton]) element.disabled = false;
+    for (const element of [backButton, playButton, nextButton, stopButton, speedButton]) element.disabled = false;
     if (picker) picker.disabled = false;
     share.label(error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : '');
     sync();
@@ -2405,7 +2435,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     const job = exporting;
     pause();
     busy(true);
-    for (const element of [backButton, playButton, nextButton, stopButton]) element.disabled = true;
+    for (const element of [backButton, playButton, nextButton, stopButton, speedButton]) element.disabled = true;
     if (picker) picker.disabled = true;
     recordButton.classList.add('busy');
     recordButton.textContent = '0%';
@@ -2426,7 +2456,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
           const end = index >= timeline.length;
           gif.add(canvas.pixels(), end ? 2400 : STEP);
           if (end) break;
-          advance(STEP);
+          advance(STEP * diagramRate());
           exportProgress();
           await new Promise((resolve) => setTimeout(resolve));
         }
@@ -2517,10 +2547,12 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     const space = event.key === ' ' && !event.shiftKey && !event.target.closest('button');
     const forward = event.key === 'PageDown' || event.key === 'j' || (event.key === 'ArrowRight' && !event.shiftKey);
     const backward = event.key === 'PageUp' || event.key === 'k' || (event.key === 'ArrowLeft' && !event.shiftKey);
-    if ((!forward && !backward && !space) || exporting || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('select')) return;
+    const speed = event.key === '>' ? 1 : event.key === '<' ? -1 : 0;
+    if ((!forward && !backward && !space && !speed) || exporting || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('select')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (space) playing ? pause() : play();
+    if (speed) setDiagramSpeed(speed);
+    else if (space) playing ? pause() : play();
     else forward ? stepNext() : stepBack();
   });
   // Presentation mode walks a story before leaving its slide; false means there is nothing left
@@ -3012,6 +3044,7 @@ if (presentButton) {
     if (key === ' ' && !event.shiftKey && slideStory()) slideStory().toggle();
     else if ((key === 'ArrowRight' && !event.shiftKey) || key === 'PageDown' || key === 'j' || (key === ' ' && !event.shiftKey)) slideMove(1);
     else if ((key === 'ArrowLeft' && !event.shiftKey) || key === 'PageUp' || key === 'k' || (key === ' ' && event.shiftKey)) slideMove(-1);
+    else if ((key === '<' || key === '>') && slideStory()) setDiagramSpeed(key === '>' ? 1 : -1);
     else if (key === 'Home') present(0, -1);
     else if (key === 'End') present(slideGroups().length - 1, 1);
     else return;

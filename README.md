@@ -321,7 +321,9 @@ another scenario, picked from a menu next to the play button. A step that
 names a missing box or arrow is ignored and listed when you hover the play
 button. The arrows on each side of the play button go through the story
 one step at a time while you talk over it, and so do the right and left
-arrow keys, `j` and `k`, while Space plays or pauses. The thin rail under
+arrow keys, `j` and `k`, while Space plays or pauses. The speed button
+(or `<` and `>`) slows the story down or speeds it up, and saved GIFs and
+videos keep that speed. The thin rail under
 the controls has a tick per step; click one to jump there. The camera
 button makes the view zoom in on each step as it plays and back out at the
 end, which helps on large diagrams. Sequence diagrams play the same way:

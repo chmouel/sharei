@@ -152,11 +152,16 @@ edge. The node it leaves gets a check mark and the node it reaches lights up.
 When the story ends, the last lit node is marked done and the final picture
 stays on screen until you play again, press stop or pick another story.
 
-| Moment | Duration |
+| Moment | Duration at 1× |
 | --- | --- |
-| Pause on a node before it sends the dot | 420 ms |
-| Travel along an edge | 3.2 ms per pixel of path, between 550 ms and 1.7 s |
-| A skip | 320 ms |
+| Pause on a node before it sends the dot | 700 ms |
+| Travel along an edge | about 5.3 ms per pixel of path, between 0.9 s and 2.8 s |
+| A skip | 530 ms |
+
+The speed button after stop cycles through 0.5×, 0.75×, 1×, 1.5× and
+2×, and `<` and `>` step down and up with the diagram focused or while
+presenting. The choice applies to every diagram and is remembered in the
+browser. GIF and video exports play at the chosen speed.
 
 A step's caption shows as soon as the step starts, in a bar under the
 diagram, or floating at the bottom of the screen in full screen. Stopping the
@@ -166,7 +171,7 @@ A node that a later step reaches again clears its skip and its check mark, so
 a story can loop back through the diagram.
 
 The controls sit in the diagram's toolbar next to the zoom buttons: previous
-step, play, next step, stop and the story picker. Picking a story starts it.
+step, play, next step, stop, speed and the story picker. Picking a story starts it.
 
 When you talk over a diagram, the next step button plays one step and stops,
 so the dot waits on its box until you move on. Pressing it during a normal

@@ -154,7 +154,8 @@ Pages:
   lifelines nearest its ends, and a step takes the next untaken message in
   that direction after a per-story cursor, wrapping once. Step mode stops at segments flagged `stop` (one per step) and goes
   back by replaying instantly with `advance(Infinity, true)`; its key
-  handler (arrows, j/k, PageUp/PageDown, Space to play or pause) runs before panZoom's so a
+  handler (arrows, j/k, PageUp/PageDown, Space to play or pause, `<`/`>`
+  for speed) runs before panZoom's so a
   plain arrow steps and Shift+arrow pans.
   Deep links (`#diagram=N&story=S&step=K&focus=A,B`) go through
   `diagramHash()`/`diagramFromHash()`, using the `where()`/`restore()` API
@@ -223,6 +224,11 @@ Pages:
   false at either end. The key handler is a document capture listener so a
   focused stage does not step twice; Escape is a window listener so the ink
   and spotlight handlers clear first.
+  Speed: `tick()` and the GIF loop advance by real time times
+  `diagramRate()`, the shared `diagramSpeed` (localStorage
+  `sharei-diagram-speed`) times `DIAGRAM_PACE`, so segment durations stay
+  in raw units. `setDiagramSpeed()` fires `sharei-diagram-speed` on window
+  to relabel every diagram's `.play-speed` button.
   `docs/diagram-walkthroughs.md` is the design spec and a live demo, with
   its icons in `docs/diagram-icons/`.
   Linkify ignores scheme-less links so `README.md` stays text.
