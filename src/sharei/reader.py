@@ -30,6 +30,24 @@ MARKDOWN_CSS = """
   .markdown-body .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .mermaid-diagram { margin:0 0 16px; overflow-x:auto; text-align:center; }
   .mermaid-diagram svg { max-width:100%; height:auto; }
+  .diagram-stage { position:relative; touch-action:pan-y; }
+  .diagram-stage > svg { display:block; margin:0 auto; user-select:none; -webkit-user-select:none; }
+  .diagram-stage.zoomed { touch-action:none; cursor:grab; }
+  .diagram-stage.zoomed:active { cursor:grabbing; }
+  .diagram-tools { position:absolute; top:0; right:0; display:flex; gap:2px; padding:3px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); opacity:0; transition:opacity .15s; }
+  .mermaid-diagram:is(:hover, :focus-within) .diagram-tools, .diagram-dialog .diagram-tools { opacity:1; }
+  @media (hover:none) { .diagram-tools { opacity:1; } .mermaid-diagram .diagram-tools { position:static; width:max-content; margin:0 0 8px auto; } }
+  .diagram-tools button { display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; border-radius:6px; background:none; color:var(--fgColor-muted); cursor:pointer; }
+  .diagram-tools button:hover:not(:disabled) { background:var(--bgColor-muted); color:var(--fgColor-default); }
+  .diagram-tools button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:-2px; }
+  .diagram-tools button:disabled { opacity:.4; cursor:default; }
+  .diagram-tools svg { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  .diagram-dialog { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; padding:0; border:0; background:var(--bgColor-default); color:var(--fgColor-default); }
+  .diagram-dialog::backdrop { background:var(--bgColor-default); }
+  .diagram-dialog .diagram-stage { width:100%; height:100%; touch-action:none; cursor:grab; }
+  .diagram-dialog .diagram-stage:active { cursor:grabbing; }
+  .diagram-dialog .diagram-stage > svg { width:100%; height:100%; max-width:none !important; padding:56px 16px 16px; }
+  .diagram-dialog .diagram-tools { top:max(10px, env(safe-area-inset-top)); right:max(10px, env(safe-area-inset-right)); }
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
 """
 
@@ -120,6 +138,7 @@ READER_CSS = """
   .reader .markdown-body kbd { font-family:var(--mono); }
   .reader .markdown-body .footnotes { margin-top:3em; padding-top:1.2em; border-top:1px solid var(--borderColor-muted); color:var(--fgColor-muted); font-size:.88em; }
   .reader .mermaid-diagram { margin:0 0 1.3em; padding:20px 16px; border:1px solid var(--borderColor-muted); border-radius:12px; background:var(--bgColor-muted); }
+  .reader .mermaid-diagram .diagram-tools { top:-14px; right:-10px; }
   .reader .markdown-body .frontmatter { display:grid; grid-template-columns:fit-content(40%) minmax(0, 1fr); align-items:baseline; gap:8px 24px; margin:0 0 2.2em; padding:14px 18px; border:1px solid var(--borderColor-muted); border-radius:12px; background:color-mix(in srgb, var(--bgColor-muted) 60%, transparent); font-size:.875em; line-height:1.55; font-variant-numeric:tabular-nums; }
   .reader .markdown-body .frontmatter dt { margin:0; padding:0; color:var(--fgColor-muted); font-size:inherit; font-style:normal; font-weight:500; }
   .reader .markdown-body .frontmatter dd { min-width:0; margin:0; padding:0; color:var(--fgColor-default); overflow-wrap:anywhere; }
@@ -767,6 +786,177 @@ function diagramColours(dark) {
   };
 }
 
+const DIAGRAM_ICONS = {
+  out: '<path d="M3 8h10"/>',
+  in: '<path d="M3 8h10M8 3v10"/>',
+  fit: '<path d="M13 8a5 5 0 1 1-1.46-3.54M13.5 2v3h-3"/>',
+  full: '<path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"/>',
+  close: '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>',
+};
+const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
+let diagramDialog = null;
+
+// Zooming and panning rewrite the viewBox, so the diagram stays sharp and keeps its place in the page.
+function panZoom(holder) {
+  const svg = holder.querySelector(':scope > svg');
+  const box = svg && svg.viewBox.baseVal;
+  if (!box || !box.width || !box.height) return;
+  const home = { x: box.x, y: box.y, w: box.width, h: box.height };
+  const MAX = 12;
+  let view = Object.assign({}, home);
+
+  const stage = document.createElement('div');
+  stage.className = 'diagram-stage';
+  const tools = document.createElement('div');
+  tools.className = 'diagram-tools';
+  const button = (name, label) => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.title = label;
+    element.setAttribute('aria-label', label);
+    element.innerHTML = diagramIcon(name);
+    tools.append(element);
+    return element;
+  };
+  const outButton = button('out', 'Zoom out');
+  const inButton = button('in', 'Zoom in');
+  const fitButton = button('fit', 'Fit');
+  const fullButton = button('full', 'Full screen');
+  stage.append(tools, svg);
+  holder.append(stage);
+  holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom';
+
+  const full = () => Boolean(diagramDialog && diagramDialog.open && diagramDialog.contains(stage));
+  const zoomed = () => view.w < home.w - 1e-9;
+  function apply() {
+    svg.setAttribute('viewBox', [view.x, view.y, view.w, view.h].join(' '));
+    stage.classList.toggle('zoomed', zoomed());
+    outButton.disabled = fitButton.disabled = !zoomed();
+    inButton.disabled = view.w <= home.w / MAX + 1e-9;
+  }
+  function clamp() {
+    view.x = Math.min(Math.max(view.x, home.x), home.x + home.w - view.w);
+    view.y = Math.min(Math.max(view.y, home.y), home.y + home.h - view.h);
+  }
+  function center() {
+    const rect = svg.getBoundingClientRect();
+    return [rect.left + rect.width / 2, rect.top + rect.height / 2];
+  }
+  function zoomAt(factor, clientX, clientY) {
+    const matrix = svg.getScreenCTM();
+    if (!matrix) return;
+    const point = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
+    const width = Math.min(home.w, Math.max(home.w / MAX, view.w / factor));
+    const ratio = width / view.w;
+    view = { x: point.x - (point.x - view.x) * ratio, y: point.y - (point.y - view.y) * ratio, w: width, h: view.h * ratio };
+    clamp();
+    apply();
+  }
+  function panBy(dx, dy) {
+    const matrix = svg.getScreenCTM();
+    if (!matrix || !matrix.a) return;
+    view.x -= dx / matrix.a;
+    view.y -= dy / matrix.d;
+    clamp();
+    apply();
+  }
+  function reset() {
+    view = Object.assign({}, home);
+    apply();
+  }
+
+  outButton.addEventListener('click', () => zoomAt(1 / 1.5, ...center()));
+  inButton.addEventListener('click', () => zoomAt(1.5, ...center()));
+  fitButton.addEventListener('click', reset);
+  fullButton.addEventListener('click', () => {
+    if (full()) {
+      diagramDialog.close();
+      return;
+    }
+    if (!diagramDialog) {
+      diagramDialog = document.createElement('dialog');
+      diagramDialog.className = 'diagram-dialog';
+      diagramDialog.setAttribute('aria-label', 'Diagram');
+      document.body.append(diagramDialog);
+      const previousBusy = window.liveBusy;
+      window.liveBusy = () => diagramDialog.open || (previousBusy ? previousBusy() : false);
+    }
+    holder.style.minHeight = holder.offsetHeight + 'px';
+    diagramDialog.append(stage);
+    fullButton.innerHTML = diagramIcon('close');
+    fullButton.title = 'Close';
+    fullButton.setAttribute('aria-label', 'Close');
+    diagramDialog.addEventListener('close', () => {
+      holder.append(stage);
+      holder.style.minHeight = '';
+      fullButton.innerHTML = diagramIcon('full');
+      fullButton.title = 'Full screen';
+      fullButton.setAttribute('aria-label', 'Full screen');
+      reset();
+    }, { once: true });
+    diagramDialog.showModal();
+    reset();
+    fullButton.focus();
+  });
+
+  stage.addEventListener('keydown', (event) => {
+    if (!full() || event.ctrlKey || event.metaKey || event.altKey) return;
+    const step = 60;
+    const moves = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+    if (event.key === '+' || event.key === '=') zoomAt(1.5, ...center());
+    else if (event.key === '-') zoomAt(1 / 1.5, ...center());
+    else if (event.key === '0') reset();
+    else if (moves[event.key]) panBy(...moves[event.key]);
+    else return;
+    event.preventDefault();
+  });
+
+  stage.addEventListener('wheel', (event) => {
+    if (!full() && !event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const delta = event.deltaY * (event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 400 : 1);
+    zoomAt(Math.exp(-Math.max(-100, Math.min(100, delta)) * (event.ctrlKey ? 0.01 : 0.0025)), event.clientX, event.clientY);
+  }, { passive: false });
+
+  stage.addEventListener('dblclick', (event) => {
+    if (event.target.closest('.diagram-tools')) return;
+    zoomAt(event.shiftKey ? 1 / 2 : 2, event.clientX, event.clientY);
+  });
+
+  // One pointer drags, two pinch. Touch at the fitted size is left to the page so it still scrolls.
+  const pointers = new Map();
+  stage.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || event.target.closest('.diagram-tools')) return;
+    if (event.pointerType === 'touch' && !zoomed() && !full() && !pointers.size) {
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, passive: true });
+      return;
+    }
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    stage.setPointerCapture(event.pointerId);
+    if (event.pointerType === 'mouse') event.preventDefault();
+  });
+  stage.addEventListener('pointermove', (event) => {
+    const last = pointers.get(event.pointerId);
+    if (!last) return;
+    const others = [...pointers].filter(([id]) => id !== event.pointerId).map(([, point]) => point);
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (others.length === 1) {
+      const other = others[0];
+      const before = Math.hypot(last.x - other.x, last.y - other.y);
+      const after = Math.hypot(event.clientX - other.x, event.clientY - other.y);
+      if (before > 0) zoomAt(after / before, (event.clientX + other.x) / 2, (event.clientY + other.y) / 2);
+      panBy((event.clientX - last.x) / 2, (event.clientY - last.y) / 2);
+    } else if (!others.length && !last.passive) {
+      panBy(event.clientX - last.x, event.clientY - last.y);
+    }
+  });
+  const release = (event) => pointers.delete(event.pointerId);
+  stage.addEventListener('pointerup', release);
+  stage.addEventListener('pointercancel', release);
+
+  apply();
+}
+
 function drawDiagrams() {
   const diagrams = [...article.querySelectorAll('.highlight-source-mermaid')];
   if (!diagrams.length) return;
@@ -789,6 +979,7 @@ function drawDiagrams() {
         }
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
+        panZoom(holder);
         if (onDiagram) onDiagram();
       } catch (error) {
         document.getElementById('d' + id)?.remove();

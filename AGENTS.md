@@ -124,6 +124,10 @@ Pages:
   copy button, turns the contents into a sticky side rail from 1240px that
   follows the section being read, draws a progress line under the bar, and
   colours mermaid's base theme from the page's CSS variables.
+  `panZoom()` gives each diagram drag to pan, Ctrl/Cmd+wheel or pinch to
+  zoom and a full-screen `<dialog>` by rewriting the SVG's `viewBox`, so
+  it stays sharp and its box never resizes. A one-finger touch at the
+  fitted size is left to page scrolling.
   Linkify ignores scheme-less links so `README.md` stays text.
   YAML front matter at line 1 (closed by `---` or `...` within 200 lines,
   with at least one `key:`) is claimed by the `sharei_frontmatter` block
