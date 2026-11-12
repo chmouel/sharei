@@ -154,6 +154,12 @@ Pages:
   listed in the diagram's title. `sharec` scans `img:` values in mermaid
   fences (`mermaid_blocks()`) with the same checks as markdown images, and
   leaves `/icons/` paths alone.
+  `focusDiagram()` makes flowchart boxes clickable: it maps edges to their
+  ends from `L_<from>_<to>_<n>` against the known node ids, and sets
+  `focus-on`/`focus-near` with `.focusing` on the stage. Pointer capture
+  makes the stage the click target, so it hit-tests with
+  `elementFromPoint()` and node bounding boxes. Playback and the spotlight
+  share `diagramBusy()` to pause the live reload.
   The record button saves a story client-side: `diagramCanvas()` draws a
   clone of the SVG with computed styles inlined and every `<image>` turned
   into a data URL (`diagramImageData()`, same-origin fetch only, since an

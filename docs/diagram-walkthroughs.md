@@ -110,6 +110,26 @@ vanish halfway.
 With `prefers-reduced-motion` set, there is no travelling dot and no glow
 pulse. Nodes and edges change state in plain steps of about half a second.
 
+## Pointing at a box
+
+Any flowchart, with or without a story, lets you click a box to put it in the
+spotlight while you talk about it. The box gets the accent outline and a
+steady glow. Its arrows, their labels and the boxes at their other ends stay
+as they are, and everything else fades to a fifth.
+
+Shift, Ctrl or Cmd with a click adds or removes a box. A plain click on
+another box moves the spotlight there. Clicking the only lit box, an empty part
+of the diagram, or pressing Escape clears it. In full screen, the first Escape
+clears the spotlight and the second closes the view. A drag that pans the
+diagram and the second click of a double-click (which zooms) leave the
+spotlight alone. A picture box counts as one target across its image, its label
+and the gap between them.
+
+A playing story is never dimmed by the spotlight: its lit box and the edge the
+dot travels stay bright. A saved GIF or video keeps the spotlight as it was
+when you pressed record. Like a playing story, the spotlight holds off the
+page's live reload.
+
 ## Saving a story as a GIF or a video
 
 The red dot in the toolbar saves the selected story as a file to drop into a

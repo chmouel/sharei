@@ -73,6 +73,14 @@ MARKDOWN_CSS = """
   .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-success) 14%, var(--bgColor-default)) !important; }
   .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:last-child { stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
   .diagram-stage :is(g.node, g.image-shape).play-skipped { opacity:.3; }
+  .diagram-stage.focusable :is(g.node, g.image-shape) { cursor:pointer; }
+  .diagram-stage :is(path[data-edge], g.edgeLabel) { transition:opacity .25s; }
+  .diagram-stage.focusing :is(g.node, g.image-shape):not(.focus-on, .focus-near, .play-active) { opacity:.2; }
+  .diagram-stage.focusing :is(path[data-edge], g.edgeLabel):not(.focus-near, .play-edge) { opacity:.15; }
+  .diagram-stage g.node.focus-on :is(.label-container, .label-container > *), .diagram-stage g.image-shape.focus-on > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; }
+  .diagram-stage g.node.focus-on :is(.label-container, .label-container > *), .diagram-stage g.image-shape.focus-on > g:first-child > path:last-child { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
+  .diagram-stage :is(g.node, g.image-shape).focus-on { filter:drop-shadow(0 0 8px color-mix(in srgb, var(--fgColor-accent) 70%, transparent)); }
+  .diagram-stage path.focus-near:not(.play-edge) { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
   .diagram-stage path.play-edge { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
   .diagram-stage path.play-edge-done { stroke:color-mix(in srgb, var(--fgColor-success) 65%, var(--borderColor-default)) !important; }
   .diagram-stage .play-check circle { fill:var(--fgColor-success) !important; stroke:var(--bgColor-default) !important; stroke-width:1.5px !important; }
@@ -865,7 +873,8 @@ function panZoom(holder, scenarios) {
   stage.append(tools, svg);
   holder.append(stage);
   if (scenarios.length) playDiagram(stage, svg, tools, scenarios, home);
-  holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom';
+  focusDiagram(stage, svg);
+  holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom' + (stage.classList.contains('focusable') ? ', click a box to highlight it' : '');
 
   const full = () => Boolean(diagramDialog && diagramDialog.open && diagramDialog.contains(stage));
   const zoomed = () => view.w < home.w - 1e-9;
@@ -1096,8 +1105,93 @@ async function diagramImages(source) {
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-let diagramsPlaying = 0;
-let playBusyWrapped = false;
+let diagramsBusy = 0;
+let diagramBusyWrapped = false;
+
+// A playing story or a highlighted box holds off the live reload, so neither vanishes mid-talk.
+function diagramBusy(on) {
+  diagramsBusy += on ? 1 : -1;
+  if (diagramBusyWrapped) return;
+  diagramBusyWrapped = true;
+  const previousBusy = window.liveBusy;
+  window.liveBusy = () => diagramsBusy > 0 || (previousBusy ? previousBusy() : false);
+}
+
+function diagramNodes(svg) {
+  const nodes = new Map();
+  for (const group of svg.querySelectorAll(':is(g.node, g.image-shape)[id]')) {
+    const match = /-flowchart-(.+)-\\d+$/.exec(group.id);
+    if (match && !nodes.has(match[1])) nodes.set(match[1], group);
+  }
+  return nodes;
+}
+
+// Clicking a box puts it in the spotlight: the box and its arrows stay bright, the rest dims.
+// Shift, Ctrl or Cmd adds boxes; clicking the lone box, the background or Escape clears it.
+function focusDiagram(stage, svg) {
+  const nodes = diagramNodes(svg);
+  if (!nodes.size) return;
+  const names = new Map([...nodes].map(([name, group]) => [group, name]));
+  const links = [];
+  for (const path of svg.querySelectorAll('path[data-edge][data-id]')) {
+    const id = path.dataset.id;
+    for (const from of nodes.keys()) {
+      if (!id.startsWith('L_' + from + '_')) continue;
+      const rest = id.slice(from.length + 3);
+      const to = [...nodes.keys()].find((name) => rest.startsWith(name + '_') && /^\\d+$/.test(rest.slice(name.length + 1)));
+      if (!to) continue;
+      const label = svg.querySelector('g.edgeLabels [data-id="' + CSS.escape(id) + '"]');
+      links.push({ from: from, to: to, parts: [path, label && (label.closest('g.edgeLabel') || label)].filter(Boolean) });
+      break;
+    }
+  }
+  stage.classList.add('focusable');
+  const selected = new Set();
+  let held = false;
+  function paint() {
+    for (const element of svg.querySelectorAll('.focus-on, .focus-near')) element.classList.remove('focus-on', 'focus-near');
+    for (const name of selected) nodes.get(name).classList.add('focus-on');
+    for (const link of links) {
+      if (!selected.has(link.from) && !selected.has(link.to)) continue;
+      for (const part of link.parts) part.classList.add('focus-near');
+      for (const end of [link.from, link.to]) if (!selected.has(end)) nodes.get(end).classList.add('focus-near');
+    }
+    stage.classList.toggle('focusing', selected.size > 0);
+    if (held !== selected.size > 0) diagramBusy(held = !held);
+  }
+  let start = null;
+  stage.addEventListener('pointerdown', (event) => { start = { x: event.clientX, y: event.clientY }; }, true);
+  stage.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.detail > 1) return;
+    if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return;
+    // Pointer capture makes the stage the click target, so look under the pointer instead.
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    if (!under || !stage.contains(under) || under.closest('.diagram-tools')) return;
+    const inside = (element) => {
+      const rect = element.getBoundingClientRect();
+      return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    };
+    // A picture box has a gap between its image and its label, which still counts as the box.
+    const group = under.closest(':is(g.node, g.image-shape)') || [...names.keys()].find(inside);
+    const name = group && names.get(group);
+    if (!name) selected.clear();
+    else if (event.shiftKey || event.ctrlKey || event.metaKey) selected.has(name) ? selected.delete(name) : selected.add(name);
+    else if (selected.has(name) && selected.size === 1) selected.clear();
+    else {
+      selected.clear();
+      selected.add(name);
+    }
+    paint();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !selected.size || !stage.isConnected) return;
+    const dialog = stage.closest('dialog');
+    if (!dialog && document.querySelector('dialog[open]')) return;
+    event.preventDefault();
+    selected.clear();
+    paint();
+  });
+}
 
 // A saved frame is the diagram as a standalone SVG image. Page CSS does not reach inside an
 // image, so the computed styles that matter are copied inline, and pictures become data URLs.
@@ -1384,11 +1478,7 @@ function gifWriter(width, height) {
 }
 
 function playDiagram(stage, svg, tools, scripts, home) {
-  const nodes = new Map();
-  for (const group of svg.querySelectorAll(':is(g.node, g.image-shape)[id]')) {
-    const match = /-flowchart-(.+)-\\d+$/.exec(group.id);
-    if (match && !nodes.has(match[1])) nodes.set(match[1], group);
-  }
+  const nodes = diagramNodes(svg);
   const edges = [...svg.querySelectorAll('path[data-edge][data-id]')];
   const edgeBetween = (from, to) => edges.find((path) => {
     const id = path.dataset.id;
@@ -1659,14 +1749,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     }
     frame = requestAnimationFrame(tick);
   }
-  function busy(on) {
-    diagramsPlaying += on ? 1 : -1;
-    if (!playBusyWrapped) {
-      playBusyWrapped = true;
-      const previousBusy = window.liveBusy;
-      window.liveBusy = () => diagramsPlaying > 0 || (previousBusy ? previousBusy() : false);
-    }
-  }
+  const busy = diagramBusy;
   function play(motion) {
     if (playing) return;
     if (finished || !timeline.length) restart(!motion && matchMedia('(prefers-reduced-motion: reduce)').matches);

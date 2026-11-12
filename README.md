@@ -279,6 +279,11 @@ Mermaid diagrams in a markdown file are drawn in the reader. Drag one to move
 around, pinch or Ctrl+scroll to zoom, and press the corner button to see it
 full screen.
 
+When you present, click a box in a flowchart to point at it: it lights up
+with its arrows and neighbours, and the rest of the diagram fades. Shift-click
+adds more boxes. Click the box again, the background or press Escape to bring
+everything back.
+
 A flowchart can also play a walkthrough: a dot carrying a label travels from
 box to box, the box it reaches lights up, and the ones it has left get a tick.
 Write the steps as `%%` comments inside the diagram, which GitHub and other
