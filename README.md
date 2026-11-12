@@ -237,7 +237,17 @@ sharec get drop -f       # download it here instead
 sharec get shot 1 -o a.png  # save the previous screenshot as a.png
 sharec get list          # what is on sharei right now
 sharec get list --json   # the same, for scripts
+sharec get clip --json   # the clipboard and its history
+sharec notes             # the shared notes and folders
+sharec notes ramen       # every note holding "ramen", with the matching lines
+sharec cat /notes-file/Journal/today.md   # a route, byte for byte
+sharec cp 'some text'    # put text on this machine's clipboard
 ```
+
+Links in `--json` are absolute, so a script can open them as is. `sharec
+notes --json` and `sharec cat` are what a launcher needs: raffi has a
+[script filter](contrib/raffi/) that lists the notes, the clipboard, the drops
+and the screenshots from its search box.
 
 Images show up right in terminals that speak the kitty graphics protocol
 (kitty, Ghostty, WezTerm, Konsole). The image fills the window: j, Space or

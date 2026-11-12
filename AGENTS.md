@@ -40,6 +40,10 @@ proxy with authentication (see SECURITY.md).
   with `replace=1` so a revised file keeps its name and comments.
   `sharec clip [TEXT|-] [--ttl S] [--clear]` writes `/clip`, `/clip/ttl` and
   `/clip/clear`; with `--ttl` and no TEXT only the expiry changes.
+  `sharec get clip --json` prints `/clip/state` (the text and its history),
+  `sharec notes [QUERY] [--json]` prints `/notes-search` or its `?q=` search
+  through `client.payload()`, and `sharec cat PATH` prints the bytes of a
+  server route, which is how `contrib/raffi/` reads notes and images.
   On a terminal, `drop`/`shot` draw images with the kitty graphics protocol
   (PNG as is, other raster formats through Pillow) on the alternate screen,
   sized to the window (`browse`: j/space/right and k/backspace/delete/left
@@ -62,6 +66,9 @@ proxy with authentication (see SECURITY.md).
   editor must stay visible.
 - `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user
   unit, expecting `~/.local/bin/sharei` from `uv tool install`.
+- `contrib/raffi/`: a raffi script filter (`sharei_filter.py`) listing the
+  notes, clipboard, drops and shots as views of one keyword. It only calls
+  `sharec`, so it holds no address or login logic of its own.
 - `config.example.toml`: every setting, with comments. Keep it in sync when you
   add a setting.
 - `tests/`: pytest. `conftest.py` has a `live_server` fixture that runs the
@@ -188,7 +195,8 @@ Files:
 Data:
 
 - `/state`: stamps for the live reload
-- `/recent`: newest items as JSON, used by the skill
+- `/recent`: newest items as JSON with the server's `public_url`, used by the
+  skill
 - `/sw.js` (service worker), `/push/key` (VAPID public key): push only
 - `/notes-search`: every shared note, folder and file for the picker,
   `{items: [{p, k, h, t, i}]}` (path, kind, link, mtime, icon), rebuilt per

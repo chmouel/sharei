@@ -7,7 +7,9 @@ is uploaded as is, and text files get a syntax-highlighted page.
 
 "sharec get" fetches the shared clipboard, the newest dropped file or
 screenshot, or lists what is there; see "sharec get --help". "sharec clip"
-sets the shared clipboard; see "sharec clip --help".
+sets the shared clipboard; see "sharec clip --help". "sharec notes" lists or
+searches the shared notes, "sharec cat" prints any route of the server and
+"sharec cp" puts text on this clipboard.
 
 Environment: SHAREI_URL (server to talk to; default http://localhost:8000,
 or SHAREI_PUBLIC_URL when nothing listens there), SHAREI_PUBLIC_URL (base of
@@ -129,8 +131,20 @@ def target() -> str:
     return SHAREI_URL
 
 
-def public_url() -> str:
-    return PUBLIC_URL or target()
+def public_url(served: str = "") -> str:
+    """Base of the links sharec prints: SHAREI_PUBLIC_URL, the server's
+    public_url setting, else the address it talks to."""
+    return PUBLIC_URL or served.rstrip("/") or target()
+
+
+def with_public_links(entries: list[dict], served: str) -> list[dict]:
+    """Point each entry's url and view at the public server."""
+    base = public_url(served)
+    for entry in entries:
+        for key in ("url", "view"):
+            if entry.get(key):
+                entry[key] = base + entry[key]
+    return entries
 
 
 def credentials(host: str) -> tuple[str, str] | None:
@@ -229,12 +243,17 @@ def fetch(path: str) -> bytes:
         raise failure(f"Fetching {path}", error) from error
 
 
+def payload(path: str) -> dict:
+    """The JSON object at path, or an Abort saying what went wrong."""
+    try:
+        return json.loads(fetch(path))
+    except ValueError as error:
+        raise Abort(f"Unexpected answer from {target()}{path}") from error
+
+
 def recent(limit: int, project: str) -> dict:
     params = {"limit": str(limit), **({"project": project} if project else {})}
-    try:
-        return json.loads(fetch(f"/recent?{urlencode(params)}"))
-    except ValueError as error:
-        raise Abort(f"Unexpected answer from {target()}/recent") from error
+    return payload(f"/recent?{urlencode(params)}")
 
 
 def repo_project() -> str:
@@ -269,7 +288,15 @@ def write_clipboard(data: bytes) -> None:
         command = ["pbcopy"]
     else:
         raise Abort("No clipboard tool found (wl-copy, xclip, pbcopy).")
-    subprocess.run(command, input=data, check=True)
+    # wl-copy leaves a daemon behind holding its inherited stdout and stderr: a
+    # caller that pipes sharec's output would wait for an EOF that never comes.
+    subprocess.run(
+        command,
+        input=data,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def free_name(folder: Path, name: str) -> Path:
@@ -542,18 +569,105 @@ def get_file(
     print(f"Saved {item['project']}/{item['name']} to {target} ({human(len(data))})")
 
 
+def get_clip_state() -> None:
+    """Print the clipboard state: the current text and the whole history."""
+    state = payload("/clip/state")
+    state["url"] = public_url(state.get("public_url", "")) + "/clip"
+    print(json.dumps(state, indent=2))
+
+
+def notes_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sharec notes",
+        description="List the shared notes, folders and files, or search the "
+        "text of the markdown ones. Every word of QUERY must appear in a note's "
+        "text or path; each note comes with the lines that match most words.",
+    )
+    parser.add_argument("query", nargs="*", metavar="QUERY", help="words to search for")
+    parser.add_argument(
+        "--json", action="store_true", help="print the raw JSON the server answers"
+    )
+    args = parser.parse_args(argv)
+    query = " ".join(args.query).strip()
+    answer = payload(
+        f"/notes-search?{urlencode({'q': query})}" if query else "/notes-search"
+    )
+    served = answer.get("public_url", "")
+    base = public_url(served)
+    for item in answer.get("items", []) + answer.get("results", []):
+        item["url"] = base + item["h"]
+    if args.json:
+        print(json.dumps(answer, indent=2))
+        return 0
+    if "results" in answer:
+        for item in answer["results"]:
+            print(f"note {item['p']}")
+            for hit in item.get("hits", []):
+                print(f"     {hit['n']}: {hit['s']}")
+        return 0
+    for item in answer.get("items", []):
+        print(f"{item['k']:<4} {item['p']}")
+    return 0
+
+
+def cat_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sharec cat",
+        description="Print the bytes of a sharei route, such as a note's text "
+        "(/notes-file/<path>), a dropped file (/poub/<project>/<name>) or a "
+        "thumbnail (/thumb/<key>). The route is fetched like any other, with "
+        "the same login.",
+    )
+    parser.add_argument(
+        "path", metavar="PATH", help="route on the server, starting with /"
+    )
+    args = parser.parse_args(argv)
+    if not args.path.startswith("/") or args.path.startswith("//"):
+        parser.error("PATH must be a route starting with a single /")
+    sys.stdout.buffer.write(fetch(args.path))
+    sys.stdout.buffer.flush()
+    return 0
+
+
+def cp_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sharec cp",
+        description="Put text on this machine's clipboard, with the same tool "
+        "sharec uses to copy what it fetches: wl-copy, xclip or pbcopy.",
+    )
+    parser.add_argument(
+        "text",
+        nargs="?",
+        metavar="TEXT",
+        help="text to copy; - reads standard input, as does no TEXT",
+    )
+    args = parser.parse_args(argv)
+    text = args.text
+    if text is None or text == "-":
+        if sys.stdin.isatty():
+            parser.error("give TEXT or pipe it in")
+        text = sys.stdin.buffer.read().decode("utf-8", "replace")
+    if not text:
+        parser.error("there is nothing to copy")
+    write_clipboard(text.encode())
+    print(f"Copied {len(text)} chars to the clipboard.", file=sys.stderr)
+    return 0
+
+
 def get_list(limit: int, project: str, as_json: bool = False) -> None:
-    payload = recent(limit, project)
+    state = recent(limit, project)
     if as_json:
-        print(json.dumps(payload, indent=2))
+        for kind in ("drop", "shots"):
+            with_public_links(state.get(kind, []), state.get("public_url", ""))
+        print(json.dumps(state, indent=2))
         return
-    clip = payload["clip"]
+    clip = state["clip"]
     if clip["chars"]:
         print(f"clip   {clip['chars']} chars, {ago(clip['age_seconds'])}")
     for entry in clip.get("history", []):
         print(f"clip {entry['n']} {entry['chars']} chars, {ago(entry['age_seconds'])}")
     for kind in ("drop", "shots"):
-        for back, item in enumerate(payload[kind]):
+        for back, item in enumerate(state[kind]):
             size = f"{human(item['bytes'])}, " if "bytes" in item else ""
             print(
                 f"{kind[:4]} {back}  {item['project']}/{item['name']}  "
@@ -637,7 +751,7 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="list, comments: print the raw JSON",
+        help="clip, list, comments: print the raw JSON",
     )
     args = parser.parse_args(argv)
     args.name = ""
@@ -654,15 +768,20 @@ def parse_get_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--copy only works with clip")
     if (args.output or args.file) and args.what not in ("drop", "shot"):
         parser.error("--file and --output only work with drop or shot")
-    if args.json and args.what not in ("list", "comments"):
-        parser.error("--json only works with list or comments")
+    if args.json and args.what not in ("clip", "list", "comments"):
+        parser.error("--json only works with clip, list or comments")
+    if args.json and args.copy:
+        parser.error("--copy writes the clipboard, --json only reads it")
     return args
 
 
 def get_main(argv: list[str]) -> int:
     args = parse_get_args(argv)
     if args.what == "clip":
-        get_clip(args.back, args.copy)
+        if args.json:
+            get_clip_state()
+        else:
+            get_clip(args.back, args.copy)
     elif args.what == "list":
         get_list(args.back or 5, args.project, args.json)
     elif args.what == "comments":
@@ -1066,6 +1185,12 @@ def main() -> int:
         return get_main(sys.argv[2:])
     if sys.argv[1:2] == ["clip"]:
         return clip_main(sys.argv[2:])
+    if sys.argv[1:2] == ["notes"]:
+        return notes_main(sys.argv[2:])
+    if sys.argv[1:2] == ["cat"]:
+        return cat_main(sys.argv[2:])
+    if sys.argv[1:2] == ["cp"]:
+        return cp_main(sys.argv[2:])
     args = parse_args()
     action = args.action or gum("choose", *ACTIONS)
     if not action:

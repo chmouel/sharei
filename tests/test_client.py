@@ -1,4 +1,5 @@
 import base64
+import importlib.util
 import io
 import json
 import os
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -264,3 +266,218 @@ def test_get_comments_and_replace_keep_review(sharec, tmp_path, monkeypatch, cap
     sharec.get_main(["comments", "--json"])
     [entry] = json.loads(capsys.readouterr().out)["comments"]
     assert entry["outdated"] is True and entry["body"] == "Too vague"
+
+
+def test_get_clip_json_prints_the_whole_state(sharec, capsys):
+    sharec.clip_main(["first"])
+    sharec.clip_main(["second"])
+    sharec.get_main(["clip", "--json"])
+    state = json.loads(capsys.readouterr().out)
+    assert state["text"] == "second"
+    assert [entry["text"] for entry in state["history"]] == ["first"]
+    with pytest.raises(SystemExit):
+        sharec.get_main(["clip", "--json", "--copy"])
+
+
+@pytest.fixture
+def vaulted(sharec, tmp_path, monkeypatch):
+    from sharei import notes
+
+    root = tmp_path / "vault"
+    (root / "Shared").mkdir(parents=True)
+    (root / "Shared" / "Trip.md").write_text("# Trip\n\nramen in kyoto\n")
+    (root / "Shared" / "readme.txt").write_text("plain words\n")
+    (root / "Shared" / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (root / "Private").mkdir()
+    (root / "Private" / "secret.md").write_text("ramen\n")
+    monkeypatch.setattr(notes, "CACHE", {"at": 0.0, "index": None, "thread": None})
+    monkeypatch.setattr(notes, "TEXTS", {})
+    monkeypatch.setattr(notes, "TEXTS_HELD", [0])
+    monkeypatch.setattr(
+        notes,
+        "VAULT",
+        notes.configure("test", {"vault": str(root), "folders": ["Shared"]}),
+    )
+    return root
+
+
+def test_notes_lists_and_searches(vaulted, capsys):
+    client.notes_main([])
+    assert capsys.readouterr().out == (
+        "note Shared/Trip.md\n"
+        "file Shared/photo.png\n"
+        "file Shared/readme.txt\n"
+        "folder Shared\n"
+    )
+    client.notes_main(["ramen"])
+    out = capsys.readouterr().out
+    assert out.startswith("note Shared/Trip.md\n")
+    assert ": ramen in kyoto" in out and "Private" not in out
+    client.notes_main(["ramen", "--json"])
+    answer = json.loads(capsys.readouterr().out)
+    assert [note["p"] for note in answer["results"]] == ["Shared/Trip.md"]
+
+
+def test_notes_json_carries_public_links(sharec, vaulted, capsys, monkeypatch):
+    monkeypatch.setattr(sharec, "PUBLIC_URL", "https://share.example.com")
+    sharec.notes_main(["--json"])
+    answer = json.loads(capsys.readouterr().out)
+    note = next(item for item in answer["items"] if item["k"] == "note")
+    assert note["url"] == "https://share.example.com" + note["h"]
+    sharec.notes_main(["ramen", "--json"])
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["results"][0]["url"].startswith("https://share.example.com/notes/")
+
+
+def test_get_list_json_carries_public_links(sharec, capsys, monkeypatch):
+    monkeypatch.setattr(sharec, "PUBLIC_URL", "https://share.example.com")
+    sharec.upload("plan.txt", b"x", "")
+    sharec.get_main(["list", "--json"])
+    [drop] = json.loads(capsys.readouterr().out)["drop"]
+    assert drop["url"] == "https://share.example.com/poub/inbox/plan.txt"
+    assert drop["view"] == "https://share.example.com/view/inbox/plan.txt"
+
+
+def test_get_clip_json_carries_a_public_link(sharec, capsys, monkeypatch):
+    monkeypatch.setattr(sharec, "PUBLIC_URL", "https://share.example.com")
+    sharec.clip_main(["hi"])
+    sharec.get_main(["clip", "--json"])
+    assert (
+        json.loads(capsys.readouterr().out)["url"] == "https://share.example.com/clip"
+    )
+
+
+def test_cp_puts_text_on_the_clipboard(sharec, monkeypatch):
+    copied = []
+    monkeypatch.setattr(sharec, "write_clipboard", copied.append)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"piped")))
+    sharec.cp_main(["-"])
+    sharec.cp_main(["given"])
+    assert copied == [b"piped", b"given"]
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
+    with pytest.raises(SystemExit):
+        sharec.cp_main(["-"])
+    with pytest.raises(SystemExit):
+        sharec.cp_main([""])
+
+
+def test_notes_need_a_vault(sharec, monkeypatch):
+    from sharei import notes
+
+    monkeypatch.setattr(notes, "VAULT", None)
+    with pytest.raises(sharec.Abort):
+        sharec.notes_main([])
+
+
+def test_cat_prints_a_route(sharec, capsysbinary):
+    uploaded = sharec.upload("note.txt", b"hello", "")
+    sharec.cat_main([uploaded["url"] + "?raw"])
+    assert capsysbinary.readouterr().out == b"hello"
+    with pytest.raises(SystemExit):
+        sharec.cat_main(["poub/inbox/note.txt"])
+    with pytest.raises(sharec.Abort):
+        sharec.cat_main(["/poub/inbox/missing.txt"])
+
+
+FILTER = Path(__file__).resolve().parents[1] / "contrib" / "raffi" / "sharei_filter.py"
+
+
+@pytest.fixture
+def raffi(sharec, tmp_path):
+    if not FILTER.is_file():  # pragma: no cover - shipped in the source tree
+        pytest.skip("the raffi script filter is not here")
+
+    def run(*args, **extra):
+        env = {
+            "HOME": str(tmp_path),
+            "PATH": os.environ["PATH"],
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "SHAREI_URL": sharec.SHAREI_URL,
+            "SHAREI_PUBLIC_URL": sharec.SHAREI_URL,
+            **extra,
+        }
+        done = subprocess.run(
+            [sys.executable, str(FILTER), *args],
+            capture_output=True,
+            check=True,
+            env=env,
+            text=True,
+        )
+        return json.loads(done.stdout)
+
+    return run
+
+
+def test_filter_drops_the_notes_view_without_a_vault(raffi):
+    from sharei import notes
+
+    notes.VAULT = None
+    answer = raffi()
+    assert [view["id"] for view in answer["views"]] == ["clip", "drop", "shots"]
+    assert answer["view"] == "clip"
+
+
+def test_filter_shows_how_much_it_left_out():
+    drawn = load_filter().truncation(40, 160)
+    assert drawn["valid"] is False and "40 of 160" in drawn["title"]
+
+
+def load_filter():
+    spec = importlib.util.spec_from_file_location("sharei_filter", FILTER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_filter_draws_markdown_in_the_preview():
+    drawn = load_filter().rendered(
+        "---\ntags: [a]\n---\n# Title\n\n**bold** and [[Note|alias]]\n"
+        "\n- [x] done\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+    )
+    assert "\x1b[90m  tags: [a]\x1b[39m" in drawn
+    assert "\x1b[1;35mTitle\x1b[0m" in drawn
+    assert "\x1b[1mbold\x1b[22m" in drawn
+    assert "\x1b[4;36malias\x1b[24;39m" in drawn
+    assert "\x1b[32m\u2611\x1b[39m done" in drawn
+    assert "\x1b[1ma\x1b[22m" in drawn
+    assert " 1 \x1b[90m\u2502\x1b[39m 2 " in drawn  # cells, edges dimmed
+    for raw in ("**", "# Title", "[[", "|---|"):
+        assert raw not in drawn
+
+
+def test_raffi_filter_lists_every_view(raffi, vaulted, sharec):
+    sharec.clip_main(["some shared text"])
+    sharec.upload("plan.txt", b"step one\n", "")
+    answer = raffi()
+    assert [view["id"] for view in answer["views"]] == [
+        "notes",
+        "clip",
+        "drop",
+        "shots",
+    ]
+    assert answer["view"] == "notes"
+    listed = {
+        item["title"]: item["variables"]["SHAREI_KIND"] for item in answer["items"]
+    }
+    assert listed == {"Trip": "note", "readme.txt": "file", "photo.png": "file"}
+    assert answer["items"][0]["arg"].endswith("/notes/Shared/Trip.md")
+    assert "_folded" not in answer["items"][0]
+
+    [photo] = raffi("photo")["items"]
+    assert photo["variables"]["SHAREI_KIND"] == "file"
+    assert photo["arg"].endswith("/notes-file/Shared/photo.png")
+
+    found = raffi("ramen")
+    [note] = found["items"]
+    assert (
+        note["arg"].endswith("#find=1:ramen") or "#find=" in note["children"][0]["arg"]
+    )
+
+    [clip] = raffi("clip", "shared")["items"]
+    assert clip["title"] == "some shared text"
+    assert clip["variables"] == {"SHAREI_KIND": "clip", "SHAREI_CLIP": ""}
+    assert raffi("clip", "nothing like it")["items"] == []
+    assert raffi("drop")["items"][0]["title"] == "plan.txt"
+
+    note = raffi(RAFFI_PREVIEW="1", SHAREI_KIND="note", SHAREI_PATH="Shared/Trip.md")
+    assert "ramen in kyoto" in note["sections"][0]["content"]

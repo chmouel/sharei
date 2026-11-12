@@ -1809,6 +1809,7 @@ def clip_set_ttl(seconds: int) -> ClipState:
 
 def clip_json(state: ClipState) -> dict[str, object]:
     return {
+        "public_url": PUBLIC_URL,
         "text": state["text"],
         "version": state["version"],
         "updated": state["updated"],
@@ -2425,6 +2426,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
         for shot in available_shots(project)[:limit]
     ]
     return {
+        "public_url": PUBLIC_URL,
         "clip": {
             "chars": len(state["text"]),
             "updated": state["updated"],
@@ -2915,10 +2917,14 @@ class Handler(BaseHTTPRequestHandler):
             if index is not None:
                 query = parse_qs(parsed.query).get("q", [""])[0]
                 if not query.strip():
-                    self.send_json({"items": notes_entries(index)})
+                    self.send_json(
+                        {"public_url": PUBLIC_URL, "items": notes_entries(index)}
+                    )
                     return
                 terms, results = notes.search(index, query)
-                self.send_json({"terms": terms, "results": results})
+                self.send_json(
+                    {"public_url": PUBLIC_URL, "terms": terms, "results": results}
+                )
                 return
 
         if parsed.path == "/notes" or parsed.path.startswith("/notes/"):
