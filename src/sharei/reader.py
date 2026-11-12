@@ -993,11 +993,7 @@ function panZoom(holder, scenarios) {
   outButton.addEventListener('click', () => zoomAt(1 / 1.5, ...center()));
   inButton.addEventListener('click', () => zoomAt(1.5, ...center()));
   fitButton.addEventListener('click', reset);
-  fullButton.addEventListener('click', () => {
-    if (full()) {
-      diagramDialog.close();
-      return;
-    }
+  function openFull() {
     if (!diagramDialog) {
       diagramDialog = document.createElement('dialog');
       diagramDialog.className = 'diagram-dialog';
@@ -1022,7 +1018,18 @@ function panZoom(holder, scenarios) {
     diagramDialog.showModal();
     reset();
     fullButton.focus();
-  });
+  }
+  fullButton.addEventListener('click', () => (full() ? diagramDialog.close() : openFull()));
+  stage.diagramFull = () => {
+    if (full()) return;
+    if (!diagramDialog || !diagramDialog.open) {
+      openFull();
+      return;
+    }
+    // The diagram on screen goes back to its place in the page on close, then this one takes over.
+    diagramDialog.addEventListener('close', openFull, { once: true });
+    diagramDialog.close();
+  };
 
   stage.addEventListener('keydown', (event) => {
     if (!full() || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -2287,6 +2294,7 @@ function diagramFromHash(stage) {
   if (stage.diagramPlay && (number('story') !== null || number('step') !== null)) stage.diagramPlay.restore(number('story') || 1, number('step'));
   if (stage.diagramFocus) stage.diagramFocus.set((wanted.get('focus') || '').split(',').filter(Boolean));
   stage.closest('.mermaid-diagram')?.scrollIntoView({ block: 'center' });
+  stage.diagramFull?.();
   return true;
 }
 

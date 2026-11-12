@@ -326,8 +326,8 @@ button makes the view zoom in on each step as it plays and back out at the
 end, which helps on large diagrams. When your system
 asks for less motion, the boxes change one after another and nothing
 travels.
-"Copy link" in the share menu gives an address that opens the diagram at
-the same story, step and highlighted boxes.
+"Copy link" in the share menu gives an address that opens the diagram in
+full screen at the same story, step and highlighted boxes.
 
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 

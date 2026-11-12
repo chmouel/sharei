@@ -171,8 +171,9 @@ page's live reload.
 "Copy link" in the share menu copies the page address with a hash such as
 `#diagram=2&story=1&step=3&focus=Agent,Logs`. Diagrams count from 1 in page
 order, stories too, and `step` is the number of steps already played. Someone
-who opens the link lands on that diagram with the story stopped after step 3
-and the same boxes in the spotlight, so the next arrow press plays step 4. A
+who opens the link gets that diagram in full screen with the story stopped
+after step 3 and the same boxes in the spotlight, so the next arrow press
+plays step 4. Closing full screen leaves them at the diagram in the page. A
 step past the end shows the story finished. Each part is optional: a link
 with only `focus` lights boxes and leaves the story alone.
 

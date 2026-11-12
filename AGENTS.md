@@ -151,7 +151,10 @@ Pages:
   `diagramHash()`/`diagramFromHash()`, using the `where()`/`restore()` API
   `playDiagram` returns and the `get()`/`set()` one from `focusDiagram`,
   kept on the stage as `diagramPlay` and `diagramFocus`. The `=` keeps the
-  hash from matching a heading id.
+  hash from matching a heading id. A match opens the diagram full screen
+  through `stage.diagramFull()`, which calls `openFull()` directly: a
+  synthetic click on the button would reach the spotlight's click handler
+  and clear it.
   Labels and `| caption` text (the `.diagram-caption` bar, and a band that
   `diagramCanvas(..., captioned)` draws into exports) are set with
   `textContent` or `fillText`. Unresolved steps are dropped and
