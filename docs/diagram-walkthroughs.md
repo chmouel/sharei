@@ -360,6 +360,28 @@ reach them; copy the SVG next to the document if it must render there too.
 Agents and models are violet, waiting and secrets amber, failures and refusals
 red, success green, and everything else blue.
 
+## Presenting a note
+
+The Present button in the reader bar, or `p`, turns a note into slides and
+asks the browser for full screen. Each `##` heading starts a slide, and
+whatever comes before the first one (the title and intro) is slide one. A
+note with no `##` but several `#` headings splits on those instead, and the
+button stays hidden when there would be fewer than two slides.
+
+A slide that holds one diagram and little else gives the diagram the whole
+screen. The right arrow, `j` and Page Down play the slide's story one step
+at a time and move to the next slide once it has finished; the left arrow,
+`k` and Page Up go back the same way. On a slide with a story, Space plays
+or pauses it, and elsewhere Space moves on. Home and End jump to the first
+and last slide, and a swipe changes slide on a phone.
+
+A rail along the bottom edge has one segment per slide, with the heading as
+its tooltip; click a segment to jump there. The previous, next and close
+buttons sit in the corner and fade with the pointer after a few seconds
+still. The address carries `#slide=3`, so a link opens the talk on that
+slide. Escape clears a drawing or spotlight first, then leaves, and so does
+leaving full screen; the page scrolls to the slide you were on.
+
 ## How it fits on mermaid's output
 
 All of this happens in the browser, in `MARKDOWN_JS` in

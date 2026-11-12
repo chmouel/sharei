@@ -214,6 +214,15 @@ Pages:
   plays in real time into `captureStream()` and `MediaRecorder`
   (`diagramVideoType()`). The page CSP blocks `blob:` images, so frames go
   through `data:` URLs.
+  Presentation (`PRESENT_BUTTON`, the block after the diagram hashchange
+  listener): `slideGroups()` splits the article's direct children on H2,
+  or H1 when there are several. `present()` sets `slide-on` on one group,
+  `presenting` on the body (CSS hides the rest) and `slide-solo` when the
+  slide is one diagram plus under 240 characters, and keeps `#slide=N` with
+  `replaceState`. Arrow keys call the story's `walk()` first, which returns
+  false at either end. The key handler is a document capture listener so a
+  focused stage does not step twice; Escape is a window listener so the ink
+  and spotlight handlers clear first.
   `docs/diagram-walkthroughs.md` is the design spec and a live demo, with
   its icons in `docs/diagram-icons/`.
   Linkify ignores scheme-less links so `README.md` stays text.

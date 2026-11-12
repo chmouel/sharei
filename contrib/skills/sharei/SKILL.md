@@ -122,6 +122,9 @@ flowchart LR
   each `%% A -> B` step lights up the next message from A to B in order.
   Use it when a sequence diagram tells the story better than a flowchart,
   such as a request bouncing between services.
+- Notes meant for a talk read best split into `##` sections: the reader's
+  Present button turns each one into a slide, and a section that is just
+  a diagram with a story fills the screen.
 - Give picture boxes to the actors and main stages, and keep plain boxes for
   small steps; four to eight pictures read best. Always set `w`, `h` and
   `constraint: "on"`, or the picture stretches.

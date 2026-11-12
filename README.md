@@ -334,6 +334,11 @@ full screen at the same story, step and highlighted boxes. The pen button
 turns your pointer into a fading laser trail, and dragging with it draws
 on the diagram; Escape wipes the drawing.
 
+To talk through a note, press Present in the top bar (or `p`). Each `##`
+section becomes a full-screen slide, a diagram on its own fills the
+screen, and the arrow keys play a slide's story before moving to the next
+slide. Escape takes you back to the page.
+
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 
 The share button next to the story controls saves the selected scenario as a looping

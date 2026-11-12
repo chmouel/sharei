@@ -74,6 +74,7 @@ from sharei.reader import (
     MARKDOWN_CSS,
     MARKDOWN_JS,
     MARKDOWN_SCRIPTS,
+    PRESENT_BUTTON,
     READER_CSS,
     REVIEW_BUTTON,
     REVIEW_DOCK,
@@ -1568,7 +1569,7 @@ def markdown_page(
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{review[0]}{qr_button()}{search_button()}</nav></header>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{PRESENT_BUTTON}{review[0]}{qr_button()}{search_button()}</nav></header>
 <main class="page reader">{trail}{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>

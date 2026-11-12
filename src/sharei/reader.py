@@ -333,6 +333,38 @@ READER_CSS = """
     .reader .toc summary { pointer-events:none; list-style:none; padding:0 0 6px; }
     .reader .toc summary::-webkit-details-marker { display:none; }
   }
+
+  body.presenting > .bar, body.presenting :is(.reader .toc, .reader .crumbs, .reader .notice, .review-dock, .review-gutter, .code-gutter, .review-thread, .review-composer) { display:none !important; }
+  body.presenting .page.reader { display:flex; flex-direction:column; justify-content:center; width:100%; min-height:100dvh; padding:clamp(28px, 7vh, 88px) clamp(20px, 7vw, 120px) 96px; }
+  body.presenting.slide-solo .page.reader { height:100dvh; }
+  body.presenting .reader .markdown-body { --measure:44rem; width:100%; max-width:var(--measure); margin:0 auto; padding-left:0; font-size:clamp(18px, .9rem + .7vw, 24px); }
+  body.presenting .reader .markdown-body > :not(.slide-on) { display:none !important; }
+  body.presenting .reader .markdown-body > :is(h1, h2).slide-on { margin:0 0 .6em; padding:0; border:0; font-size:clamp(2rem, 1.3rem + 2.6vw, 3.6rem); font-weight:800; letter-spacing:-.032em; line-height:1.08; }
+  body.presenting .markdown-body .anchor { display:none; }
+  body.presenting.slide-solo .reader .markdown-body { --measure:none; flex:1; display:flex; flex-direction:column; min-height:0; }
+  body.presenting.slide-solo .reader .markdown-body > .mermaid-diagram { flex:1; display:flex; flex-direction:column; min-height:0; margin:0; padding:0; border:0; background:none; overflow:visible; }
+  body.presenting.slide-solo .reader .mermaid-diagram > .diagram-stage { flex:1; display:flex; flex-direction:column; min-height:0; }
+  body.presenting.slide-solo .reader .mermaid-diagram > .diagram-stage > svg { flex:1; width:100%; min-height:0; height:auto; max-width:none !important; }
+  body.presenting.slide-solo .reader .mermaid-diagram .diagram-tools { top:0; right:0; }
+  .slide-dock { display:none; }
+  body.presenting .slide-dock { position:fixed; z-index:4; left:0; right:0; bottom:0; display:block; padding-bottom:env(safe-area-inset-bottom); pointer-events:none; }
+  .slide-rail { display:flex; gap:3px; padding:0 max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left)); pointer-events:auto; }
+  .slide-rail button { flex:1; min-width:4px; height:16px; padding:11px 0 0; border:0; border-radius:2px 2px 0 0; background:var(--borderColor-default); background-clip:content-box; cursor:pointer; transition:background-color .2s; }
+  .slide-rail button:hover { background-color:var(--fgColor-muted); }
+  .slide-rail button.done { background-color:color-mix(in srgb, var(--fgColor-accent) 55%, var(--borderColor-default)); }
+  .slide-rail button[aria-current] { background-color:var(--fgColor-accent); }
+  .slide-rail button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:2px; }
+  .slide-controls { position:absolute; right:max(14px, env(safe-area-inset-right)); bottom:calc(26px + env(safe-area-inset-bottom)); display:flex; align-items:center; gap:2px; padding:3px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); pointer-events:auto; transition:opacity .3s; }
+  .slide-controls button { display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; border-radius:6px; background:none; color:var(--fgColor-muted); cursor:pointer; }
+  .slide-controls button:hover { background:var(--bgColor-muted); color:var(--fgColor-default); }
+  .slide-controls button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:-2px; }
+  .slide-controls svg { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  .slide-count { min-width:4.4em; color:var(--fgColor-muted); font:600 12px/1 system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums; text-align:center; }
+  @media (hover:hover) { body.slide-idle .slide-controls { opacity:0; } body.slide-idle, body.slide-idle * { cursor:none !important; } }
+  @media (prefers-reduced-motion:no-preference) {
+    body.presenting .markdown-body.slide-enter > .slide-on { animation:slide-in .28s cubic-bezier(.2, .7, .2, 1); }
+    @keyframes slide-in { from { opacity:0; transform:translateX(var(--slide-from, 0)); } }
+  }
 """
 
 
@@ -342,6 +374,15 @@ REVIEW_BUTTON = (
     'aria-label="Review" title="Review" hidden>'
     '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M1.75 1h8.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 10.25 10H7.061l-2.574 2.573A1.458 1.458 0 0 1 2 11.543V10h-.25A1.75 1.75 0 0 1 0 8.25v-5.5C0 1.784.784 1 1.75 1ZM1.5 2.75v5.5c0 .138.112.25.25.25h1a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h3.5a.25.25 0 0 0 .25-.25v-5.5a.25.25 0 0 0-.25-.25h-8.5a.25.25 0 0 0-.25.25Zm13 2a.25.25 0 0 0-.25-.25h-.5a.75.75 0 0 1 0-1.5h.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0 1 14.25 12H14v1.543a1.458 1.458 0 0 1-2.487 1.03L9.22 12.28a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l2.22 2.22v-2.19a.75.75 0 0 1 .75-.75h1a.25.25 0 0 0 .25-.25Z"></path></svg>'
     '<span class="count" hidden></span>'
+    "</button>"
+)
+
+
+# A screen with a play mark. Shown once the note has two slides.
+PRESENT_BUTTON = (
+    '<button type="button" class="renderer present-toggle" id="present" aria-pressed="false" '
+    'aria-label="Present" title="Present (P)" hidden>'
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill-rule="evenodd" d="M1.75 2h12.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 14.25 13H8.75v1.5h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5V13H1.75A1.75 1.75 0 0 1 0 11.25v-7.5C0 2.784.784 2 1.75 2Zm0 1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25ZM6.5 5.2v4.1L10 7.25Z"></path></svg>'
     "</button>"
 )
 
@@ -877,6 +918,8 @@ const DIAGRAM_ICONS = {
   share: '<path d="M8 2.5v7.5M5 5.2l3-2.7 3 2.7M4.5 8H3.5v5.5h9V8h-1"/>',
   back: '<path d="M10.5 3.5L6 8l4.5 4.5M4 3.5v9"/>',
   next: '<path d="M5.5 3.5L10 8l-4.5 4.5M12 3.5v9"/>',
+  left: '<path d="M10 3.5L5.5 8l4.5 4.5"/>',
+  right: '<path d="M6 3.5L10.5 8 6 12.5"/>',
   pen: '<path d="M10.5 2.8l2.7 2.7-7.4 7.4-3.3.6.6-3.3z"/><path d="M9 4.3l2.7 2.7"/>',
   follow: '<path d="M2.5 5.5h2.2l1.1-1.7h4.4l1.1 1.7h2.2v7h-11z"/><circle cx="8" cy="9" r="2.1"/>',
 };
@@ -2480,8 +2523,21 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     if (space) playing ? pause() : play();
     else forward ? stepNext() : stepBack();
   });
+  // Presentation mode walks a story before leaving its slide; false means there is nothing left
+  // that way.
+  function walk(forward) {
+    if (exporting) return false;
+    if (forward) {
+      if (finished) return false;
+      stepNext();
+      return true;
+    }
+    if (!timeline.length || (!reached && !elapsed && !playing)) return false;
+    stepBack();
+    return true;
+  }
   sync();
-  return { where: where, restore: restore, aim: aim };
+  return { where: where, restore: restore, aim: aim, walk: walk, toggle: () => (playing ? pause() : play()) };
 }
 
 // #diagram=2&story=1&step=3&focus=A,B names the second diagram on the page, its first story
@@ -2537,6 +2593,7 @@ function drawDiagrams() {
         }
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
+        if (block.classList.contains('slide-on')) holder.classList.add('slide-on');
         panZoom(holder, scenarios);
         const stage = holder.querySelector(':scope > .diagram-stage');
         if (stage) {
@@ -2799,6 +2856,187 @@ addEventListener('hashchange', findLine);
 addEventListener('hashchange', () => {
   for (const stage of document.querySelectorAll('.diagram-stage[data-diagram]')) if (diagramFromHash(stage)) break;
 });
+
+// Presentation mode shows the note one slide at a time, one per ## heading (# when there is no
+// ##). Right/Left, j/k and PageDown/PageUp first walk a story on the slide, then change slide;
+// Space plays or pauses the story, or moves on. #slide=N keeps the place.
+const presentButton = document.getElementById('present');
+let slideAt = -1;
+let slideDock = null;
+let slideFull = false;
+let slideIdle = 0;
+const isHeading = (element) => /^H[1-6]$/.test(element.tagName);
+function slideGroups() {
+  const blocks = [...article.children].filter((element) => !element.matches('.frontmatter, .frontmatter-raw, .review-gutter'));
+  const level = blocks.some((element) => element.tagName === 'H2') ? 'H2'
+    : blocks.filter((element) => element.tagName === 'H1').length > 1 ? 'H1' : '';
+  if (!level) return [];
+  const groups = [[]];
+  for (const element of blocks) {
+    if (element.tagName === level && groups[groups.length - 1].length) groups.push([]);
+    groups[groups.length - 1].push(element);
+  }
+  return groups.filter((group) => group.some((element) => element.textContent.trim() || element.querySelector('img, svg')));
+}
+const slideStory = () => [...article.querySelectorAll('.slide-on .diagram-stage')].map((stage) => stage.diagramPlay).find(Boolean);
+function buildDock() {
+  slideDock = document.createElement('div');
+  slideDock.className = 'slide-dock';
+  slideDock.innerHTML = '<div class="slide-rail"></div><div class="slide-controls">'
+    + '<button type="button" data-slide="-1" aria-label="Previous slide" title="Previous slide">' + diagramIcon('left') + '</button>'
+    + '<span class="slide-count" aria-live="polite"></span>'
+    + '<button type="button" data-slide="1" aria-label="Next slide" title="Next slide">' + diagramIcon('right') + '</button>'
+    + '<button type="button" data-slide="0" aria-label="Leave presentation" title="Leave (Esc)">' + diagramIcon('close') + '</button></div>';
+  for (const button of slideDock.querySelectorAll('[data-slide]')) {
+    button.addEventListener('pointerdown', (event) => event.preventDefault());
+    button.addEventListener('click', () => {
+      const direction = Number(button.dataset.slide);
+      direction ? slideMove(direction) : stopPresenting();
+    });
+  }
+  document.body.append(slideDock);
+}
+function paintDock(groups) {
+  const rail = slideDock.querySelector('.slide-rail');
+  if (rail.childElementCount !== groups.length) {
+    rail.replaceChildren(...groups.map((group, index) => {
+      const tick = document.createElement('button');
+      tick.type = 'button';
+      const heading = group.find(isHeading);
+      tick.title = heading ? heading.textContent.replace(/^#/, '').trim() : 'Slide ' + (index + 1);
+      tick.setAttribute('aria-label', 'Slide ' + (index + 1) + ': ' + tick.title);
+      tick.addEventListener('pointerdown', (event) => event.preventDefault());
+      tick.addEventListener('click', () => present(index, index - slideAt));
+      return tick;
+    }));
+  }
+  [...rail.children].forEach((tick, index) => {
+    tick.classList.toggle('done', index < slideAt);
+    if (index === slideAt) tick.setAttribute('aria-current', 'step');
+    else tick.removeAttribute('aria-current');
+  });
+  slideDock.querySelector('.slide-count').textContent = (slideAt + 1) + ' / ' + groups.length;
+}
+function present(at, direction) {
+  const groups = slideGroups();
+  if (!groups.length || at < 0 || at >= groups.length) return false;
+  if (slideAt < 0) {
+    document.body.classList.add('presenting');
+    if (!slideDock) buildDock();
+    presentButton?.setAttribute('aria-pressed', 'true');
+  }
+  for (const element of article.querySelectorAll(':scope > .slide-on')) element.classList.remove('slide-on');
+  for (const element of groups[at]) element.classList.add('slide-on');
+  // A diagram with little else on its slide takes the whole screen.
+  const diagrams = groups[at].filter((element) => element.matches('.mermaid-diagram, .highlight-source-mermaid'));
+  const words = groups[at].filter((element) => !diagrams.includes(element) && !isHeading(element))
+    .reduce((sum, element) => sum + element.textContent.trim().length, 0);
+  document.body.classList.toggle('slide-solo', diagrams.length === 1 && words < 240);
+  article.classList.remove('slide-enter');
+  if (direction && slideAt >= 0) {
+    article.style.setProperty('--slide-from', (direction > 0 ? 18 : -18) + 'px');
+    void article.offsetWidth;
+    article.classList.add('slide-enter');
+  }
+  slideAt = at;
+  scrollTo(0, 0);
+  history.replaceState(null, '', '#slide=' + (at + 1));
+  paintDock(groups);
+  slideWake();
+  return true;
+}
+function slideMove(direction) {
+  if (slideStory()?.walk(direction > 0)) return;
+  present(slideAt + direction, direction);
+}
+function stopPresenting() {
+  if (slideAt < 0) return;
+  const first = article.querySelector(':scope > .slide-on');
+  for (const element of article.querySelectorAll(':scope > .slide-on')) element.classList.remove('slide-on');
+  article.classList.remove('slide-enter');
+  document.body.classList.remove('presenting', 'slide-solo', 'slide-idle');
+  presentButton?.setAttribute('aria-pressed', 'false');
+  slideAt = -1;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (slideFull && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  slideFull = false;
+  first?.scrollIntoView({ block: 'start' });
+  scheduleTrack();
+}
+function slideWake() {
+  document.body.classList.remove('slide-idle');
+  clearTimeout(slideIdle);
+  if (slideAt >= 0) slideIdle = setTimeout(() => document.body.classList.add('slide-idle'), 2500);
+}
+if (presentButton) {
+  presentButton.hidden = slideGroups().length < 2;
+  presentButton.addEventListener('click', () => {
+    if (slideAt >= 0) {
+      stopPresenting();
+      return;
+    }
+    // Start from the section being read.
+    let at = 0;
+    slideGroups().forEach((group, index) => { if (group[0].getBoundingClientRect().top <= 96) at = index; });
+    if (!present(at)) return;
+    if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+      slideFull = true;
+      document.documentElement.requestFullscreen().catch(() => { slideFull = false; });
+    }
+  });
+  const fromHash = () => {
+    const wanted = /^#slide=(\\d+)$/.exec(location.hash);
+    if (wanted && Number(wanted[1]) - 1 !== slideAt) present(Number(wanted[1]) - 1);
+  };
+  fromHash();
+  addEventListener('hashchange', fromHash);
+  document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement || !slideFull) return;
+    slideFull = false;
+    stopPresenting();
+  });
+  addEventListener('pointermove', () => { if (slideAt >= 0) slideWake(); }, { passive: true });
+  // Capture, so a focused diagram's own keys do not walk the story a second time.
+  document.addEventListener('keydown', (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey || document.querySelector('dialog[open]')) return;
+    if (event.target.closest?.('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return;
+    if (slideAt < 0) {
+      if (event.key === 'p' && !presentButton.hidden) {
+        event.preventDefault();
+        presentButton.click();
+      }
+      return;
+    }
+    if ((event.key === ' ' || event.key === 'Enter') && event.target.closest?.('button')) return;
+    const key = event.key;
+    if (key === ' ' && !event.shiftKey && slideStory()) slideStory().toggle();
+    else if ((key === 'ArrowRight' && !event.shiftKey) || key === 'PageDown' || key === 'j' || (key === ' ' && !event.shiftKey)) slideMove(1);
+    else if ((key === 'ArrowLeft' && !event.shiftKey) || key === 'PageUp' || key === 'k' || (key === ' ' && event.shiftKey)) slideMove(-1);
+    else if (key === 'Home') present(0, -1);
+    else if (key === 'End') present(slideGroups().length - 1, 1);
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    slideWake();
+  }, true);
+  // After the page's other Escape handlers, which clear a drawing or a spotlight first.
+  addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || slideAt < 0 || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+    event.preventDefault();
+    stopPresenting();
+  });
+  let swipe = null;
+  document.addEventListener('touchstart', (event) => {
+    swipe = slideAt >= 0 && event.touches.length === 1 && !event.target.closest('.diagram-stage, pre, table, .slide-dock')
+      ? [event.touches[0].clientX, event.touches[0].clientY] : null;
+  }, { passive: true });
+  document.addEventListener('touchend', (event) => {
+    if (!swipe) return;
+    const dx = event.changedTouches[0].clientX - swipe[0], dy = event.changedTouches[0].clientY - swipe[1];
+    swipe = null;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) slideMove(dx < 0 ? 1 : -1);
+  }, { passive: true });
+}
 
 // Review mode: numbers for the source lines behind each block, and comments kept on the server
 // next to the file. Comment text only ever goes in through textContent.
