@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -43,6 +44,8 @@ def vault(tmp_path, monkeypatch):
     monkeypatch.setattr(
         notes, "CACHE", {"at": 0.0, "index": None, "thread": None, "links": {}}
     )
+    monkeypatch.setattr(notes, "TEXTS", {})
+    monkeypatch.setattr(notes, "TEXTS_HELD", [0])
     monkeypatch.setattr(
         notes,
         "VAULT",
@@ -140,8 +143,6 @@ def test_config_rejects_bad_folders(vault, folders):
 
 
 def test_newest_first(live_server, vault):
-    import os
-
     os.utime(vault / "Shared" / "Demo.md", (1_000_000, 1_000_000))
     os.utime(vault / "Shared" / "Sub" / "Other.md", (2_000_000, 2_000_000))
     write(vault / "Shared" / "Fresh.md", b"new")
@@ -150,3 +151,102 @@ def test_newest_first(live_server, vault):
     assert tree.index(">Sub<") < tree.index(">Fresh<") < tree.index(">Demo<")
     results = body.split('id="note-results"', 1)[1]
     assert results.index(">Fresh<") < results.index(">Other<") < results.index(">Demo<")
+
+
+def test_search_names_lists_shared_only(live_server, vault):
+    write(vault / "Shared" / "blob.bin", b"\x00\x01")
+    _, body = get(live_server + "/notes-search")
+    items = {item["p"]: item for item in json.loads(body)["items"]}
+    assert items["Shared/Demo.md"]["k"] == "note"
+    assert items["Shared/Demo.md"]["h"] == "/notes/Shared/Demo.md"
+    assert items["Shared/Sub"] == {
+        "p": "Shared/Sub",
+        "k": "folder",
+        "h": "/notes/Shared/Sub/",
+        "t": items["Shared/Sub"]["t"],
+        "i": "",
+    }
+    assert items["Shared/blob.bin"]["h"] == "/notes/Shared/blob.bin"
+    assert not any(
+        path.startswith(("Private", "Att", "Shared/Ignored", "Shared/.hidden"))
+        or path == "Shared/escape.md"
+        for path in items
+    )
+    # A file that is neither a note nor text downloads from its /notes/ link.
+    with urllib.request.urlopen(live_server + "/notes/Shared/blob.bin") as response:
+        assert response.read() == b"\x00\x01"
+        assert "attachment" in response.headers["Content-Disposition"]
+
+
+def test_search_text(live_server, vault):
+    write(
+        vault / "Shared" / "Café.md",
+        b"# Menu\n\nA long day.\nThe CAFE opens at nine, cafe and croissant.\n",
+    )
+    write(vault / "Private" / "Cafe secret.md", b"cafe croissant unicorn")
+    _, body = get(live_server + "/notes-search?q=caf%C3%A9+croissant")
+    data = json.loads(body)
+    assert data["terms"] == ["cafe", "croissant"]
+    assert [result["p"] for result in data["results"]] == ["Shared/Café.md"]
+    result = data["results"][0]
+    assert result["h"] == "/notes/Shared/Caf%C3%A9.md"
+    assert result["hits"] == [
+        {"n": 4, "s": "The CAFE opens at nine, cafe and croissant."}
+    ]
+    # Words found in the path count too, so a title match with no line still shows.
+    _, body = get(live_server + "/notes-search?q=sub+other")
+    data = json.loads(body)
+    assert [result["p"] for result in data["results"]] == ["Shared/Sub/Other.md"]
+    assert data["results"][0]["hits"] == [{"n": 1, "s": "# Other"}]
+    _, body = get(live_server + "/notes-search?q=unicorn")
+    assert json.loads(body)["results"] == []
+
+
+def test_search_text_follows_edits(live_server, vault):
+    note = vault / "Shared" / "Sub" / "Other.md"
+    assert json.loads(get(live_server + "/notes-search?q=zebra")[1])["results"] == []
+    write(note, b"# Other\nzebra\nzebra crossing\n")
+    os.utime(note, (1, 1))
+    hits = json.loads(get(live_server + "/notes-search?q=zebra+crossing")[1])
+    # The line holding the most words comes first.
+    assert hits["results"][0]["hits"] == [
+        {"n": 3, "s": "zebra crossing"},
+        {"n": 2, "s": "zebra"},
+    ]
+
+
+def test_search_snippet_cut_around_match():
+    line = "x" * 300 + " needle " + "y" * 300
+    cut = notes.snippet(line, line, ["needle"])
+    assert cut.startswith("…") and cut.endswith("…") and "needle" in cut
+    assert len(cut) == notes.SEARCH_SNIPPET_CHARS + 2
+
+
+def test_search_skips_note_swapped_for_symlink(live_server, vault):
+    write(vault / "Private" / "Secret.md", b"the launch code is swordfish")
+    note = vault / "Shared" / "Sub" / "Other.md"
+    assert json.loads(get(live_server + "/notes-search?q=other")[1])["results"]
+    note.unlink()
+    note.symlink_to(vault / "Private" / "Secret.md")
+    data = json.loads(get(live_server + "/notes-search?q=swordfish")[1])
+    assert data["results"] == []
+
+
+def test_search_snippet_after_folding_changes_length():
+    line = "\ufb03" * 300 + " needle " + "x" * 300
+    cut = notes.snippet(line, notes.fold(line), ["needle"])
+    assert "needle" in cut
+
+
+def test_search_needs_vault(live_server, monkeypatch):
+    monkeypatch.setattr(notes, "VAULT", None)
+    assert status(live_server + "/notes-search") == 404
+    assert status(live_server + "/notes-search?q=x") == 404
+    assert "data-search" not in get(live_server + "/drop")[1]
+
+
+def test_search_button_and_script_on_pages(live_server, vault):
+    for path in ("/drop", "/notes", "/notes/Shared/Demo.md", "/notes-pdf/Att/doc.pdf"):
+        body = get(live_server + path)[1]
+        assert "data-search" in body, path
+        assert "window.shareiSearch" in body, path

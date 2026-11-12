@@ -147,12 +147,26 @@ Pages:
   name filter (`NOTES_JS`) over the whole tree, newest first (folders by their
   newest note) with a toggle to A to Z kept in localStorage `sharei-notes-sort`
 - `/notes/<path>`: a note in the `/md` reader with breadcrumbs and no
-  review, Raw or comments; a text file in the `/view` page. The page
+  review, Raw or comments; a text file in the `/view` page; any other
+  file as a download, like `/notes-file`. The page
   embeds `notes.link_map()` as `#notes-links`, and `obsidianFlavour()` in
   `MARKDOWN_JS` uses it for wikilinks, embeds and standard links (a null
   target becomes `.note-missing` text), plus `==mark==`, inline `#tags`,
   `%%comments%%`, and any callout type with `-`/`+` folding as `<details>`
 - `/notes-pdf/<path>`: a vault PDF in the pdf.js page
+
+Every page also carries the notes picker when a vault is set
+(`search_button()`, `search_script()`, `SEARCH_JS`/`SEARCH_CSS` in
+`assets.py`): `/` (outside a field) or Ctrl/Cmd+K opens a `<dialog>`. Names
+mode fetches `/notes-search` once and ranks it on the client (fzf-like:
+substrings on a word boundary first, a match in the name beats one in the
+folders). Text mode queries `/notes-search?q=` with a debounce. Tab switches
+mode, kept in localStorage `sharei-search-mode`. Both fold case and accents
+the same way (NFKD, combining marks dropped). A text hit links to
+`/notes/<path>#find=<line>:<words>`; `findLine()` in `MARKDOWN_JS` scrolls to
+the innermost `data-line` block and wraps the words in `mark.find-hit`.
+Pages with `default-src 'none'` (`/view`, `/play`, `/pdf`) allow
+`connect-src 'self'` for that fetch.
 
 Files:
 
@@ -176,6 +190,13 @@ Data:
 - `/state`: stamps for the live reload
 - `/recent`: newest items as JSON, used by the skill
 - `/sw.js` (service worker), `/push/key` (VAPID public key): push only
+- `/notes-search`: every shared note, folder and file for the picker,
+  `{items: [{p, k, h, t, i}]}` (path, kind, link, mtime, icon), rebuilt per
+  vault scan (`notes_entries()`). With `?q=`, a full-text search over the
+  shared markdown notes (`notes.search()`): every word must appear in the
+  text or the path, at most `SEARCH_NOTES_MAX` notes with
+  `SEARCH_HITS_PER_NOTE` lines each, best first. Folded texts are cached by
+  mtime and size up to `SEARCH_CACHE_MAX_CHARS`. 404 without a vault.
 - `/clip/raw[?n=]`: the clip, or history entry n (1 is the newest), `/clip/state`
 - `/comments/<project>/<name>`: `{name, lines, comments}` for a markdown
   drop, or `?format=prompt` for the text `sharec get comments` prints

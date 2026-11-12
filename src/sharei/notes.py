@@ -35,6 +35,16 @@ ICON_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 ICON_SUFFIXES = (".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif")
 ICON_MAX_BYTES = 1024 * 1024
 
+# Full-text search over the shared notes.
+SEARCH_QUERY_MAX = 200
+SEARCH_TERMS_MAX = 8
+SEARCH_NOTES_MAX = 50
+SEARCH_HITS_PER_NOTE = 5
+SEARCH_SNIPPET_CHARS = 200
+# Folded note texts kept in memory between searches; past this they are read each time.
+SEARCH_CACHE_MAX_CHARS = 64 * 1024 * 1024
+COMBINING = re.compile("[\u0300-\u036f]")
+
 
 class Vault(NamedTuple):
     root: Path
@@ -56,6 +66,10 @@ class Index(NamedTuple):
 VAULT: Vault | None = None
 CACHE: dict[str, object] = {"at": 0.0, "index": None, "thread": None, "links": {}}
 LOCK = threading.Lock()
+# Note path -> (mtime, size, text, folded text), for search.
+TEXTS: dict[str, tuple[float, int, str, str]] = {}
+TEXTS_HELD = [0]
+TEXTS_LOCK = threading.Lock()
 
 
 def key(text: str) -> str:
@@ -402,3 +416,139 @@ def link_map(
             entry["src"] = url("/notes-file/", found)
         links[target] = entry
     return links
+
+
+def fold(text: str) -> str:
+    """Lower case without accents, the way the search box compares text.
+
+    Only the common combining marks are dropped, which keeps line breaks where they were.
+    lower() rather than casefold() matches JavaScript's toLowerCase(), so the picker and
+    the reader highlight what this matched.
+    """
+    return COMBINING.sub("", unicodedata.normalize("NFKD", text)).lower()
+
+
+def note_text(relative: str, path: Path) -> tuple[str, str] | None:
+    """A shared note's text and its folded form, cached until the file changes."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    if info.st_size > MAX_NOTE_BYTES:
+        return None
+    with TEXTS_LOCK:
+        cached = TEXTS.get(relative)
+    if cached and cached[0] == info.st_mtime and cached[1] == info.st_size:
+        return cached[2], cached[3]
+    try:
+        text = path.read_text("utf-8", errors="replace")
+    except OSError:
+        return None
+    folded = fold(text)
+    with TEXTS_LOCK:
+        forget(relative)
+        if TEXTS_HELD[0] + len(text) + len(folded) <= SEARCH_CACHE_MAX_CHARS:
+            TEXTS[relative] = (info.st_mtime, info.st_size, text, folded)
+            TEXTS_HELD[0] += len(text) + len(folded)
+    return text, folded
+
+
+def forget(relative: str) -> None:
+    """Drops a cached note text. The caller holds TEXTS_LOCK."""
+    entry = TEXTS.pop(relative, None)
+    if entry:
+        TEXTS_HELD[0] -= len(entry[2]) + len(entry[3])
+
+
+def snippet(line: str, folded: str, terms: list[str]) -> str:
+    """The line, cut down around its first match when it is long."""
+    line = line.strip()
+    if len(line) <= SEARCH_SNIPPET_CHARS:
+        return line
+    folded = fold(line)
+    at = min((folded.find(term) for term in terms if term in folded), default=0)
+    if len(folded) != len(line):
+        # Folding changed the length: walk the line to the character the match starts in.
+        seen = 0
+        for index, char in enumerate(line):
+            seen += len(fold(char))
+            if seen > at:
+                at = index
+                break
+    start = max(
+        0, min(at - SEARCH_SNIPPET_CHARS // 4, len(line) - SEARCH_SNIPPET_CHARS)
+    )
+    end = start + SEARCH_SNIPPET_CHARS
+    return ("…" if start else "") + line[start:end] + ("…" if end < len(line) else "")
+
+
+def search(index: Index, query: str) -> tuple[list[str], list[dict[str, object]]]:
+    """Shared notes holding every word of the query, in their text or their path.
+
+    Each note comes with the lines that match the most words, best lines and notes first.
+    """
+    terms = list(dict.fromkeys(fold(query[:SEARCH_QUERY_MAX]).split()))[
+        :SEARCH_TERMS_MAX
+    ]
+    if not terms:
+        return [], []
+    found: list[tuple[float, float, dict[str, object]]] = []
+    for relative in index.shared:
+        if not is_markdown(relative):
+            continue
+        # The same check as serving the note, so a file swapped for a symlink since
+        # the scan is skipped.
+        path = allowed(index, relative)
+        if path is None:
+            continue
+        loaded = note_text(relative, path)
+        if loaded is None:
+            continue
+        text, folded = loaded
+        name = fold(posixpath.splitext(relative)[0])
+        if not all(term in folded or term in name for term in terms):
+            continue
+        lines = []
+        if any(term in folded for term in terms):
+            for number, (line, lowered) in enumerate(
+                zip(text.split("\n"), folded.split("\n"), strict=False), 1
+            ):
+                matched = sum(term in lowered for term in terms)
+                if matched and line.strip():
+                    lines.append((matched, number, line, lowered))
+        best = sorted(lines, key=lambda item: (-item[0], item[1]))[
+            :SEARCH_HITS_PER_NOTE
+        ]
+        title = fold(posixpath.basename(name))
+        score = (
+            sum(min(folded.count(term), 10) for term in terms)
+            + 8 * sum(term in title for term in terms)
+            + 3 * (best and max(item[0] for item in best) or 0)
+        )
+        try:
+            changed = path.stat().st_mtime
+        except OSError:
+            changed = 0.0
+        found.append(
+            (
+                score,
+                changed,
+                {
+                    "p": relative,
+                    "h": url("/notes/", relative),
+                    "i": url("/notes-icon/", index.icons[relative])
+                    if relative in index.icons
+                    else "",
+                    "t": int(changed),
+                    "hits": [
+                        {"n": number, "s": snippet(line, lowered, terms)}
+                        for _, number, line, lowered in best
+                    ],
+                },
+            )
+        )
+    found.sort(key=lambda item: (-item[0], -item[1], item[2]["p"]))
+    with TEXTS_LOCK:
+        for gone in set(TEXTS) - index.shared:
+            forget(gone)
+    return terms, [entry for _, _, entry in found[:SEARCH_NOTES_MAX]]

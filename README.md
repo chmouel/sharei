@@ -184,6 +184,13 @@ Icons given to notes and folders with the Icon Fairy plugin show up too.
 Everything else in the vault stays private: a link to a note outside the
 chosen folders shows as plain text. Nothing is ever changed in the vault.
 
+To jump to a note from any page, press `/` or Ctrl+K (Cmd+K on a Mac), or tap
+the magnifier. Type a few letters of its name, in any order of words, and
+press Enter. Switch to Text, or press Tab, to search inside the notes
+instead: each matching line is listed, and opening one scrolls the note to
+that line with the words highlighted. Neither search cares about case or
+accents.
+
 ## Share from the terminal
 
 `sharec` comes with sharei and sends things to it:

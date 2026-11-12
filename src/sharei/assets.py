@@ -1506,3 +1506,368 @@ PUSH_JS = """
   });
 })();
 """
+
+
+SEARCH_CSS = """
+  .search-dialog { --s-ink:var(--ink, var(--fgColor-default)); --s-muted:var(--muted, var(--fgColor-muted)); --s-line:var(--line, var(--borderColor-default)); --s-panel:var(--panel, var(--bgColor-default)); --s-field:var(--field, var(--bgColor-muted)); --s-accent:var(--accent, var(--fgColor-accent));
+    position:fixed; inset:min(12vh, 96px) 0 auto; width:min(100% - 20px, 680px); max-width:none; max-height:min(76dvh, 660px); margin:0 auto; padding:0; overflow:hidden; border:1px solid var(--s-line); border-radius:18px; background:var(--s-panel); color:var(--s-ink); font-family:system-ui,-apple-system,sans-serif; font-size:14px; box-shadow:0 24px 64px rgba(0,0,0,.35); }
+  .search-dialog[open] { display:flex; flex-direction:column; }
+  .search-dialog::backdrop { background:color-mix(in srgb, var(--base, var(--bgColor-default)) 45%, transparent); backdrop-filter:blur(3px); }
+  .search-head { display:flex; align-items:center; gap:8px; padding:10px; border-bottom:1px solid var(--s-line); }
+  .search-head input { flex:1; min-width:0; height:40px; padding:0 12px; border:1px solid var(--s-line); border-radius:12px; background:var(--s-field); color:var(--s-ink); font:inherit; font-size:16px; outline:none; }
+  .search-head input:focus { border-color:var(--s-accent); }
+  .search-modes { display:flex; flex:0 0 auto; padding:3px; border:1px solid var(--s-line); border-radius:12px; background:var(--s-field); }
+  .search-modes button { padding:6px 10px; border:0; border-radius:9px; background:none; color:var(--s-muted); font:inherit; font-size:13px; font-weight:650; cursor:pointer; }
+  .search-modes button[aria-pressed=true] { background:var(--s-accent); color:var(--accent-ink, var(--bgColor-default)); }
+  .search-modes button:focus-visible { outline:2px solid var(--s-accent); outline-offset:1px; }
+  .search-list:empty { display:none; }
+  .search-list { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:6px; }
+  .search-row { display:flex; align-items:center; gap:10px; min-height:44px; padding:7px 10px; border-radius:10px; color:inherit; text-decoration:none; }
+  .search-row[aria-selected=true] { background:color-mix(in srgb, var(--s-accent) 16%, transparent); }
+  .search-kind { display:grid; place-items:center; flex:0 0 26px; height:26px; border-radius:8px; background:var(--s-field); color:var(--s-muted); font-size:13px; }
+  .search-kind img { width:18px; height:18px; object-fit:contain; }
+  .search-copy { display:grid; gap:2px; flex:1; min-width:0; }
+  .search-copy strong, .search-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .search-copy strong { font-weight:600; }
+  .search-copy small { color:var(--s-muted); font-size:12px; }
+  .search-copy b { color:var(--s-accent); font-weight:750; }
+  .search-side { flex:0 0 auto; color:var(--s-muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .search-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px; border-top:1px solid var(--s-line); color:var(--s-muted); font-size:12px; }
+  .search-keys kbd { display:inline-block; min-width:18px; margin:0 2px; padding:1px 5px; border:1px solid var(--s-line); border-radius:5px; background:var(--s-field); font:inherit; font-size:11px; text-align:center; }
+  @media (hover:none), (max-width:520px) { .search-keys { display:none; } }
+  @media (max-width:520px) { .search-dialog { inset:10px 0 auto; max-height:calc(100dvh - 20px); } }
+  .bar nav [data-search] { display:inline-flex; align-items:center; }
+  mark.find-hit { padding:0 1px; border-radius:3px; background:color-mix(in srgb, var(--fgColor-accent) 32%, transparent); color:inherit; }
+  .find-target { border-radius:6px; box-shadow:0 0 0 6px color-mix(in srgb, var(--fgColor-accent) 10%, transparent); background:color-mix(in srgb, var(--fgColor-accent) 10%, transparent); }
+"""
+
+
+SEARCH_JS = """
+(() => {
+  // The notes picker: / or Ctrl/Cmd+K anywhere, fuzzy on names or a full-text search on the server.
+  const LIMIT = 80;
+  const MODE_KEY = 'sharei-search-mode';
+  const BOUNDARY = /[\\/\\s_\\-.()\\[\\]]/;
+  let dialog, input, list, status, modes;
+  let items = null, loading = null, controller = null, timer = 0;
+  let rows = [], selected = 0, mode = 'name';
+  try { if (localStorage.getItem(MODE_KEY) === 'text') mode = 'text'; } catch (_) {}
+
+  const fold = (text) => text.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
+  // The folded text, and for each of its characters the index of the character it came
+  // from in the original. Plain lower-casing that keeps the length needs no map.
+  function folding(text) {
+    const whole = fold(text);
+    if (whole === text.toLowerCase() && whole.length === text.length) return { text: whole, origin: null };
+    let out = '';
+    const origin = [];
+    for (let index = 0; index < text.length;) {
+      const character = String.fromCodePoint(text.codePointAt(index));
+      const piece = fold(character);
+      out += piece;
+      for (let count = 0; count < piece.length; count++) origin.push(index);
+      index += character.length;
+    }
+    return { text: out, origin };
+  }
+
+  function prepare(item) {
+    const slash = item.p.lastIndexOf('/');
+    const folder = slash < 0 ? '' : item.p.slice(0, slash);
+    let title = item.p.slice(slash + 1);
+    if (item.k === 'note') title = title.replace(/\\.(md|markdown)$/i, '');
+    const shown = (folder ? folder + '/' : '') + title;
+    const folded = folding(shown);
+    const nameAt = folded.origin ? folded.origin.indexOf(folder ? folder.length + 1 : 0) : (folder ? folder.length + 1 : 0);
+    return { ...item, folder, title, shown, folded: folded.text, origin: folded.origin, nameAt: Math.max(0, nameAt) };
+  }
+
+  // One word against the folded path: a substring on a word boundary beats a scattered match,
+  // and a match in the name beats one in the folders.
+  function matchWord(word, text, from) {
+    let best = null;
+    for (let at = text.indexOf(word, from); at >= 0; at = text.indexOf(word, at + 1)) {
+      const edge = at === 0 || BOUNDARY.test(text[at - 1]);
+      const score = word.length * 6 + (edge ? 10 : 0);
+      if (!best || score > best.score) best = { score, positions: Array.from(word, (_, index) => at + index) };
+      if (edge) break;
+    }
+    if (best) return best;
+    let index = from, position = 0;
+    for (; index < text.length && position < word.length; index++) if (text[index] === word[position]) position++;
+    if (position < word.length) return null;
+    const end = index;
+    position = word.length - 1;
+    let start = end - 1;
+    for (let back = end - 1; back >= from; back--) {
+      if (text[back] === word[position] && --position < 0) { start = back; break; }
+    }
+    const positions = [];
+    let score = 0, previous = -2;
+    position = 0;
+    for (let at = start; at < end && position < word.length; at++) {
+      if (text[at] !== word[position]) continue;
+      score += 1 + (at === 0 || BOUNDARY.test(text[at - 1]) ? 6 : 0) + (previous === at - 1 ? 4 : 0);
+      positions.push(at);
+      previous = at;
+      position++;
+    }
+    return { score: score - (end - start - word.length) * 0.5, positions };
+  }
+
+  function rank(query) {
+    const words = fold(query).split(/\\s+/).filter(Boolean);
+    if (!words.length) {
+      return items.filter((item) => item.k === 'note')
+        .sort((a, b) => b.t - a.t).slice(0, LIMIT).map((item) => ({ item, marks: [] }));
+    }
+    const found = [];
+    for (const item of items) {
+      let score = 0;
+      const marks = [];
+      for (const word of words) {
+        const inName = matchWord(word, item.folded, item.nameAt);
+        const match = inName || matchWord(word, item.folded, 0);
+        if (!match) { score = -1; break; }
+        score += match.score + (inName ? 12 : 0);
+        marks.push(...match.positions);
+      }
+      if (score < 0) continue;
+      if (item.k === 'note') score += 2;
+      found.push({ item, score, marks });
+    }
+    found.sort((a, b) => b.score - a.score || a.item.shown.length - b.item.shown.length || b.item.t - a.item.t);
+    return found.slice(0, LIMIT);
+  }
+
+  // Text with the characters starting at the given indexes in <b>, built without innerHTML.
+  function marked(text, indexes, offset) {
+    const fragment = document.createDocumentFragment();
+    let run = '', bold = false;
+    const flush = () => {
+      if (!run) return;
+      if (bold) { const b = document.createElement('b'); b.textContent = run; fragment.append(b); } else fragment.append(run);
+      run = '';
+    };
+    for (let index = 0; index < text.length;) {
+      const character = String.fromCodePoint(text.codePointAt(index));
+      const hit = indexes.has(index + offset);
+      if (hit !== bold) { flush(); bold = hit; }
+      run += character;
+      index += character.length;
+    }
+    flush();
+    return fragment;
+  }
+
+  // Indexes in text where any of the folded words appear.
+  function wordMarks(text, words) {
+    words = words.filter(Boolean);
+    const { text: folded, origin } = folding(text);
+    const indexes = new Set();
+    for (const word of words) {
+      for (let at = folded.indexOf(word); at >= 0; at = folded.indexOf(word, at + word.length)) {
+        for (let index = at; index < at + word.length; index++) indexes.add(origin ? origin[index] : index);
+      }
+    }
+    return indexes;
+  }
+
+  const thisYear = new Date().getFullYear();
+  function when(seconds) {
+    if (!seconds) return '';
+    const date = new Date(seconds * 1000);
+    const options = date.getFullYear() === thisYear ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short' };
+    return date.toLocaleDateString(undefined, options);
+  }
+
+  function row(href, kind, icon, title, titleMarks, below, belowMarks, side) {
+    const link = document.createElement('a');
+    link.className = 'search-row';
+    link.href = href;
+    link.setAttribute('role', 'option');
+    link.id = 'search-row-' + rows.length;
+    link.tabIndex = -1;
+    const thumb = document.createElement('span');
+    thumb.className = 'search-kind';
+    thumb.setAttribute('aria-hidden', 'true');
+    if (icon) {
+      const image = document.createElement('img');
+      image.src = icon;
+      image.alt = '';
+      thumb.append(image);
+    } else thumb.textContent = kind === 'folder' ? '▸' : kind === 'note' ? '¶' : '▤';
+    const copy = document.createElement('span');
+    copy.className = 'search-copy';
+    const strong = document.createElement('strong');
+    strong.append(marked(title, titleMarks, 0));
+    copy.append(strong);
+    if (below) {
+      const small = document.createElement('small');
+      small.append(marked(below, belowMarks, 0));
+      copy.append(small);
+    }
+    link.append(thumb, copy);
+    if (side) {
+      const meta = document.createElement('span');
+      meta.className = 'search-side';
+      meta.textContent = side;
+      link.append(meta);
+    }
+    link.addEventListener('mousemove', () => select(rows.indexOf(link), false));
+    link.addEventListener('click', (event) => {
+      if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey) dialog.close();
+    });
+    rows.push(link);
+    return link;
+  }
+
+  function show(built, message) {
+    list.replaceChildren(...built);
+    status.textContent = message;
+    select(0, true);
+  }
+
+  function select(index, scroll) {
+    if (!rows.length) { input.removeAttribute('aria-activedescendant'); return; }
+    selected = (index + rows.length) % rows.length;
+    rows.forEach((link, at) => link.setAttribute('aria-selected', at === selected ? 'true' : 'false'));
+    input.setAttribute('aria-activedescendant', rows[selected].id);
+    if (scroll) rows[selected].scrollIntoView({ block: 'nearest' });
+  }
+
+  function names() {
+    if (!items) {
+      status.textContent = 'Loading notes…';
+      loading = loading || fetch('/notes-search', { credentials: 'same-origin' })
+        .then((response) => { if (!response.ok) throw new Error(response.status); return response.json(); })
+        .then((data) => { items = data.items.map(prepare); })
+        .catch(() => { loading = null; status.textContent = 'Could not load the notes'; });
+      loading.then(() => { if (items && mode === 'name' && dialog.open) names(); });
+      return;
+    }
+    rows = [];
+    const found = rank(input.value);
+    const built = found.map(({ item, marks }) => {
+      const indexes = new Set(marks.map((at) => (item.origin ? item.origin[at] : at)));
+      const titleAt = item.folder ? item.folder.length + 1 : 0;
+      const titleMarks = new Set([...indexes].filter((at) => at >= titleAt).map((at) => at - titleAt));
+      const folderMarks = new Set([...indexes].filter((at) => at < item.folder.length));
+      return row(item.h, item.k, item.i, item.title + (item.k === 'folder' ? '/' : ''), titleMarks,
+        item.folder, folderMarks, item.k === 'folder' ? 'Folder' : when(item.t));
+    });
+    const query = input.value.trim();
+    show(built, query ? (found.length ? found.length + (found.length === LIMIT ? '+' : '') + ' found' : 'Nothing matches')
+      : (found.length ? 'Recent notes' : 'No notes shared'));
+  }
+
+  function text() {
+    clearTimeout(timer);
+    if (controller) controller.abort();
+    const query = input.value.trim();
+    if (!query) { rows = []; show([], 'Type to search inside the notes'); return; }
+    status.textContent = 'Searching…';
+    timer = setTimeout(() => {
+      controller = new AbortController();
+      fetch('/notes-search?q=' + encodeURIComponent(query), { credentials: 'same-origin', signal: controller.signal })
+        .then((response) => { if (!response.ok) throw new Error(response.status); return response.json(); })
+        .then((data) => {
+          if (mode !== 'text' || input.value.trim() !== query) return;
+          rows = [];
+          const built = [];
+          const find = encodeURIComponent(data.terms.join(' '));
+          for (const result of data.results) {
+            const slash = result.p.lastIndexOf('/');
+            const title = result.p.slice(slash + 1).replace(/\\.(md|markdown)$/i, '');
+            const folder = slash < 0 ? '' : result.p.slice(0, slash);
+            const titleMarks = wordMarks(title, data.terms);
+            if (!result.hits.length) {
+              built.push(row(result.h, 'note', result.i, title, titleMarks, folder, new Set(), when(result.t)));
+              continue;
+            }
+            for (const hit of result.hits) {
+              built.push(row(result.h + '#find=' + hit.n + ':' + find, 'note', result.i, title, titleMarks,
+                hit.s, wordMarks(hit.s, data.terms), 'L' + hit.n));
+            }
+          }
+          const notes = data.results.length;
+          show(built, notes ? built.length + ' lines in ' + notes + (notes === 1 ? ' note' : ' notes') : 'Nothing matches');
+        })
+        .catch((error) => { if (error.name !== 'AbortError') status.textContent = 'Search failed'; });
+    }, 160);
+  }
+
+  function update() { (mode === 'text' ? text : names)(); }
+
+  function setMode(next) {
+    mode = next;
+    try { localStorage.setItem(MODE_KEY, mode); } catch (_) {}
+    modes.forEach((button) => button.setAttribute('aria-pressed', button.dataset.mode === mode ? 'true' : 'false'));
+    input.placeholder = mode === 'text' ? 'Search inside notes' : 'Find a note by name';
+    update();
+  }
+
+  function go(newTab) {
+    const link = rows[selected];
+    if (!link) return;
+    if (newTab) { window.open(link.href, '_blank', 'noopener'); return; }
+    dialog.close();
+    location.href = link.href;
+  }
+
+  function build() {
+    dialog = document.createElement('dialog');
+    dialog.className = 'search-dialog';
+    dialog.setAttribute('aria-label', 'Search notes');
+    dialog.innerHTML = '<div class="search-head"><input type="search" autocomplete="off" spellcheck="false" enterkeyhint="go" role="combobox" aria-expanded="true" aria-controls="search-list" aria-label="Search notes">'
+      + '<div class="search-modes" role="group" aria-label="Search in"><button type="button" data-mode="name">Names</button><button type="button" data-mode="text">Text</button></div></div>'
+      + '<div class="search-list" id="search-list" role="listbox" aria-label="Results"></div>'
+      + '<div class="search-foot"><span class="search-status" role="status"></span><span class="search-keys"><kbd>↑</kbd><kbd>↓</kbd> move <kbd>Enter</kbd> open <kbd>Tab</kbd> names/text <kbd>Esc</kbd> close</span></div>';
+    input = dialog.querySelector('input');
+    list = dialog.querySelector('.search-list');
+    status = dialog.querySelector('.search-status');
+    modes = [...dialog.querySelectorAll('[data-mode]')];
+    modes.forEach((button) => button.addEventListener('click', () => { setMode(button.dataset.mode); input.focus(); }));
+    input.addEventListener('input', update);
+    input.addEventListener('keydown', (event) => {
+      const control = event.ctrlKey && !event.metaKey && !event.altKey;
+      if (event.key === 'ArrowDown' || (control && (event.key === 'n' || event.key === 'j'))) { event.preventDefault(); select(selected + 1, true); }
+      else if (event.key === 'ArrowUp' || (control && (event.key === 'p' || event.key === 'k'))) { event.preventDefault(); select(selected - 1, true); }
+      else if (event.key === 'PageDown') { event.preventDefault(); select(Math.min(selected + 10, rows.length - 1), true); }
+      else if (event.key === 'PageUp') { event.preventDefault(); select(Math.max(selected - 10, 0), true); }
+      else if (event.key === 'Tab') { event.preventDefault(); setMode(mode === 'text' ? 'name' : 'text'); }
+      else if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); go(event.ctrlKey || event.metaKey || event.shiftKey); }
+    });
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+    document.body.append(dialog);
+    const previousBusy = window.liveBusy;
+    window.liveBusy = () => dialog.open || (previousBusy ? previousBusy() : false);
+  }
+
+  function open() {
+    if (!dialog) build();
+    if (dialog.open) { input.focus(); input.select(); return; }
+    dialog.showModal();
+    setMode(mode);
+    input.focus();
+    input.select();
+  }
+  window.shareiSearch = open;
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest && event.target.closest('[data-search]')) { event.preventDefault(); open(); }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || (dialog && dialog.open)) return;
+    const typing = event.target.closest && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+    const command = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+    if ((command && event.key.toLowerCase() === 'k') || (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey)) {
+      // Another overlay owns the keyboard: a native dialog, or the screenshot viewer and the
+      // annotator, which are aria-modal divs.
+      if ([...document.querySelectorAll('dialog[open], [aria-modal="true"]')].some((element) => !element.closest('[hidden]') && element.getClientRects().length)) return;
+      event.preventDefault();
+      open();
+    }
+  });
+})();
+"""

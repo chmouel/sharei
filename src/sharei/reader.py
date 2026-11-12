@@ -973,6 +973,75 @@ if (location.hash && !/^#L\\d/.test(location.hash)) {
   if (target) target.scrollIntoView();
 }
 
+// #find=12:words, from the notes search: the innermost block holding source line 12, with
+// the words marked the way the search matched them, ignoring case and accents.
+function findLine() {
+  const wanted = /^#find=(\\d+)(?::(.*))?$/.exec(location.hash);
+  if (!wanted) return;
+  const line = Number(wanted[1]);
+  let words = [];
+  try { words = decodeURIComponent(wanted[2] || '').split(/\\s+/).filter(Boolean); } catch (error) { /* bad hash */ }
+  const fold = (text) => text.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
+  words = words.map(fold).filter(Boolean);
+  let block = null, before = null;
+  for (const element of article.querySelectorAll('[data-line]')) {
+    const start = Number(element.dataset.line), end = Number(element.dataset.lineEnd || start);
+    if (start <= line && line <= end && (!block || block.contains(element))) block = element;
+    if (start <= line) before = element;
+  }
+  block = block || before;
+  if (!block) return;
+  article.querySelectorAll('mark.find-hit').forEach((mark) => {
+    const parent = mark.parentNode;
+    mark.replaceWith(...mark.childNodes);
+    parent.normalize();
+  });
+  article.querySelectorAll('.find-target').forEach((element) => element.classList.remove('find-target'));
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    let folded = '';
+    const origin = [];
+    const ends = [];
+    for (let index = 0; index < text.length;) {
+      const character = String.fromCodePoint(text.codePointAt(index));
+      const piece = fold(character);
+      folded += piece;
+      for (let count = 0; count < piece.length; count++) { origin.push(index); ends.push(index + character.length); }
+      index += character.length;
+    }
+    const found = [];
+    for (const word of words) {
+      for (let at = folded.indexOf(word); at >= 0; at = folded.indexOf(word, at + word.length)) {
+        found.push([origin[at], ends[at + word.length - 1]]);
+      }
+    }
+    found.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const ranges = [];
+    for (const range of found) {
+      const previous = ranges[ranges.length - 1];
+      if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1]);
+      else ranges.push(range);
+    }
+    let current = node, offset = 0;
+    for (const [start, end] of ranges) {
+      const hit = current.splitText(start - offset);
+      current = hit.splitText(end - start);
+      offset = end;
+      const mark = document.createElement('mark');
+      mark.className = 'find-hit';
+      hit.replaceWith(mark);
+      mark.append(hit);
+    }
+  }
+  block.classList.add('find-target');
+  (block.querySelector('mark.find-hit') || block).scrollIntoView({ block: 'center' });
+}
+findLine();
+addEventListener('hashchange', findLine);
+
 // Review mode: numbers for the source lines behind each block, and comments kept on the server
 // next to the file. Comment text only ever goes in through textContent.
 const commentsUrl = article.dataset.comments || '';

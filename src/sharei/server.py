@@ -64,6 +64,8 @@ from sharei.assets import (
     PUSH_JS,
     QR_CSS,
     QR_JS,
+    SEARCH_CSS,
+    SEARCH_JS,
     SHARE_JS,
     SORT_ICON,
     SW_JS,
@@ -348,7 +350,7 @@ def theme_picker() -> str:
         else ""
     )
     return (
-        f'<div class="theme-picker">{push_button}<button class="theme-button" id="theme-button" type="button" '
+        f'<div class="theme-picker">{search_button("theme-button")}{push_button}<button class="theme-button" id="theme-button" type="button" '
         'aria-label="Theme" title="Theme" aria-haspopup="true" aria-expanded="false">'
         '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.5" '
         'fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5a7.5 7.5 0 0 1 0 15z" '
@@ -1363,6 +1365,75 @@ def qr_script(nonce: str = "") -> str:
     return f"<script{attribute}>window.shareiPublicUrl = {base};{QR_JS}</script>"
 
 
+SEARCH_ICON = (
+    '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" '
+    'fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12.6 12.6l4.4 4.4" '
+    'stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'
+)
+
+
+def search_button(css_class: str = "") -> str:
+    """The button that opens the notes picker, also bound to / and Ctrl/Cmd+K."""
+    if notes.VAULT is None:
+        return ""
+    attribute = f' class="{css_class}"' if css_class else ""
+    return (
+        f'<button type="button" data-search{attribute} aria-label="Search notes (/ or Ctrl+K)" '
+        f'title="Search notes (/ or Ctrl+K)">{SEARCH_ICON}</button>'
+    )
+
+
+def search_script(nonce: str = "") -> str:
+    if notes.VAULT is None:
+        return ""
+    attribute = f' nonce="{nonce}"' if nonce else ""
+    return f"<style>{SEARCH_CSS}</style><script{attribute}>{SEARCH_JS}</script>"
+
+
+# The picker's list of every shared note, folder and file, rebuilt after each vault scan.
+NOTES_ENTRIES: dict[str, object] = {"index": None, "entries": []}
+
+
+def notes_entries(index: notes.Index) -> list[dict[str, object]]:
+    if NOTES_ENTRIES["index"] is index:
+        return NOTES_ENTRIES["entries"]  # type: ignore[return-value]
+    entries: list[dict[str, object]] = []
+    folders: dict[str, int] = {}
+    for relative in sorted(index.shared):
+        try:
+            changed = int(index.files[relative].stat().st_mtime)
+        except OSError:
+            changed = 0
+        parts = relative.split("/")
+        for depth in range(1, len(parts)):
+            folder = "/".join(parts[:depth])
+            folders[folder] = max(folders.get(folder, 0), changed)
+        suffix = posixpath.splitext(relative)[1].lower()
+        if notes.is_markdown(relative):
+            kind, href = "note", notes.url("/notes/", relative)
+        elif suffix == ".pdf":
+            kind, href = "file", notes.url("/notes-pdf/", relative)
+        elif suffix in IMAGE_LIKE_SUFFIXES or suffix in MEDIA_SUFFIXES:
+            kind, href = "file", notes.url("/notes-file/", relative)
+        else:
+            kind, href = "file", notes.url("/notes/", relative)
+        entries.append({"p": relative, "k": kind, "h": href, "t": changed})
+    for folder, changed in folders.items():
+        entries.append(
+            {
+                "p": folder,
+                "k": "folder",
+                "h": notes.url("/notes/", folder) + "/",
+                "t": changed,
+            }
+        )
+    for entry in entries:
+        icon = index.icons.get(entry["p"])  # type: ignore[arg-type]
+        entry["i"] = notes.url("/notes-icon/", icon) if icon else ""
+    NOTES_ENTRIES.update(index=index, entries=entries)
+    return entries
+
+
 def json_script(value: object) -> str:
     """JSON for a data <script>, escaped so no "</script>" in it can close the block early."""
     return (
@@ -1437,7 +1508,7 @@ def markdown_page(
 <link rel="icon" href="/icon-192.png">
 <link rel="stylesheet" href="/vendor/github-markdown.css">
 <style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{review[0]}{qr_button()}</nav></header>
+<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{review[0]}{qr_button()}{search_button()}</nav></header>
 <main class="page reader">{trail}{banner}
 <details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
 <article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
@@ -1446,7 +1517,7 @@ def markdown_page(
 {extra}
 {scripts}
 <script nonce="{nonce}">{MARKDOWN_JS}</script>
-{qr_script(nonce)}
+{qr_script(nonce)}{search_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -1484,13 +1555,13 @@ def code_page(
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav>{actions}{qr_button()}</nav></header>
+<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav>{actions}{qr_button()}{search_button()}</nav></header>
 <main class="page code-page">{notice}
 <div class="code"><div class="gutter">{gutter}</div><div class="scroll"><div class="line-mark" id="line-mark" hidden></div><pre><code id="code"{language}>{html.escape(text)}</code></pre></div></div>
 </main>
 {f'<script nonce="{nonce}" src="/vendor/highlight.min.js"></script>' if highlight else ""}
 <script nonce="{nonce}">{CODE_JS}</script>
-{qr_script(nonce)}
+{qr_script(nonce)}{search_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -1501,7 +1572,7 @@ def code_headers(nonce: str) -> dict[str, str]:
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": (
             "default-src 'none'; img-src 'self'; style-src 'self' 'unsafe-inline'; "
-            f"script-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'; "
+            f"script-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
             "frame-ancestors 'self'"
         ),
     }
@@ -1521,9 +1592,9 @@ def play_page(project: str, name: str) -> tuple[bytes, str]:
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}</nav></header>
+<header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}{search_button()}</nav></header>
 <main class="page play-page">{player}</main>
-{qr_script(nonce)}
+{qr_script(nonce)}{search_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -1533,7 +1604,7 @@ def play_headers(nonce: str) -> dict[str, str]:
         "Cache-Control": "no-cache",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": (
-            "default-src 'none'; img-src 'self'; media-src 'self'; "
+            "default-src 'none'; img-src 'self'; media-src 'self'; connect-src 'self'; "
             f"style-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
         ),
@@ -1552,10 +1623,10 @@ def pdf_page(
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
 <style>{MARKDOWN_CSS}{PDF_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
-<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}</nav></header>
+<header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}{search_button()}</nav></header>
 <main class="page pdf-page" data-url="{url}"><p class="pdf-status">Loading…</p></main>
 <script type="module" nonce="{nonce}">{PDF_JS}</script>
-{qr_script(nonce)}
+{qr_script(nonce)}{search_script(nonce)}
 </body></html>"""
     return document.encode("utf-8"), nonce
 
@@ -2449,7 +2520,7 @@ def layout(
   <nav class="tabs" aria-label="Sections">{navigation}</nav>
   {theme_picker()}
   {body}
-</main><script>{THEME_PICKER_JS}{PUSH_JS if PUSH_ENABLED else ""}</script>{qr_script()}</body></html>"""
+</main><script>{THEME_PICKER_JS}{PUSH_JS if PUSH_ENABLED else ""}</script>{qr_script()}{search_script()}</body></html>"""
     return document.encode("utf-8")
 
 
@@ -2839,6 +2910,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_shared_file(path, "raw" in parse_qs(parsed.query))
                 return
 
+        if parsed.path == "/notes-search":
+            index = notes.index()
+            if index is not None:
+                query = parse_qs(parsed.query).get("q", [""])[0]
+                if not query.strip():
+                    self.send_json({"items": notes_entries(index)})
+                    return
+                terms, results = notes.search(index, query)
+                self.send_json({"terms": terms, "results": results})
+                return
+
         if parsed.path == "/notes" or parsed.path.startswith("/notes/"):
             index = notes.index()
             relative = unquote(parsed.path.removeprefix("/notes").strip("/"))
@@ -2874,6 +2956,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif (text := read_text_file(path)) is not None:
                     body, nonce = code_page(path.name, text, download, back)
                     self.send_html(body, code_headers(nonce))
+                    return
+                else:
+                    self.send_shared_file(path, False)
                     return
 
         if parsed.path.startswith("/notes-file/"):
