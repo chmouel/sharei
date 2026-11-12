@@ -249,6 +249,11 @@ notes --json` and `sharec cat` are what a launcher needs: raffi has a
 [script filter](contrib/raffi/) that lists the notes, the clipboard, the drops
 and the screenshots from its search box.
 
+Coding agents that support skills (Claude Code, Copilot CLI, Codex and the
+like) can use [`contrib/skills/sharei`](contrib/skills/sharei/SKILL.md): copy
+or link that folder into the agent's skills directory and it will read what
+you shared, hand you reports as `/md` pages and draw walkthrough diagrams.
+
 Images show up right in terminals that speak the kitty graphics protocol
 (kitty, Ghostty, WezTerm, Konsole). The image fills the window: j, Space or
 → shows the next older one, k, Backspace or ← the newer one, going round in a
@@ -308,6 +313,18 @@ another scenario, picked from a menu next to the play button. A step that
 names a missing box or arrow is ignored and listed when you hover the play
 button. When your system asks for less motion, the boxes change one after
 another and nothing travels.
+
+![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
+
+A box can show a picture with mermaid's own syntax,
+`Bot@{ img: "bot.svg", label: "Agent", pos: "b", w: 40, h: 40 }`. Put the
+picture next to the markdown file and `sharec` sends it along, or use an
+https link. sharei also comes with about a hundred icons for agents, pull
+requests, pipelines, pods, tokens and the like: write
+`img: "/icons/agent.svg"` and nothing needs uploading. A picture that fails to load is replaced by a placeholder and
+named when you hover the diagram. The
+[walkthrough design notes](docs/diagram-walkthroughs.md) have the full syntax
+and a demo you can play.
 
 ## Privacy
 

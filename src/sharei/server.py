@@ -268,6 +268,9 @@ THUMB_VERSION = 2
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 VENDOR = SCRIPT_DIR / "vendor"
+# Diagram icons built from Lucide by contrib/icons/make_icons.py, served by name only.
+ICONS_DIR = SCRIPT_DIR / "icons"
+ICON_NAMES = frozenset(path.stem for path in ICONS_DIR.glob("*.svg"))
 # Only these files are reachable under /vendor/, everything else in that folder stays private.
 VENDOR_TYPES = {
     "highlight.min.js": "text/javascript; charset=utf-8",
@@ -2887,6 +2890,20 @@ class Handler(BaseHTTPRequestHandler):
                     vendor_file,
                     content_type,
                     {"Cache-Control": "public, max-age=31536000, immutable"},
+                )
+                return
+
+        if parsed.path == "/icons/":
+            self.send_json({"icons": sorted(ICON_NAMES)})
+            return
+
+        if parsed.path.startswith("/icons/") and parsed.path.endswith(".svg"):
+            name = parsed.path.removeprefix("/icons/").removesuffix(".svg")
+            if name in ICON_NAMES:
+                self.send_file(
+                    ICONS_DIR / f"{name}.svg",
+                    "image/svg+xml",
+                    vector_headers({"Cache-Control": "public, max-age=86400"}),
                 )
                 return
 

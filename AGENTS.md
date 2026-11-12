@@ -65,11 +65,20 @@ proxy with authentication (see SECURITY.md).
   modern build of pdfjs-dist, Apache-2.0). Keep their licence files next to them;
   they ship in the wheel. marker.js is linkware: its credit line under the
   editor must stay visible.
+- `src/sharei/icons/`: diagram icons served at `/icons/<name>.svg`, 48×48
+  tiles built from Lucide (ISC, `LICENSE.lucide`) by
+  `contrib/icons/make_icons.py`, which holds the name, glyph and colour
+  table. Regenerate rather than edit: `npm pack lucide-static`, unpack, then
+  `python contrib/icons/make_icons.py <package> src/sharei/icons`.
 - `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user
   unit, expecting `~/.local/bin/sharei` from `uv tool install`.
 - `contrib/raffi/`: a raffi script filter (`sharei_filter.py`) listing the
   notes, clipboard, drops and shots as views of one keyword. It only calls
   `sharec`, so it holds no address or login logic of its own.
+- `contrib/skills/sharei/SKILL.md`: an agent skill for using sharei through
+  `sharec` (reading shares, handing over `/md` documents, walkthrough
+  diagrams with pictures). Keep it free of personal hosts and logins, and
+  update it when `sharec` flags or the diagram syntax change.
 - `config.example.toml`: every setting, with comments. Keep it in sync when you
   add a setting.
 - `tests/`: pytest. `conftest.py` has a `live_server` fixture that runs the
@@ -135,7 +144,18 @@ Pages:
   (`L_<from>_<to>_<n>`, walked backwards when only `B -> A` exists), a
   token moves along `getPointAtLength`, and state is `play-*` classes on the
   SVG. Labels are set with `textContent`. Unresolved steps are dropped and
-  listed in the Play button's title.
+  listed in the Play button's title. Picture nodes (`@{ img: ... }`) render
+  as `g.image-shape` rather than `g.node`, so play styles and badges cover
+  both. Before rendering, `diagramImages()` rewrites each `img:` value:
+  local names go through `local()` to `/poub/`, https, same-origin paths
+  and `data:image/` stay, anything else becomes `DIAGRAM_IMAGE_MISSING`.
+  Each picture is preloaded with a timeout, because one failed load makes
+  mermaid reject the whole diagram; failures get the placeholder and are
+  listed in the diagram's title. `sharec` scans `img:` values in mermaid
+  fences (`mermaid_blocks()`) with the same checks as markdown images, and
+  leaves `/icons/` paths alone.
+  `docs/diagram-walkthroughs.md` is the design spec and a live demo, with
+  its icons in `docs/diagram-icons/`.
   Linkify ignores scheme-less links so `README.md` stays text.
   YAML front matter at line 1 (closed by `---` or `...` within 200 lines,
   with at least one `key:`) is claimed by the `sharei_frontmatter` block
@@ -207,6 +227,10 @@ Files:
   `send_file` answers a single `Range` with 206, so players can seek.
 - `/download/...` for APKs
 - `/vendor/...`
+- `/icons/<name>.svg`: a built-in diagram icon, looked up by name in
+  `ICON_NAMES` (read from the folder at import), never joined from the
+  request, and served with `vector_headers`. `/icons/` lists the names as
+  JSON.
 
 Data:
 
@@ -293,7 +317,7 @@ These exist on purpose. Keep them when changing or adding code.
   pages use a nonce-only `script-src` (no `'self'`, so an uploaded `.js` can
   never run) and the file text is HTML-escaped on the server.
 - An SVG is an image inside an `<img>` and a document with scripts in a tab,
-  so `/poub`, `/shot` and `/thumb` serve one with `vector_headers`, which adds
+  so `/poub`, `/shot`, `/thumb` and `/icons` serve one with `vector_headers`, which adds
   a `sandbox` Content-Security-Policy. Keep that on any new route that returns
   a vector, and keep SVG out of `ANNOTATE_TYPES`: a canvas will not take it.
 - Push sends outbound requests only to subscription endpoints that pass

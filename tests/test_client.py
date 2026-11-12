@@ -240,6 +240,33 @@ def test_confirm_without_terminal_points_at_yes():
     assert "pass -y" in result.stderr
 
 
+def test_markdown_uploads_pictures_of_mermaid_nodes(sharec, tmp_path, capsys):
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+    (tmp_path / "icons").mkdir()
+    (tmp_path / "icons" / "bell.svg").write_text(svg)
+    (tmp_path / "logo.svg").write_text(svg)
+    document = tmp_path / "flow.md"
+    document.write_text(
+        "```mermaid\n"
+        'flowchart LR\n  A@{ img: "icons/bell.svg", label: "Bell" } --> B@{ img: logo.svg }\n'
+        "  C[img: icons/bell.svg]\n"
+        '  D@{ img: "/icons/agent.svg" }\n'
+        "```\n\n"
+        "```yaml\nA@{ img: logo.svg }\n```\n"
+    )
+    text = sharec.share_markdown_file(document, "flow.md", "inbox", assume_yes=True)
+    assert text.decode() == (
+        "```mermaid\n"
+        'flowchart LR\n  A@{ img: "/poub/inbox/bell.svg", label: "Bell" }'
+        " --> B@{ img: /poub/inbox/logo.svg }\n"
+        "  C[img: icons/bell.svg]\n"
+        '  D@{ img: "/icons/agent.svg" }\n'
+        "```\n\n"
+        "```yaml\nA@{ img: logo.svg }\n```\n"
+    )
+    assert "/icons/agent.svg" not in capsys.readouterr().err
+
+
 def test_get_comments_and_replace_keep_review(sharec, tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     sharec.upload("plan.md", b"# Plan\n\nStep one.\n", "inbox")

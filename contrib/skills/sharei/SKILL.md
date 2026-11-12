@@ -92,10 +92,10 @@ from playback; leave it as a plain diagram.
 ````markdown
 ```mermaid
 flowchart LR
-  Issue@{ img: "icons/issue.svg", label: "Issue opened", w: 48, h: 48, constraint: "on" }
-  Bot@{ img: "icons/bot.svg", label: "Bot", w: 48, h: 48, constraint: "on" }
+  Issue@{ img: "/icons/issue.svg", label: "Issue opened", w: 48, h: 48, constraint: "on" }
+  Bot@{ img: "/icons/agent.svg", label: "Bot", w: 48, h: 48, constraint: "on" }
   Fetch[Fetch context]
-  PR@{ img: "icons/pr.svg", label: "Pull request", w: 48, h: 48, constraint: "on" }
+  PR@{ img: "/icons/pull-request.svg", label: "Pull request", w: 48, h: 48, constraint: "on" }
   Issue --> Bot --> Fetch --> Bot --> PR
 
 %% play: New issue
@@ -116,13 +116,32 @@ flowchart LR
 - Give picture boxes to the actors and main stages, and keep plain boxes for
   small steps; four to eight pictures read best. Always set `w`, `h` and
   `constraint: "on"`, or the picture stretches.
-- Pictures are small SVG icons you write yourself (48×48 viewBox, a rounded
-  tinted square with a simple stroked symbol, one accent colour shared by
-  all of them). Put them next to the markdown file, in a subfolder like
-  `icons/`, and reference them with relative paths: `sharec -y` uploads
-  them only from the document's git repository or, outside a repository,
-  its own folder. Absolute paths are refused. An https URL works too; no
-  logos you don't have the right to use.
+- Use sharei's built-in icons first: `img: "/icons/<name>.svg"`. They need
+  no upload and `sharec` leaves them alone. `sharec cat /icons/` prints the
+  current list; the names are:
+  - people and agents: user users reviewer agent model brain skill prompt
+    sparkles tool
+  - git: issue pull-request commit branch merge fork repository tag release
+    comment review diff code file-code
+  - events and CI: event webhook listener trigger pipeline task step test
+    build deploy rerun follow-up schedule queue wait timer clock check
+    success fail warning bug fix stop play pause
+  - platform: cluster node pod container namespace service network ingress
+    route load-balancer database storage cache cloud registry image config
+    operator controller api terminal cli laptop phone browser globe
+  - security: identity fingerprint key token secret unlock policy shield
+    refuse audit certificate
+  - data and output: logs report document folder search inspect metrics
+    monitor dashboard alert notification mail chat upload download link
+    filter decision idea
+- When nothing fits, draw a small SVG in the same style (48×48 viewBox, a
+  rounded square tinted at 12% opacity with a stroked symbol in one colour).
+  Put it next to the markdown file, in a subfolder like `icons/`, and use a
+  relative path: `sharec -y` uploads it only from the document's git
+  repository or, outside a repository, its own folder. An https URL works
+  too; no logos you don't have the right to use. `/icons/` paths do not
+  render on GitHub, so a diagram that must look right there needs relative
+  or https pictures.
 - A picture that is missing or fails to load shows a placeholder, and the
   diagram's hover text names it. Hovering the play button lists steps that
   did not match a box or arrow. The full syntax is in sharei's

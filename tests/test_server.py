@@ -202,6 +202,25 @@ def test_clip_history_entries_expire(live_server):
     assert state["text"] == "new" and state["history"] == []
 
 
+def test_diagram_icons_served_by_name_only(live_server):
+    status, headers, body = get(live_server + "/icons/")
+    names = json.loads(body)["icons"]
+    assert status == 200 and {"agent", "pull-request", "pod"} <= set(names)
+    status, headers, body = get(live_server + "/icons/agent.svg")
+    assert status == 200 and body.startswith(b"<svg")
+    assert headers["Content-Type"] == "image/svg+xml"
+    assert "sandbox" in headers["Content-Security-Policy"]
+    for path in (
+        "/icons/nope.svg",
+        "/icons/LICENSE.lucide",
+        "/icons/..%2fserver.py",
+        "/icons/agent",
+    ):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            get(live_server + path)
+        assert error.value.code == 404
+
+
 def test_qr_on_reader_pages_and_public_url(live_server, monkeypatch):
     from sharei import server
 

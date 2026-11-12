@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Move builds, screenshots, files and text between your computer and your phone"
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE", "src/sharei/vendor/LICENSE.*"]
+license-files = ["LICENSE", "src/sharei/vendor/LICENSE.*", "src/sharei/icons/LICENSE.*"]
 requires-python = ">=3.12"
 authors = [{ name = "Chmouel Boudjnah", email = "chmouel@chmouel.com" }]
 keywords = ["share", "phone", "screenshots", "apk", "markdown", "self-hosted"]

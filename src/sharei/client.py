@@ -83,6 +83,8 @@ HTML_ATTRIBUTE = re.compile(
 SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CODE_SPAN = re.compile(r"(`+)[^`].*?\1", re.DOTALL)
+MERMAID_SHAPE = re.compile(r"@\{[^}]*\}")
+MERMAID_IMAGE = re.compile(r"""\bimg\s*:\s*(?:"([^"]*)"|'([^']*)'|([^\s,}"']+))""")
 
 
 class Abort(Exception):
@@ -934,6 +936,30 @@ def mask_code(text: str) -> str:
     return CODE_SPAN.sub(lambda match: re.sub(r"[^\n]", " ", match.group(0)), masked)
 
 
+def mermaid_blocks(text: str) -> list[tuple[int, int]]:
+    """Return the (start, end) offsets of the body of every mermaid fence."""
+    blocks = []
+    fence = start = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        match = FENCE.match(line)
+        if fence is None:
+            if match:
+                fence = match.group(1)
+                info = line[match.end() :].strip().split()
+                start = offset + len(line) if info and info[0] == "mermaid" else None
+        elif (
+            match
+            and match.group(1).startswith(fence)
+            and not line[match.end() :].strip()
+        ):
+            if start is not None:
+                blocks.append((start, offset))
+            fence = None
+        offset += len(line)
+    return blocks
+
+
 def image_references(text: str) -> list[tuple[int, int, str]]:
     """Return (start, end, raw path) for every image destination in the document."""
     masked = mask_code(text)
@@ -964,6 +990,12 @@ def image_references(text: str) -> list[tuple[int, int, str]]:
                 url = candidate.group(0).split()[0]
                 offset = start + candidate.start()
                 found.append((offset, offset + len(url), url))
+    for start, end in mermaid_blocks(text):
+        for shape in MERMAID_SHAPE.finditer(text, start, end):
+            for match in MERMAID_IMAGE.finditer(shape.group(0)):
+                group = next(g for g in (1, 2, 3) if match.group(g) is not None)
+                at = shape.start() + match.start(group)
+                found.append((at, at + len(match.group(group)), match.group(group)))
     return found
 
 
@@ -1040,7 +1072,8 @@ def scan_images(document: Path, text: str) -> tuple[dict, list, dict, Path]:
     skipped: dict[str, str] = {}
     total = 0
     for start, end, raw in image_references(text):
-        if SCHEME.match(raw) or raw.startswith(("//", "#")):
+        # /icons/ is the server's built-in diagram icon set: nothing to upload.
+        if SCHEME.match(raw) or raw.startswith(("//", "#", "/icons/")):
             continue
         resolved, reason = check_image(raw, document, root)
         if resolved is None:

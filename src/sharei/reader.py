@@ -36,7 +36,7 @@ MARKDOWN_CSS = """
   .diagram-stage.zoomed:active { cursor:grabbing; }
   .diagram-tools { position:absolute; top:0; right:0; display:flex; gap:2px; padding:3px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); opacity:0; transition:opacity .15s; }
   .mermaid-diagram:is(:hover, :focus-within) .diagram-tools, .diagram-dialog .diagram-tools { opacity:1; }
-  @media (hover:none) { .diagram-tools { opacity:1; } .mermaid-diagram .diagram-tools { position:static; width:max-content; margin:0 0 8px auto; } }
+  @media (hover:none) { .diagram-tools { opacity:1; } .mermaid-diagram .diagram-tools { position:static; width:max-content; max-width:100%; box-sizing:border-box; margin:0 0 8px auto; } .diagram-tools > * { flex-shrink:0; } .diagram-tools > .diagram-play, .diagram-play select { flex-shrink:1; min-width:0; } }
   .diagram-tools button { display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; border-radius:6px; background:none; color:var(--fgColor-muted); cursor:pointer; }
   .diagram-tools button:hover:not(:disabled) { background:var(--bgColor-muted); color:var(--fgColor-default); }
   .diagram-tools button:focus-visible { outline:2px solid var(--fgColor-accent); outline-offset:-2px; }
@@ -57,12 +57,14 @@ MARKDOWN_CSS = """
   .diagram-play.playing button:first-of-type svg { fill:none; }
   .diagram-play button:last-of-type svg { fill:currentColor; stroke:none; }
   .mermaid-diagram:has(.diagram-play.playing) .diagram-tools { opacity:1; }
-  .diagram-stage g.node { transition:opacity .25s; }
-  .diagram-stage g.node :is(.label-container, .label-container > *) { transition:fill .25s, stroke .25s; }
-  .diagram-stage g.node.play-active :is(.label-container, .label-container > *) { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; stroke:var(--fgColor-accent) !important; stroke-width:2px !important; }
-  .diagram-stage g.node.play-active { animation:play-glow 1.1s ease-in-out infinite alternate; }
-  .diagram-stage g.node.play-done :is(.label-container, .label-container > *) { fill:color-mix(in srgb, var(--fgColor-success) 14%, var(--bgColor-default)) !important; stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
-  .diagram-stage g.node.play-skipped { opacity:.3; }
+  .diagram-stage :is(g.node, g.image-shape) { transition:opacity .25s; }
+  .diagram-stage :is(g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:fill .25s, stroke .25s; }
+  .diagram-stage g.node.play-active :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-active > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; }
+  .diagram-stage g.node.play-active :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-active > g:first-child > path:last-child { stroke:var(--fgColor-accent) !important; stroke-width:2px !important; }
+  .diagram-stage :is(g.node, g.image-shape).play-active { animation:play-glow 1.1s ease-in-out infinite alternate; }
+  .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-success) 14%, var(--bgColor-default)) !important; }
+  .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:last-child { stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
+  .diagram-stage :is(g.node, g.image-shape).play-skipped { opacity:.3; }
   .diagram-stage path.play-edge { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
   .diagram-stage path.play-edge-done { stroke:color-mix(in srgb, var(--fgColor-success) 65%, var(--borderColor-default)) !important; }
   .diagram-stage .play-check circle { fill:var(--fgColor-success) !important; stroke:var(--bgColor-default) !important; stroke-width:1.5px !important; }
@@ -72,7 +74,7 @@ MARKDOWN_CSS = """
   .diagram-stage .play-tag rect { fill:var(--fgColor-accent); }
   .diagram-stage .play-tag text { fill:var(--bgColor-default); font:600 12px/1 system-ui,-apple-system,sans-serif; }
   @keyframes play-glow { from { filter:drop-shadow(0 0 2px color-mix(in srgb, var(--fgColor-accent) 45%, transparent)); } to { filter:drop-shadow(0 0 9px color-mix(in srgb, var(--fgColor-accent) 75%, transparent)); } }
-  @media (prefers-reduced-motion:reduce) { .diagram-stage g.node.play-active { animation:none; filter:drop-shadow(0 0 5px color-mix(in srgb, var(--fgColor-accent) 60%, transparent)); } .diagram-stage g.node, .diagram-stage g.node :is(.label-container, .label-container > *) { transition:none; } }
+  @media (prefers-reduced-motion:reduce) { .diagram-stage :is(g.node, g.image-shape).play-active { animation:none; filter:drop-shadow(0 0 5px color-mix(in srgb, var(--fgColor-accent) 60%, transparent)); } .diagram-stage :is(g.node, g.image-shape, g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:none; } }
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
 """
 
@@ -164,6 +166,7 @@ READER_CSS = """
   .reader .markdown-body .footnotes { margin-top:3em; padding-top:1.2em; border-top:1px solid var(--borderColor-muted); color:var(--fgColor-muted); font-size:.88em; }
   .reader .mermaid-diagram { margin:0 0 1.3em; padding:20px 16px; border:1px solid var(--borderColor-muted); border-radius:12px; background:var(--bgColor-muted); }
   .reader .mermaid-diagram .diagram-tools { top:-14px; right:-10px; }
+  @media (hover:hover) { .reader .mermaid-diagram:has(.diagram-play) { padding-top:40px; } .reader .mermaid-diagram:has(.diagram-play) .diagram-tools { top:-37px; right:-8px; } }
   .reader .markdown-body .frontmatter { display:grid; grid-template-columns:fit-content(40%) minmax(0, 1fr); align-items:baseline; gap:8px 24px; margin:0 0 2.2em; padding:14px 18px; border:1px solid var(--borderColor-muted); border-radius:12px; background:color-mix(in srgb, var(--bgColor-muted) 60%, transparent); font-size:.875em; line-height:1.55; font-variant-numeric:tabular-nums; }
   .reader .markdown-body .frontmatter dt { margin:0; padding:0; color:var(--fgColor-muted); font-size:inherit; font-style:normal; font-weight:500; }
   .reader .markdown-body .frontmatter dd { min-width:0; margin:0; padding:0; color:var(--fgColor-default); overflow-wrap:anywhere; }
@@ -990,7 +993,7 @@ function panZoom(holder, scenarios) {
 //   %% play: Title        starts a scenario
 //   %% A -> B : label     sends a token from node A to node B along the edge between them
 //   %% skip A B           fades nodes for the rest of the scenario
-function playScript(source) {
+function flowchartLines(source) {
   const lines = source.split(/\\r?\\n/);
   let at = 0;
   while (at < lines.length && !lines[at].trim()) at++;
@@ -1000,10 +1003,15 @@ function playScript(source) {
     at++;
   }
   const head = lines.slice(at).map((line) => line.trim()).find((line) => line && !line.startsWith('%%'));
-  if (!head || !/^(?:flowchart|graph)\\b/.test(head)) return [];
+  return head && /^(?:flowchart|graph)\\b/.test(head) ? lines.slice(at) : null;
+}
+
+function playScript(source) {
+  const lines = flowchartLines(source);
+  if (!lines) return [];
   const scenarios = [];
   let current = null;
-  for (const line of lines.slice(at)) {
+  for (const line of lines) {
     const comment = /^\\s*%%(?!\\{)\\s*(.*?)\\s*$/.exec(line);
     if (!comment) continue;
     const text = comment[1];
@@ -1028,13 +1036,63 @@ function playScript(source) {
   return scenarios.filter((scenario) => scenario.steps.length);
 }
 
+// Pictures in flowchart nodes, A@{ img: "logo.png" }. Mermaid fails the whole diagram when one
+// does not load, so each is checked first and a missing or refused one becomes a placeholder.
+const DIAGRAM_IMAGE = /(\\bimg\\s*:\\s*)(?:(["'])(.*?)\\2|([^\\s,}"']+))/g;
+const DIAGRAM_IMAGE_SAFE = /^(?:https:\\/\\/|\\/(?![\\/\\\\])|data:image\\/(?:png|jpe?g|gif|webp|svg\\+xml)[;,])/i;
+const DIAGRAM_IMAGE_MISSING = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#888" stroke-width="2" stroke-linejoin="round"><rect x="5" y="9" width="38" height="30" rx="4" stroke-dasharray="4 3"/><path d="M11 33l9-10 7 7 4-4 6 7"/><circle cx="31" cy="18" r="3"/></svg>');
+
+function diagramImageUrl(value) {
+  const found = poub ? local(value) : null;
+  if (found) return poub + encodeURIComponent(found.name);
+  return DIAGRAM_IMAGE_SAFE.test(value) && !/["'{}\\s]/.test(value) ? value : null;
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const timer = setTimeout(() => reject(new Error('timed out')), 8000);
+    image.onload = () => { clearTimeout(timer); resolve(); };
+    image.onerror = () => { clearTimeout(timer); reject(new Error('did not load')); };
+    image.src = url;
+  });
+}
+
+async function diagramImages(source) {
+  const shapes = /@\\{[^}]*\\}/g;
+  if (!flowchartLines(source)) return { source: source, problems: [] };
+  const wanted = new Map();
+  for (const shape of source.matchAll(shapes)) {
+    for (const match of shape[0].matchAll(DIAGRAM_IMAGE)) {
+      const value = match[3] ?? match[4];
+      if (!wanted.has(value)) wanted.set(value, diagramImageUrl(value));
+    }
+  }
+  if (!wanted.size) return { source: source, problems: [] };
+  const problems = [];
+  await Promise.all([...wanted].map(async ([value, url]) => {
+    if (!url) {
+      problems.push(value + ' (not allowed)');
+      wanted.set(value, DIAGRAM_IMAGE_MISSING);
+      return;
+    }
+    try { await loadImage(url); } catch (error) {
+      problems.push(value + ' (' + error.message + ')');
+      wanted.set(value, DIAGRAM_IMAGE_MISSING);
+    }
+  }));
+  const rewritten = source.replace(shapes, (shape) => shape.replace(DIAGRAM_IMAGE,
+    (match, key, quote, quoted, bare) => key + '"' + wanted.get(quoted ?? bare) + '"'));
+  return { source: rewritten, problems: problems };
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 let diagramsPlaying = 0;
 let playBusyWrapped = false;
 
 function playDiagram(stage, svg, tools, scripts) {
   const nodes = new Map();
-  for (const group of svg.querySelectorAll('g.node[id]')) {
+  for (const group of svg.querySelectorAll(':is(g.node, g.image-shape)[id]')) {
     const match = /-flowchart-(.+)-\\d+$/.exec(group.id);
     if (match && !nodes.has(match[1])) nodes.set(match[1], group);
   }
@@ -1119,7 +1177,16 @@ function playDiagram(stage, svg, tools, scripts) {
 
   function badge(node) {
     if (node.querySelector(':scope > .play-check')) return;
-    const box = node.getBBox();
+    const frame = node.classList.contains('image-shape') ? node.querySelector(':scope > g') : null;
+    let box = node.getBBox();
+    if (frame) {
+      const corner = svg.createSVGPoint();
+      const inner = frame.getBBox();
+      corner.x = inner.x + inner.width;
+      corner.y = inner.y;
+      const at = corner.matrixTransform(node.getCTM().inverse().multiply(frame.getCTM()));
+      box = { x: at.x - inner.width, y: at.y, width: inner.width };
+    }
     const mark = document.createElementNS(SVG_NS, 'g');
     mark.setAttribute('class', 'play-check');
     mark.setAttribute('transform', 'translate(' + (box.x + box.width - 2) + ' ' + (box.y + 2) + ')');
@@ -1329,7 +1396,8 @@ function drawDiagrams() {
       const id = 'mermaid-' + diagramCount++;
       try {
         const scenarios = playScript(block.textContent);
-        const result = await mermaid.render(id, block.textContent);
+        const pictures = await diagramImages(block.textContent);
+        const result = await mermaid.render(id, pictures.source);
         const holder = document.createElement('div');
         holder.className = 'mermaid-diagram';
         if (block.dataset.line) {
@@ -1339,6 +1407,7 @@ function drawDiagrams() {
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
         panZoom(holder, scenarios);
+        if (pictures.problems.length) holder.title += '\\nPictures not shown: ' + pictures.problems.join(', ');
         if (onDiagram) onDiagram();
       } catch (error) {
         document.getElementById('d' + id)?.remove();
