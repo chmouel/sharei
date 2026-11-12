@@ -34,7 +34,7 @@ MARKDOWN_CSS = """
   .diagram-stage > svg { display:block; margin:0 auto; user-select:none; -webkit-user-select:none; }
   .diagram-stage.zoomed { touch-action:none; cursor:grab; }
   .diagram-stage.zoomed:active { cursor:grabbing; }
-  .diagram-tools { position:absolute; top:0; right:0; display:flex; gap:2px; padding:3px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); opacity:0; transition:opacity .15s; }
+  .diagram-tools { position:absolute; top:0; right:0; display:flex; gap:2px; max-width:100%; box-sizing:border-box; padding:3px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); opacity:0; transition:opacity .15s; }
   .mermaid-diagram:is(:hover, :focus-within) .diagram-tools, .diagram-dialog .diagram-tools { opacity:1; }
   @media (hover:none) { .diagram-tools { opacity:1; } .mermaid-diagram .diagram-tools { position:static; width:max-content; max-width:100%; box-sizing:border-box; margin:0 0 8px auto; } .diagram-tools > * { flex-shrink:0; } .diagram-tools > .diagram-play, .diagram-play select { flex-shrink:1; min-width:0; } }
   .diagram-tools button { display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; border-radius:6px; background:none; color:var(--fgColor-muted); cursor:pointer; }
@@ -52,17 +52,30 @@ MARKDOWN_CSS = """
   .diagram-caption[hidden] { display:none; }
   .diagram-dialog .diagram-caption { position:absolute; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); width:max-content; max-width:min(46em, calc(100% - 32px)); margin:0; transform:translateX(-50%); font-size:17px; box-shadow:0 8px 24px color-mix(in srgb, var(--fgColor-default) 14%, transparent); pointer-events:none; }
   .diagram-play { position:relative; display:flex; align-items:center; gap:2px; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
+  .diagram-tools > * { flex-shrink:0; }
+  .diagram-tools > .diagram-play, .diagram-play select { flex-shrink:1; min-width:0; }
+  .diagram-play > button { flex-shrink:0; }
   .diagram-play select { max-width:14em; height:30px; padding:0 4px; border:0; border-radius:6px; background:none; color:var(--fgColor-default); font:500 12px/1 system-ui,-apple-system,sans-serif; cursor:pointer; }
   .diagram-play select:hover { background:var(--bgColor-muted); }
   .diagram-play button[hidden] { display:none; }
   .diagram-play .play-toggle svg { fill:currentColor; }
-  .diagram-play .play-toggle { color:var(--fgColor-accent); }
+  .diagram-tools .diagram-play .play-toggle { margin:0 2px; border-radius:50%; background:var(--fgColor-accent); color:var(--bgColor-default); }
+  .diagram-tools .diagram-play .play-toggle:hover:not(:disabled) { background:color-mix(in srgb, var(--fgColor-accent) 82%, var(--fgColor-default)); color:var(--bgColor-default); }
+  .diagram-tools .diagram-play .play-toggle:focus-visible { outline-offset:2px; }
+  .diagram-play.stepped { padding-bottom:7px; }
+  .play-rail { position:absolute; left:4px; right:7px; bottom:0; display:flex; gap:2px; }
+  .play-rail[hidden] { display:none; }
+  .play-rail span { flex:1; min-width:3px; height:7px; padding-top:4px; border-radius:2px; background:var(--borderColor-default); background-clip:content-box; cursor:pointer; transition:background-color .2s; }
+  .play-rail span:hover { background-color:var(--fgColor-muted); }
+  .play-rail span.done { background-color:color-mix(in srgb, var(--fgColor-accent) 55%, var(--borderColor-default)); }
+  .play-rail span.now { background-color:var(--fgColor-accent); }
+  .diagram-share { position:relative; display:flex; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
   .diagram-play.playing .play-toggle svg { fill:none; }
   .diagram-play .play-stop svg { fill:currentColor; stroke:none; }
-  .diagram-play .play-record svg { fill:var(--fgColor-danger); stroke:none; }
-  .diagram-play .play-record.busy { width:auto; min-width:30px; padding:0 6px; color:var(--fgColor-default); font:600 11px/1 system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums; }
+  .diagram-share .play-record.busy { width:auto; min-width:30px; padding:0 6px; color:var(--fgColor-default); font:600 11px/1 system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums; }
   .diagram-export { position:absolute; top:calc(100% + 6px); right:0; z-index:3; display:flex; flex-direction:column; gap:2px; min-width:11em; padding:4px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); box-shadow:0 8px 24px color-mix(in srgb, var(--fgColor-default) 18%, transparent); }
   .diagram-export[hidden] { display:none; }
+  .mermaid-diagram:has(.diagram-export:not([hidden])) { overflow:visible; }
   .diagram-tools .diagram-export button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; width:100%; height:auto; padding:7px 10px; color:var(--fgColor-default); font:500 13px/1.2 system-ui,-apple-system,sans-serif; text-align:left; }
   .diagram-export button small { color:var(--fgColor-muted); font-size:11px; }
   .diagram-stage.recording :is(g.node, g.image-shape, g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:none !important; }
@@ -842,7 +855,7 @@ const DIAGRAM_ICONS = {
   play: '<path d="M5 3.2v9.6L12.6 8z"/>',
   pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>',
   stop: '<rect x="4" y="4" width="8" height="8" rx="1.2"/>',
-  record: '<circle cx="8" cy="8" r="4.6"/>',
+  share: '<path d="M8 2.5v7.5M5 5.2l3-2.7 3 2.7M4.5 8H3.5v5.5h9V8h-1"/>',
   back: '<path d="M10.5 3.5L6 8l4.5 4.5M4 3.5v9"/>',
   next: '<path d="M5.5 3.5L10 8l-4.5 4.5M12 3.5v9"/>',
 };
@@ -1588,7 +1601,15 @@ function playDiagram(stage, svg, tools, scripts, home) {
   const playButton = make('play', 'Play', 'play-toggle');
   const nextButton = make('next', 'Next step', 'play-next');
   const stopButton = make('stop', 'Stop', 'play-stop');
-  const recordButton = make('record', 'Save as GIF or video', 'play-record');
+  const rail = document.createElement('div');
+  rail.className = 'play-rail';
+  rail.setAttribute('aria-hidden', 'true');
+  controls.append(rail);
+  const share = document.createElement('div');
+  share.className = 'diagram-share';
+  const SHARE_TITLE = 'Share or save this story';
+  const recordButton = make('share', SHARE_TITLE, 'play-record');
+  share.append(recordButton);
   const exportMenu = document.createElement('div');
   exportMenu.className = 'diagram-export';
   exportMenu.hidden = true;
@@ -1603,12 +1624,12 @@ function playDiagram(stage, svg, tools, scripts, home) {
     exportMenu.append(element);
     return element;
   };
-  exportChoice('gif', 'GIF', 'Loops, plays anywhere');
   const linkChoice = exportChoice('link', 'Copy link', 'To this story, step and spotlight');
+  exportChoice('gif', 'GIF', 'Loops, plays anywhere');
   const videoType = diagramVideoType();
   if (videoType) exportChoice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
-  controls.append(exportMenu);
-  tools.prepend(controls);
+  share.append(exportMenu);
+  tools.prepend(controls, share);
   const caption = document.createElement('div');
   caption.className = 'diagram-caption';
   caption.setAttribute('aria-live', 'polite');
@@ -1651,6 +1672,27 @@ function playDiagram(stage, svg, tools, scripts, home) {
     nextButton.title = next;
     nextButton.setAttribute('aria-label', next);
     controls.classList.toggle('playing', playing);
+    drawRail();
+  }
+  // One tick per step: played ones fill in, the one playing is bright, and a click jumps there.
+  function drawRail() {
+    const steps = scenario().steps;
+    if (rail.children.length !== steps.length || rail.dataset.story !== String(scenario().title)) {
+      rail.dataset.story = String(scenario().title);
+      rail.replaceChildren(...steps.map((step, at) => {
+        const tick = document.createElement('span');
+        tick.title = 'Step ' + (at + 1) + (step.caption ? ': ' + step.caption : step.label ? ': ' + step.label : '');
+        tick.addEventListener('click', () => jump(at));
+        return tick;
+      }));
+    }
+    rail.hidden = steps.length < 2;
+    controls.classList.toggle('stepped', !rail.hidden);
+    const played = !timeline.length ? 0 : finished ? steps.length : reached;
+    [...rail.children].forEach((tick, at) => {
+      tick.classList.toggle('done', at < played);
+      tick.classList.toggle('now', playing && !waiting && at === reached && !finished);
+    });
   }
 
   function badge(node) {
@@ -1798,6 +1840,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     if (waiting) {
       waiting = false;
       if (index < timeline.length) enter(timeline[index]);
+      drawRail();
     }
     elapsed += delta;
     while (index < timeline.length && elapsed >= timeline[index].duration) {
@@ -1806,7 +1849,10 @@ function playDiagram(stage, svg, tools, scripts, home) {
       if (done.frame) done.frame(1);
       if (done.end) done.end();
       index++;
-      if (done.stop) reached++;
+      if (done.stop) {
+        reached++;
+        drawRail();
+      }
       if (toStep && done.stop && reached < scenario().steps.length) {
         elapsed = 0;
         waiting = true;
@@ -1907,10 +1953,10 @@ function playDiagram(stage, svg, tools, scripts, home) {
     busy(false);
     stage.classList.remove('recording');
     recordButton.classList.remove('busy');
-    recordButton.innerHTML = diagramIcon('record');
+    recordButton.innerHTML = diagramIcon('share');
     for (const element of [backButton, playButton, nextButton, stopButton]) element.disabled = false;
     if (picker) picker.disabled = false;
-    const text = error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : 'Save as GIF or video';
+    const text = error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : SHARE_TITLE;
     recordButton.title = text;
     recordButton.setAttribute('aria-label', text);
     sync();
@@ -2006,6 +2052,12 @@ function playDiagram(stage, svg, tools, scripts, home) {
     sync();
   }
 
+  function jump(at) {
+    if (exporting) return;
+    restore((picker ? Number(picker.value) : 0) + 1, at);
+    stepNext();
+  }
+
   playButton.addEventListener('click', () => (playing ? pause() : play()));
   backButton.addEventListener('click', stepBack);
   nextButton.addEventListener('click', stepNext);
@@ -2036,9 +2088,9 @@ function playDiagram(stage, svg, tools, scripts, home) {
     exportScenario(choice.dataset.kind);
   });
   document.addEventListener('pointerdown', (event) => {
-    if (!exportMenu.hidden && !controls.contains(event.target)) exportMenu.hidden = true;
+    if (!exportMenu.hidden && !share.contains(event.target)) exportMenu.hidden = true;
   });
-  controls.addEventListener('keydown', (event) => {
+  share.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || exportMenu.hidden) return;
     event.stopPropagation();
     event.preventDefault();
@@ -2049,16 +2101,17 @@ function playDiagram(stage, svg, tools, scripts, home) {
     stop();
     play();
   });
-  // Right/Left, j/k, Space/Shift+Space and the PageDown/PageUp that presentation clickers send walk
-  // the story; Shift+arrows still pan, and Space leaves a focused button to the browser.
+  // Right/Left, j/k and the PageDown/PageUp that presentation clickers send walk the story, and
+  // Space plays or pauses. Shift+arrows still pan, and Space leaves a focused button to the browser.
   stage.addEventListener('keydown', (event) => {
-    const space = event.key === ' ' && !event.target.closest('button');
-    const forward = event.key === 'PageDown' || event.key === 'j' || (space && !event.shiftKey) || (event.key === 'ArrowRight' && !event.shiftKey);
-    const backward = event.key === 'PageUp' || event.key === 'k' || (space && event.shiftKey) || (event.key === 'ArrowLeft' && !event.shiftKey);
-    if ((!forward && !backward) || exporting || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('select')) return;
+    const space = event.key === ' ' && !event.shiftKey && !event.target.closest('button');
+    const forward = event.key === 'PageDown' || event.key === 'j' || (event.key === 'ArrowRight' && !event.shiftKey);
+    const backward = event.key === 'PageUp' || event.key === 'k' || (event.key === 'ArrowLeft' && !event.shiftKey);
+    if ((!forward && !backward && !space) || exporting || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('select')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    forward ? stepNext() : stepBack();
+    if (space) playing ? pause() : play();
+    else forward ? stepNext() : stepBack();
   });
   sync();
   return { where: where, restore: restore };

@@ -120,9 +120,14 @@ play makes the story stop at the end of the current step. Previous step
 rebuilds the story from the start up to the step before, with no animation,
 and from the middle of a step it goes back to that step's start. With the
 diagram focused, or in full screen, the keyboard does the same: the right
-arrow, `j`, Space and Page Down go forward, and the left arrow, `k`,
-Shift+Space and Page Up go back. Page Down and Page Up are what most
-presentation clickers send. Shift with an arrow still pans. Pan, zoom and full screen keep working while a
+arrow, `j` and Page Down go forward, the left arrow, `k` and Page Up go
+back, and Space plays or pauses the whole story. Page Down and Page Up are
+what most presentation clickers send.
+
+A thin rail under the story controls has one tick per step. Played steps
+fill in, the one playing is brighter, and hovering a tick shows its caption.
+Clicking a tick rebuilds the story up to the step before and plays that one,
+so you can jump to any point while you talk. Shift with an arrow still pans. Pan, zoom and full screen keep working while a
 story plays, because the dot is drawn inside the diagram and moves with it.
 While a story plays, the page holds off its live reload so the story does not
 vanish halfway.
@@ -147,12 +152,12 @@ and the gap between them.
 
 A playing story is never dimmed by the spotlight: its lit box and the edge the
 dot travels stay bright. A saved GIF or video keeps the spotlight as it was
-when you pressed record. Like a playing story, the spotlight holds off the
+when you started saving. Like a playing story, the spotlight holds off the
 page's live reload.
 
 ## Linking to a moment
 
-"Copy link" in the record menu copies the page address with a hash such as
+"Copy link" in the share menu copies the page address with a hash such as
 `#diagram=2&story=1&step=3&focus=Agent,Logs`. Diagrams count from 1 in page
 order, stories too, and `step` is the number of steps already played. Someone
 who opens the link lands on that diagram with the story stopped after step 3
@@ -166,7 +171,7 @@ no box are ignored.
 
 ## Saving a story as a GIF or a video
 
-The red dot in the toolbar saves the selected story as a file to drop into a
+The share button in the toolbar saves the selected story as a file to drop into a
 pull request, a chat or slides. Everything happens in the browser and nothing
 is sent to the server.
 

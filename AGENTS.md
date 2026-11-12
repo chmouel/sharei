@@ -145,7 +145,7 @@ Pages:
   token moves along `getPointAtLength`, and state is `play-*` classes on the
   SVG. Step mode stops at segments flagged `stop` (one per step) and goes
   back by replaying instantly with `advance(Infinity, true)`; its key
-  handler (arrows, j/k, Space, PageUp/PageDown) runs before panZoom's so a
+  handler (arrows, j/k, PageUp/PageDown, Space to play or pause) runs before panZoom's so a
   plain arrow steps and Shift+arrow pans.
   Deep links (`#diagram=N&story=S&step=K&focus=A,B`) go through
   `diagramHash()`/`diagramFromHash()`, using the `where()`/`restore()` API
@@ -171,7 +171,10 @@ Pages:
   makes the stage the click target, so it hit-tests with
   `elementFromPoint()` and node bounding boxes. Playback and the spotlight
   share `diagramBusy()` to pause the live reload.
-  The record button saves a story client-side: `diagramCanvas()` draws a
+  `drawRail()` keeps the `.play-rail` ticks in step with `reached`; a
+  tick click is `restore()` to the step before, then `stepNext()`.
+  The share button (`.play-record` in `.diagram-share`) copies a deep link
+  or saves a story client-side: `diagramCanvas()` draws a
   clone of the SVG with computed styles inlined and every `<image>` turned
   into a data URL (`diagramImageData()`, same-origin fetch only, since an
   SVG drawn as an image loads nothing external) at the home viewBox. GIF
