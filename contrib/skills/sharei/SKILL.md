@@ -99,10 +99,10 @@ flowchart LR
   Issue --> Bot --> Fetch --> Bot --> PR
 
 %% play: New issue
-%% Issue -> Bot : #42
+%% Issue -> Bot : #42 | A user opens issue #42 and the bot picks it up
 %% Bot -> Fetch
-%% Fetch -> Bot : files
-%% Bot -> PR : fix
+%% Fetch -> Bot : files | The bot reads the files the issue points at
+%% Bot -> PR : fix | It opens a pull request with the fix
 %% play: Question only
 %% Issue -> Bot : question
 %% skip Fetch PR
@@ -111,7 +111,9 @@ flowchart LR
 
 - Steps use node ids, never labels, and need an arrow between the two
   boxes (backwards works). `: text` is the label on the dot, keep it to a
-  word or two. `%% play: Title` starts another scenario in the same
+  word or two. `| sentence` after it is a caption shown under the diagram
+  while that step plays: one short plain sentence saying what happens, on
+  the steps that need explaining. `%% play: Title` starts another scenario in the same
   diagram; `%% skip A B` fades boxes that scenario does not use.
 - Give picture boxes to the actors and main stages, and keep plain boxes for
   small steps; four to eight pictures read best. Always set `w`, `h` and

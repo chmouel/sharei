@@ -32,16 +32,16 @@ flowchart LR
   R --> C
 
 %% play: Issue opened
-%% E -> L : Issue #42
+%% E -> L : Issue #42 | Someone opens issue #42 and GitHub sends the event
 %% L -> T
 %% T -> F : Issue #42
 %% F -> R
-%% R -> A : prompt
+%% R -> A : prompt | The run hands the issue to the agent as a prompt
 %% A -> M : tokens
 %% M -> A
 %% A -> R : patch
 %% R -> P : branch
-%% P -> C : PR #44
+%% P -> C : PR #44 | The fix comes back as pull request #44
 %% play: Pull request review
 %% E -> L : PR #44
 %% L -> T
@@ -65,8 +65,15 @@ so the diagram still draws everywhere else and only sharei plays it.
 %% play: Title          starts a story; the title shows in the picker
 %% A -> B               the dot travels from node A to node B
 %% A -> B : label       the same, with a tag riding along with the dot
+%% A -> B : label | text  the same, with a sentence shown under the diagram
 %% skip A B             fades these nodes until the story ends
+%% skip A B | text      the same, with a sentence
 ```
+
+The sentence after `|` is the step's caption, for the part you would say out
+loud while the dot moves. A step without one hides the caption, so the
+sentence never lingers on a later step it does not describe. `A -> B | text`
+works without a label too.
 
 Nodes are named by their mermaid id (the `R` in `R[Run step]`), never by their
 label. Steps written before the first `play:` line form a story called
@@ -96,6 +103,10 @@ stays on screen until you play again, press stop or pick another story.
 | Pause on a node before it sends the dot | 420 ms |
 | Travel along an edge | 3.2 ms per pixel of path, between 550 ms and 1.7 s |
 | A skip | 320 ms |
+
+A step's caption shows as soon as the step starts, in a bar under the
+diagram, or floating at the bottom of the screen in full screen. Stopping the
+story clears it. Like labels, captions are set with `textContent`.
 
 A node that a later step reaches again clears its skip and its check mark, so
 a story can loop back through the diagram.
@@ -150,6 +161,9 @@ turned off so every frame is stable. It comes out at most 960 pixels wide,
 loops forever and holds the last frame for 2.4 seconds. Frames only store the
 part of the picture that changed, so a short story stays a few hundred
 kilobytes. Colours are cut to 256 per frame, so gradients band a little.
+
+When a story has captions, both formats add a band under the diagram and
+write the current caption in it, wrapped to two lines at most.
 
 Video plays the story in real time and records it with `MediaRecorder`: MP4
 (H.264) where the browser can write it, WebM otherwise. It goes up to 1920

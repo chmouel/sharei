@@ -147,7 +147,9 @@ Pages:
   back by replaying instantly with `advance(Infinity, true)`; its key
   handler (arrows, j/k, Space, PageUp/PageDown) runs before panZoom's so a
   plain arrow steps and Shift+arrow pans.
-  Labels are set with `textContent`. Unresolved steps are dropped and
+  Labels and `| caption` text (the `.diagram-caption` bar, and a band that
+  `diagramCanvas(..., captioned)` draws into exports) are set with
+  `textContent` or `fillText`. Unresolved steps are dropped and
   listed in the Play button's title. Picture nodes (`@{ img: ... }`) render
   as `g.image-shape` rather than `g.node`, so play styles and badges cover
   both. Before rendering, `diagramImages()` rewrites each `img:` value:

@@ -312,7 +312,9 @@ flowchart LR
 ````
 
 Each `%% A -> B` step uses the node ids, follows the arrow drawn between
-those two boxes (backwards too), and can carry a label after `:`. `%% skip`
+those two boxes (backwards too), and can carry a label after `:`. A
+sentence after `|`, as in `%% A -> B : #42 | A user opens an issue`, shows
+under the diagram while that step plays. `%% skip`
 fades boxes that a scenario does not use, and `%% play: title` starts
 another scenario, picked from a menu next to the play button. A step that
 names a missing box or arrow is ignored and listed when you hover the play

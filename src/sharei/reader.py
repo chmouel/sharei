@@ -48,6 +48,9 @@ MARKDOWN_CSS = """
   .diagram-dialog .diagram-stage:active { cursor:grabbing; }
   .diagram-dialog .diagram-stage > svg { width:100%; height:100%; max-width:none !important; padding:56px 16px 16px; }
   .diagram-dialog .diagram-tools { top:max(10px, env(safe-area-inset-top)); right:max(10px, env(safe-area-inset-right)); }
+  .diagram-caption { max-width:46em; margin:10px auto 0; padding:8px 14px; border:1px solid var(--borderColor-muted); border-radius:9px; background:var(--bgColor-muted); color:var(--fgColor-default); font:500 15px/1.45 system-ui,-apple-system,sans-serif; text-align:center; }
+  .diagram-caption[hidden] { display:none; }
+  .diagram-dialog .diagram-caption { position:absolute; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); width:max-content; max-width:min(46em, calc(100% - 32px)); margin:0; transform:translateX(-50%); font-size:17px; box-shadow:0 8px 24px color-mix(in srgb, var(--fgColor-default) 14%, transparent); pointer-events:none; }
   .diagram-play { position:relative; display:flex; align-items:center; gap:2px; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
   .diagram-play select { max-width:14em; height:30px; padding:0 4px; border:0; border-radius:6px; background:none; color:var(--fgColor-default); font:500 12px/1 system-ui,-apple-system,sans-serif; cursor:pointer; }
   .diagram-play select:hover { background:var(--bgColor-muted); }
@@ -1042,10 +1045,14 @@ function playScript(source) {
       continue;
     }
     let step = null;
-    const move = /^([^\\s:]+?)\\s*-+>\\s*([^\\s:]+)\\s*(?::\\s*(.*))?$/.exec(text);
-    const skip = /^skip\\s+(.+)$/i.exec(text);
-    if (move) step = { from: move[1], to: move[2], label: move[3] || '', text: text };
-    else if (skip) step = { skip: skip[1].split(/[\\s,]+/).filter(Boolean), text: text };
+    // A sentence after | is the step's caption: A -> B : label | caption, or skip A B | caption.
+    const bar = text.indexOf('|');
+    const body = bar < 0 ? text : text.slice(0, bar).trim();
+    const caption = bar < 0 ? '' : text.slice(bar + 1).trim();
+    const move = /^([^\\s:]+?)\\s*-+>\\s*([^\\s:]+)\\s*(?::\\s*(.*))?$/.exec(body);
+    const skip = /^skip\\s+(.+)$/i.exec(body);
+    if (move) step = { from: move[1], to: move[2], label: move[3] || '', caption: caption, text: text };
+    else if (skip) step = { skip: skip[1].split(/[\\s,]+/).filter(Boolean), caption: caption, text: text };
     if (!step) continue;
     if (!current) {
       current = { title: 'Walkthrough', steps: [] };
@@ -1258,26 +1265,62 @@ function diagramPicture(svg, home, size, images) {
 }
 
 // limit caps the longer side; the area cap keeps H.264 inside the level it is asked for.
-async function diagramCanvas(svg, home, limit) {
+// With captioned, a band under the diagram keeps room for two lines of caption in every frame.
+async function diagramCanvas(svg, home, limit, captioned) {
   const PAD = 24;
   const scale = Math.min(2, (limit - 2 * PAD) / Math.max(home.w, home.h), Math.sqrt(1900000 / (home.w * home.h)));
   const size = { w: home.w * scale, h: home.h * scale };
   const even = (value) => Math.max(2, Math.round(value / 2) * 2);
   const element = document.createElement('canvas');
   element.width = even(size.w + 2 * PAD);
-  element.height = even(size.h + 2 * PAD);
+  const fontSize = Math.round(Math.max(15, Math.min(30, element.width / 40)));
+  const band = captioned ? Math.round(fontSize * 2 * 1.35 + PAD) : 0;
+  element.height = even(size.h + 2 * PAD + band);
   const context = element.getContext('2d', { willReadFrequently: true });
-  const background = getComputedStyle(article).getPropertyValue('--bgColor-default').trim() || getComputedStyle(document.body).backgroundColor;
+  const style = getComputedStyle(article);
+  const colour = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
+  const background = colour('--bgColor-default', getComputedStyle(document.body).backgroundColor);
+  const ink = colour('--fgColor-default', getComputedStyle(document.body).color);
+  const rule = colour('--borderColor-muted', ink);
+  const font = '500 ' + fontSize + 'px system-ui, -apple-system, sans-serif';
   const images = await diagramImageData(svg);
+  function lines(text) {
+    const room = element.width - 2 * PAD;
+    const result = [''];
+    for (const word of text.split(/\\s+/)) {
+      const last = result.length - 1;
+      const joined = result[last] ? result[last] + ' ' + word : word;
+      if (!result[last] || context.measureText(joined).width <= room) result[last] = joined;
+      else result.push(word);
+    }
+    if (result.length > 2) {
+      let second = result[1];
+      while (second && context.measureText(second + '\\u2026').width > room) second = second.slice(0, -1);
+      result.splice(1, result.length, second.trimEnd() + '\\u2026');
+    }
+    return result;
+  }
   return {
     element: element,
     width: element.width,
     height: element.height,
-    async draw() {
+    async draw(text) {
       const picture = await diagramPicture(svg, home, size, images);
       context.fillStyle = background;
       context.fillRect(0, 0, element.width, element.height);
-      context.drawImage(picture, (element.width - size.w) / 2, (element.height - size.h) / 2, size.w, size.h);
+      context.drawImage(picture, (element.width - size.w) / 2, (element.height - band - size.h) / 2, size.w, size.h);
+      if (!band || !text) return;
+      const top = element.height - band;
+      context.fillStyle = rule;
+      context.fillRect(PAD, top, element.width - 2 * PAD, 1);
+      context.font = font;
+      context.fillStyle = ink;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      const rows = lines(text);
+      const height = fontSize * 1.35;
+      const first = top + band / 2 - (rows.length - 1) * height / 2;
+      rows.forEach((row, at) => context.fillText(row, element.width / 2, first + at * height));
     },
     pixels: () => context.getImageData(0, 0, element.width, element.height).data,
   };
@@ -1496,7 +1539,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
       if (step.skip) {
         const found = step.skip.map((name) => nodes.get(name)).filter(Boolean);
         if (found.length < step.skip.length) problems.push(step.text);
-        if (found.length) steps.push({ skip: found });
+        if (found.length) steps.push({ skip: found, caption: step.caption });
         continue;
       }
       const from = nodes.get(step.from);
@@ -1507,7 +1550,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
         problems.push(step.text);
         continue;
       }
-      steps.push({ from: from, to: to, path: path, reverse: !forward, label: step.label });
+      steps.push({ from: from, to: to, path: path, reverse: !forward, label: step.label, caption: step.caption });
     }
     return { title: script.title, steps: steps, problems: problems };
   }).filter((scenario) => scenario.steps.length);
@@ -1557,6 +1600,15 @@ function playDiagram(stage, svg, tools, scripts, home) {
   if (videoType) exportChoice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
   controls.append(exportMenu);
   tools.prepend(controls);
+  const caption = document.createElement('div');
+  caption.className = 'diagram-caption';
+  caption.setAttribute('aria-live', 'polite');
+  caption.hidden = true;
+  stage.append(caption);
+  const say = (text) => {
+    caption.textContent = text || '';
+    caption.hidden = !text;
+  };
 
   let timeline = [];
   let index = 0;
@@ -1634,6 +1686,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     token?.remove();
     token = null;
     active = null;
+    say('');
   }
 
   function makeToken(text) {
@@ -1671,6 +1724,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     for (const step of scenario().steps) {
       if (step.skip) {
         segments.push({ duration: calm ? 400 : 320, stop: true, start: () => {
+          say(step.caption);
           for (const node of step.skip) {
             node.classList.remove('play-active', 'play-done');
             node.querySelector(':scope > .play-check')?.remove();
@@ -1682,11 +1736,12 @@ function playDiagram(stage, svg, tools, scripts, home) {
       }
       if (at !== step.from) {
         segments.push({ duration: DWELL, start: () => {
+          say(step.caption);
           if (active && active !== step.from) setDone(active);
           setActive(step.from);
         } });
       } else {
-        segments.push({ duration: DWELL, start: () => {} });
+        segments.push({ duration: DWELL, start: () => say(step.caption) });
       }
       const length = step.path.getTotalLength();
       let matrix = null;
@@ -1865,14 +1920,15 @@ function playDiagram(stage, svg, tools, scripts, home) {
     recordButton.setAttribute('aria-label', 'Cancel saving');
     const name = diagramExportName(scenario().title, kind === 'gif' ? 'gif' : videoType.startsWith('video/mp4') ? 'mp4' : 'webm');
     try {
-      const canvas = await diagramCanvas(svg, home, kind === 'gif' ? 960 : 1920);
+      const captioned = scenario().steps.some((step) => step.caption);
+      const canvas = await diagramCanvas(svg, home, kind === 'gif' ? 960 : 1920, captioned);
       if (kind === 'gif') {
         stage.classList.add('recording');
         const STEP = 60;
         const gif = gifWriter(canvas.width, canvas.height);
         restart(false);
         for (;;) {
-          await canvas.draw();
+          await canvas.draw(caption.textContent);
           if (job.cancelled) break;
           const end = index >= timeline.length;
           gif.add(canvas.pixels(), end ? 2400 : STEP);
@@ -1887,7 +1943,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
           saveBlob(gif.finish(), name);
         }
       } else {
-        await canvas.draw();
+        await canvas.draw(caption.textContent);
         const stream = canvas.element.captureStream(30);
         const recorder = new MediaRecorder(stream, { mimeType: videoType, videoBitsPerSecond: 6000000 });
         const chunks = [];
@@ -1898,7 +1954,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
         play(true);
         let hold = 0;
         while (!job.cancelled) {
-          await canvas.draw();
+          await canvas.draw(caption.textContent);
           exportProgress();
           if (finished) {
             hold = hold || performance.now() + 1500;
