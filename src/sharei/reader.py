@@ -1343,9 +1343,10 @@ function diagramPicture(svg, home, size, images) {
 
 // limit caps the longer side; the area cap keeps H.264 inside the level it is asked for.
 // With captioned, a band under the diagram keeps room for two lines of caption in every frame.
-async function diagramCanvas(svg, home, limit, captioned) {
+// A still has no video to fit, so it scales a zoomed-in view up to the limit instead of 2x.
+async function diagramCanvas(svg, home, limit, captioned, still) {
   const PAD = 24;
-  const scale = Math.min(2, (limit - 2 * PAD) / Math.max(home.w, home.h), Math.sqrt(1900000 / (home.w * home.h)));
+  const scale = Math.min(still ? Infinity : 2, (limit - 2 * PAD) / Math.max(home.w, home.h), Math.sqrt((still ? 8000000 : 1900000) / (home.w * home.h)));
   const size = { w: home.w * scale, h: home.h * scale };
   const even = (value) => Math.max(2, Math.round(value / 2) * 2);
   const element = document.createElement('canvas');
@@ -1681,6 +1682,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     return element;
   };
   const linkChoice = exportChoice('link', 'Copy link', 'To this story, step and spotlight');
+  exportChoice('png', 'PNG', 'A picture of what you see now');
   exportChoice('gif', 'GIF', 'Loops, plays anywhere');
   const videoType = diagramVideoType();
   if (videoType) exportChoice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
@@ -2057,6 +2059,23 @@ function playDiagram(stage, svg, tools, scripts, home) {
     recordButton.setAttribute('aria-label', text);
     sync();
   }
+  // A still keeps the current zoom, spotlight, dot and caption, so it draws the live viewBox.
+  async function savePicture() {
+    if (exporting) return;
+    const box = svg.viewBox.baseVal;
+    const text = caption.hidden ? '' : caption.textContent;
+    try {
+      const canvas = await diagramCanvas(svg, { x: box.x, y: box.y, w: box.width, h: box.height }, 2400, Boolean(text), true);
+      await canvas.draw(text);
+      const blob = await new Promise((resolve) => canvas.element.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('the browser made no picture');
+      saveBlob(blob, diagramExportName(scenario().title, 'png'));
+      recordButton.title = SHARE_TITLE;
+    } catch (error) {
+      recordButton.title = 'Could not save the PNG: ' + (error.message || error);
+    }
+    recordButton.setAttribute('aria-label', recordButton.title);
+  }
   async function exportScenario(kind) {
     if (exporting) return;
     exporting = { kind: kind, cancelled: false };
@@ -2181,7 +2200,8 @@ function playDiagram(stage, svg, tools, scripts, home) {
       return;
     }
     exportMenu.hidden = true;
-    exportScenario(choice.dataset.kind);
+    if (choice.dataset.kind === 'png') savePicture();
+    else exportScenario(choice.dataset.kind);
   });
   document.addEventListener('pointerdown', (event) => {
     if (!exportMenu.hidden && !share.contains(event.target)) exportMenu.hidden = true;

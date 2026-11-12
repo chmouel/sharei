@@ -183,7 +183,9 @@ Pages:
   or saves a story client-side: `diagramCanvas()` draws a
   clone of the SVG with computed styles inlined and every `<image>` turned
   into a data URL (`diagramImageData()`, same-origin fetch only, since an
-  SVG drawn as an image loads nothing external) at the home viewBox. GIF
+  SVG drawn as an image loads nothing external) at the home viewBox, or
+  at the live viewBox for a PNG (`savePicture()`, `still` lifts the 2x and
+  H.264 area caps). GIF
   steps the timeline offline with `advance(60)` under `.recording` (no
   transitions or glow) and encodes with the built-in `gifWriter()`; video
   plays in real time into `captureStream()` and `MediaRecorder`

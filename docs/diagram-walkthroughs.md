@@ -180,6 +180,14 @@ The copy replaces the current address without adding a history entry, and
 editing the hash by hand applies it at once. Values that match no story or
 no box are ignored.
 
+## Saving a still picture
+
+"PNG" in the share menu saves what the diagram shows right now: the current
+zoom and position, the spotlight, the dot and glow mid-step, and the caption
+in a band underneath when one is showing. It comes out 2400 pixels on its
+longer side, so a zoomed-in corner stays sharp enough for a slide. Like the
+other exports, it is drawn in the browser and nothing goes to the server.
+
 ## Saving a story as a GIF or a video
 
 The share button in the toolbar saves the selected story as a file to drop into a

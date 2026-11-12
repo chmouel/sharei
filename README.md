@@ -333,7 +333,8 @@ the same story, step and highlighted boxes.
 
 The share button next to the story controls saves the selected scenario as a looping
 GIF or as a video (MP4, or WebM in browsers that can't write MP4), made in
-your browser.
+your browser. "PNG" in the same menu saves a picture of exactly what you see,
+zoom, highlights and caption included.
 
 A box can show a picture with mermaid's own syntax,
 `Bot@{ img: "bot.svg", label: "Agent", pos: "b", w: 40, h: 40 }`. Put the
