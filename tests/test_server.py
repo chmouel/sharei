@@ -266,6 +266,67 @@ def test_tall_shot_thumbnail_keeps_the_top_sharp(tmp_path):
         assert thumb.size == (THUMB_MAX * 9 // 16, THUMB_MAX)
 
 
+def png_bytes(width=64, height=32):
+    image_module = pytest.importorskip("PIL.Image")
+    buffer = io.BytesIO()
+    image_module.new("RGB", (width, height), (200, 40, 40)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def test_drop_images_get_a_whole_frame_thumbnail(live_server):
+    image_module = pytest.importorskip("PIL.Image")
+    from sharei.server import THUMB_MAX
+
+    upload(live_server, "wide.png", png_bytes(900, 400))
+    status, headers, body = get(live_server + "/thumb/inbox/wide.png")
+    assert status == 200 and headers["Content-Type"] == "image/webp"
+    with image_module.open(io.BytesIO(body)) as thumb:
+        # A drop keeps its whole frame: no 9:16 crop, just scaled down.
+        assert thumb.size == (THUMB_MAX, THUMB_MAX * 400 // 900)
+    assert (
+        get(live_server + "/thumb/inbox/wide.png")[2] == body
+    )  # served from the cache
+    # /recent says where the thumbnail is.
+    recent = json.loads(get(live_server + "/recent?limit=5")[2])["drop"]
+    entry = next(item for item in recent if item["name"] == "wide.png")
+    assert entry["thumb"].startswith("/thumb/inbox/wide.png?v=")
+    assert get(live_server + entry["thumb"])[2] == body
+
+
+def test_thumbnails_refuse_what_they_cannot_serve(live_server, sharei_root):
+    pytest.importorskip("PIL.Image")
+    upload(live_server, "notes.txt", b"plain text\n")
+    (sharei_root / "inbox" / "drop" / ".hidden.png").write_bytes(png_bytes())
+    for path in (
+        "/thumb/inbox/notes.txt",
+        "/thumb/inbox/.hidden.png",
+        "/thumb/inbox/%2e%2e/%2e%2e/etc/passwd",
+        "/thumb/inbox/missing.png",
+    ):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            get(live_server + path)
+        assert error.value.code == 404
+
+
+def test_a_drop_thumbnail_disappears_with_the_file(live_server, monkeypatch):
+    pytest.importorskip("PIL.Image")
+    from sharei import server
+
+    upload(live_server, "gone.png", png_bytes())
+    first = get(live_server + "/thumb/inbox/gone.png")[2]
+    assert first
+    monkeypatch.setattr(
+        server, "render_thumbnail", lambda *args: pytest.fail("the cache was not used")
+    )
+    assert get(live_server + "/thumb/inbox/gone.png")[2] == first
+    urllib.request.urlopen(
+        urllib.request.Request(f"{live_server}/poub/delete/inbox/gone.png", data=b"")
+    ).read()
+    with pytest.raises(urllib.error.HTTPError) as error:
+        get(live_server + "/thumb/inbox/gone.png")
+    assert error.value.code == 404
+
+
 def heic_bytes(alpha=False):
     image_module = pytest.importorskip("PIL.Image")
     pytest.importorskip("pillow_heif").register_heif_opener()
@@ -467,7 +528,8 @@ def test_dropped_svg_is_an_image_but_stays_sandboxed(live_server):
     assert headers["Content-Security-Policy"] == "sandbox"
     assert headers["X-Content-Type-Options"] == "nosniff"
     _, _, drop = get(live_server + "/drop")
-    assert b'<img src="/poub/inbox/chart.svg"' in drop
+    # The grid takes the thumbnail route, which serves the vector itself, sandboxed.
+    assert b'<img src="/thumb/inbox/chart.svg?v=' in drop
     assert b'href="/view/inbox/chart.svg"' not in drop
     # The source stays readable, and a raster keeps its plain inline response.
     assert b"&lt;svg" in get(live_server + "/view/inbox/chart.svg")[2]

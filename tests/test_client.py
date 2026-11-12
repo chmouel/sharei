@@ -313,6 +313,8 @@ def test_notes_lists_and_searches(vaulted, capsys):
     out = capsys.readouterr().out
     assert out.startswith("note Shared/Trip.md\n")
     assert ": ramen in kyoto" in out and "Private" not in out
+    client.notes_main(["readme"])
+    assert capsys.readouterr().out == "file Shared/readme.txt\n"
     client.notes_main(["ramen", "--json"])
     answer = json.loads(capsys.readouterr().out)
     assert [note["p"] for note in answer["results"]] == ["Shared/Trip.md"]

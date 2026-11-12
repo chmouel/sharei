@@ -535,6 +535,7 @@ def search(index: Index, query: str) -> tuple[list[str], list[dict[str, object]]
                 changed,
                 {
                     "p": relative,
+                    "k": "note",
                     "h": url("/notes/", relative),
                     "i": url("/notes-icon/", index.icons[relative])
                     if relative in index.icons

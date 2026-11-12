@@ -373,11 +373,10 @@ def vault_entries(terms: list[str], deadline: float) -> list[dict]:
 
 
 def notes(terms: list[str], query: str, deadline: float) -> list[dict]:
-    """The whole vault newest first, or everything matching what is typed.
+    """The whole vault newest first, or what sharei finds for what is typed.
 
-    The server searches the text of the markdown notes and their paths; the
-    paths of the other shared files are matched here, from the same index, so
-    searching finds a note by its content and a PDF by its name.
+    One call either way: sharei searches the text of the markdown notes and the
+    names of everything else, so the filter only draws what it is given.
     """
     if not query:
         entries = vault_entries(terms, deadline)
@@ -386,30 +385,22 @@ def notes(terms: list[str], query: str, deadline: float) -> list[dict]:
             rows.append(truncation(LIST_LIMIT, len(entries)))
         return rows
     words = quote(query.strip(), safe="")
-    found = answer("notes", "--json", query)["results"]
     rows = []
-    for note in found[:LIST_LIMIT]:
+    for note in answer("notes", "--json", query)["results"][:LIST_LIMIT]:
         row = note_item(note, deadline)
-        row["children"] = [
-            item(
-                hit["s"],
-                f"line {hit['n']}",
-                f"{row['arg']}#find={hit['n']}:{words}",
-                "note",
-                SHAREI_PATH=note["p"],
-            )
-            for hit in note.get("hits", [])
-        ]
+        if hits := note.get("hits") or []:
+            row["children"] = [
+                item(
+                    hit["s"],
+                    f"line {hit['n']}",
+                    f"{row['arg']}#find={hit['n']}:{words}",
+                    "note",
+                    SHAREI_PATH=note["p"],
+                )
+                for hit in hits
+            ]
         rows.append(row)
-    if len(rows) < LIST_LIMIT:
-        seen = {note["p"] for note in found}
-        named = [
-            entry for entry in vault_entries(terms, deadline) if entry["p"] not in seen
-        ]
-        rows += [
-            note_item(entry, deadline) for entry in named[: LIST_LIMIT - len(rows)]
-        ]
-    return rows[:LIST_LIMIT]
+    return rows
 
 
 def clips(terms: list[str]) -> list[dict]:
@@ -475,6 +466,7 @@ def recent(terms: list[str], kinds: tuple[str, ...]) -> list[dict]:
                     searched=f"{entry['name']} {entry['project']}",
                     SHAREI_BACK=str(back),
                     SHAREI_ROUTE=link,
+                    SHAREI_THUMB=local(entry.get("thumb", "")),
                 )
             )
     return matching(rows, terms)
@@ -590,7 +582,8 @@ def preview() -> dict:
             "text": value,
             "metadata": [["URL", value]],
         }
-    saved = download(link, Path(local(link)).suffix)
+    thumb = os.environ.get("SHAREI_THUMB", "")
+    saved = download(thumb or link, Path(local(link)).suffix)
     if saved and saved.lower().endswith(IMAGE_SUFFIXES):
         return {"badge": "sharei drop", "image": saved, "metadata": [["URL", value]]}
     try:

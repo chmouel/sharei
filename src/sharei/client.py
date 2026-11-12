@@ -601,7 +601,7 @@ def notes_main(argv: list[str]) -> int:
         return 0
     if "results" in answer:
         for item in answer["results"]:
-            print(f"note {item['p']}")
+            print(f"{item.get('k', 'note')} {item['p']}")
             for hit in item.get("hits", []):
                 print(f"     {hit['n']}: {hit['s']}")
         return 0

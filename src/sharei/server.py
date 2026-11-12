@@ -317,6 +317,7 @@ class PoubFile(TypedDict):
     size: str
     date: str
     url: str
+    thumb: str
     image: bool
     text: bool
     timestamp: float
@@ -624,9 +625,9 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
     return sorted(shots, key=lambda shot: float(shot["timestamp"]), reverse=True)
 
 
-def thumbnail_cache_path(path: Path) -> Path:
+def thumbnail_cache_path(path: Path, style: str = "top") -> Path:
     digest = hashlib.sha256(
-        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:top".encode()
+        f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:{style}".encode()
     ).hexdigest()[:32]
     return THUMBS / f"{digest}.webp"
 
@@ -640,15 +641,16 @@ def vector_headers(base: dict[str, str]) -> dict[str, str]:
     }
 
 
-def render_thumbnail(path: Path) -> bytes:
+def render_thumbnail(path: Path, style: str = "top") -> bytes:
     # Lazy import so a missing Pillow degrades to serving the original image.
     image_module = importlib.import_module("PIL.Image")
     with image_module.open(path) as image:
         image.draft("RGB", (THUMB_MAX, THUMB_MAX))
-        # Tiles show the top 9:16 of a shot, so a tall page is cropped to that before shrinking
-        # instead of being squeezed into a sliver the tile then has to blow up.
+        # Shots tile in a 9:16 grid and show the top of the page, so a tall one
+        # is cropped before shrinking instead of being squeezed into a sliver.
+        # A dropped file keeps its whole frame: it is a picture, not a page.
         width, height = image.size
-        if height * 9 > width * 16:
+        if style == "top" and height * 9 > width * 16:
             image = image.crop((0, 0, width, -(-width * 16 // 9)))
         image.thumbnail((THUMB_MAX, THUMB_MAX))
         buffer = io.BytesIO()
@@ -743,11 +745,12 @@ def convert_heic_upload(temporary: Path, name: str) -> tuple[Path, str]:
 
 
 def forget_thumbnail(path: Path) -> None:
-    try:
-        cached = thumbnail_cache_path(path)
-    except OSError:
-        return
-    cached.unlink(missing_ok=True)
+    for style in ("top", "fit"):
+        try:
+            cached = thumbnail_cache_path(path, style)
+        except OSError:
+            continue
+        cached.unlink(missing_ok=True)
 
 
 def clear_thumbnails() -> None:
@@ -970,6 +973,14 @@ def shot_path(encoded: str) -> Path | None:
         or not path.is_file()
         or expired(path)
     ):
+        return None
+    return path
+
+
+def poub_image_path(encoded: str) -> Path | None:
+    """A dropped image that can be thumbnailed, or None for anything else."""
+    path = poub_path(encoded)
+    if path is None or path.suffix.lower() not in IMAGE_LIKE_SUFFIXES:
         return None
     return path
 
@@ -1285,6 +1296,9 @@ def poub_files() -> list[PoubFile]:
                 size=human_size(stat.st_size),
                 date=datetime.fromtimestamp(stat.st_mtime).strftime("%b %-d, %H:%M"),
                 url=f"{quote(project)}/{quote(path.name)}",
+                thumb=f"/thumb/{quote(project)}/{quote(path.name)}?v={int(stat.st_mtime)}"
+                if path.suffix.lower() in IMAGE_LIKE_SUFFIXES
+                else "",
                 image=path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
                 text=looks_like_text(path),
                 timestamp=stat.st_mtime,
@@ -1432,6 +1446,28 @@ def notes_entries(index: notes.Index) -> list[dict[str, object]]:
         entry["i"] = notes.url("/notes-icon/", icon) if icon else ""
     NOTES_ENTRIES.update(index=index, entries=entries)
     return entries
+
+
+def name_matches(
+    index: notes.Index, terms: list[str], found: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """The notes a search hit, then every other shared entry whose path matches.
+
+    The full text of the markdown notes is searchable; a PDF, a picture or a
+    folder can only answer to its name, so they come after the notes, newest
+    first, with no matching lines. `hits` is empty rather than missing: the
+    picker draws those rows as a plain link, as it already does for a note
+    whose path is what matched.
+    """
+    seen = {entry["p"] for entry in found}
+    rest = [
+        {**entry, "hits": []}
+        for entry in notes_entries(index)
+        if entry["p"] not in seen
+        and all(term in notes.fold(str(entry["p"])) for term in terms)
+    ]
+    rest.sort(key=lambda entry: -int(entry.get("t", 0)))  # type: ignore[arg-type]
+    return found + rest[: max(0, notes.SEARCH_NOTES_MAX - len(found))]
 
 
 def json_script(value: object) -> str:
@@ -1895,7 +1931,8 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
         is_html = Path(entry["name"]).suffix.lower() in HTML_SUFFIXES
         href = f"/poub/{entry['url']}"
         if entry["image"]:
-            thumb = f'<img src="/poub/{entry["url"]}" alt="" loading="lazy" decoding="async">'
+            src = entry["thumb"] or f"/poub/{entry['url']}"
+            thumb = f'<img src="{src}" alt="" loading="lazy" decoding="async">'
             action = "Open"
             download = ""
         elif Path(entry["name"]).suffix.lower() in VIDEO_SUFFIXES:
@@ -2404,6 +2441,15 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                 "mtime": stat.st_mtime,
                 "age_seconds": int(now - stat.st_mtime),
                 "image": path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
+                **(
+                    {
+                        "thumb": f"/thumb/{quote(path.parent.parent.name)}"
+                        f"/{quote(path.name)}"
+                        f"?v={int(stat.st_mtime)}"
+                    }
+                    if path.suffix.lower() in IMAGE_LIKE_SUFFIXES
+                    else {}
+                ),
                 **({"expires": when} if (when := expires_at(path)) else {}),
                 **({"comments": count} if (count := comments_count(path)) else {}),
                 "url": f"/poub/{quote(path.parent.parent.name)}/{quote(path.name)}",
@@ -2923,7 +2969,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 terms, results = notes.search(index, query)
                 self.send_json(
-                    {"public_url": PUBLIC_URL, "terms": terms, "results": results}
+                    {
+                        "public_url": PUBLIC_URL,
+                        "terms": terms,
+                        "results": name_matches(index, terms, results),
+                    }
                 )
                 return
 
@@ -3065,9 +3115,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path.startswith("/thumb/"):
-            path = shot_path(parsed.path.removeprefix("/thumb/"))
+            encoded = parsed.path.removeprefix("/thumb/")
+            path = shot_path(encoded)
             if path is not None:
                 self.send_thumbnail(path)
+                return
+            dropped = poub_image_path(encoded)
+            if dropped is not None:
+                self.send_thumbnail(dropped, "fit")
                 return
 
         if parsed.path.startswith("/shot/"):
@@ -3657,18 +3712,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_thumbnail(self, path: Path) -> None:
+    def send_thumbnail(self, path: Path, style: str = "top") -> None:
         immutable = {"Cache-Control": "public, max-age=31536000, immutable"}
         if path.suffix.lower() in VECTOR_SUFFIXES:
             # Nothing to rasterise or cache: the browser scales the vector itself.
             self.send_file(path, "image/svg+xml", vector_headers(immutable))
             return
         try:
-            cached = thumbnail_cache_path(path)
+            cached = thumbnail_cache_path(path, style)
             if cached.is_file():
                 data = cached.read_bytes()
             else:
-                data = render_thumbnail(path)
+                data = render_thumbnail(path, style)
                 try:
                     THUMBS.mkdir(parents=True, exist_ok=True)
                     temporary = cached.with_name(

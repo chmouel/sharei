@@ -202,6 +202,51 @@ def test_search_text(live_server, vault):
     assert json.loads(body)["results"] == []
 
 
+def test_search_reaches_files_and_folders(live_server, vault):
+    write(vault / "Shared" / "budget.pdf", b"%PDF-1.4")
+    write(vault / "Shared" / "Café.png", b"\x89PNG\r\n\x1a\n")
+    write(vault / "Private" / "budget.pdf", b"%PDF-1.4")
+    _, body = get(live_server + "/notes-search?q=budget")
+    results = json.loads(body)["results"]
+    assert [(result["p"], result["k"], result["hits"]) for result in results] == [
+        ("Shared/budget.pdf", "file", [])
+    ]
+    assert results[0]["h"] == "/notes-pdf/Shared/budget.pdf"
+    # A name is folded the same way a note's text is.
+    results = json.loads(get(live_server + "/notes-search?q=cafe")[1])["results"]
+    assert [result["p"] for result in results] == ["Shared/Café.png"]
+    # A folder answers to its name, after the notes.
+    results = json.loads(get(live_server + "/notes-search?q=sub")[1])["results"]
+    assert [(result["p"], result["k"]) for result in results] == [
+        ("Shared/Sub/Other.md", "note"),
+        ("Shared/Sub", "folder"),
+    ]
+    assert results[1]["h"] == "/notes/Shared/Sub/"
+
+
+def test_search_lists_notes_before_other_files(live_server, vault):
+    write(vault / "Shared" / "cafe.md", b"cafe\n")
+    write(vault / "Shared" / "cafe.png", b"\x89PNG\r\n\x1a\n")
+    results = json.loads(get(live_server + "/notes-search?q=cafe")[1])["results"]
+    assert [result["k"] for result in results] == ["note", "file"]
+
+
+def test_search_caps_the_other_files(live_server, vault):
+    for number in range(notes.SEARCH_NOTES_MAX + 10):
+        write(vault / "Shared" / f"many {number:03d}.txt", b"x")
+    results = json.loads(get(live_server + "/notes-search?q=many")[1])["results"]
+    assert len(results) == notes.SEARCH_NOTES_MAX
+    assert {result["k"] for result in results} == {"file"}
+    # Ignored and unshared paths stay out of it, even when a note links to one.
+    paths = {
+        result["p"]
+        for result in json.loads(get(live_server + "/notes-search?q=secret")[1])[
+            "results"
+        ]
+    }
+    assert paths == {"Shared/Demo.md"}
+
+
 def test_search_text_follows_edits(live_server, vault):
     note = vault / "Shared" / "Sub" / "Other.md"
     assert json.loads(get(live_server + "/notes-search?q=zebra")[1])["results"] == []

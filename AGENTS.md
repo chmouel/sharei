@@ -42,8 +42,9 @@ proxy with authentication (see SECURITY.md).
   `/clip/clear`; with `--ttl` and no TEXT only the expiry changes.
   `sharec get clip --json` prints `/clip/state` (the text and its history),
   `sharec notes [QUERY] [--json]` prints `/notes-search` or its `?q=` search
-  through `client.payload()`, and `sharec cat PATH` prints the bytes of a
-  server route, which is how `contrib/raffi/` reads notes and images.
+  through `client.payload()` (a result line starts with its kind, `note` or
+  `file`), and `sharec cat PATH` prints the bytes of a server route, which is
+  how `contrib/raffi/` reads notes and images.
   On a terminal, `drop`/`shot` draw images with the kitty graphics protocol
   (PNG as is, other raster formats through Pillow) on the alternate screen,
   sized to the window (`browse`: j/space/right and k/backspace/delete/left
@@ -182,7 +183,10 @@ Files:
 - `/notes-icon/<name>`: an Icon Fairy icon image (`notes.scan_icons()`),
   shown on rows, folder titles and the reader trail
 - `/shot/<key>`, `/thumb/<key>`: an SVG is served as itself, since Pillow cannot
-  rasterise one, so `/thumb` has nothing to cache for it
+  rasterise one, so `/thumb` has nothing to cache for it. `/thumb` also takes a
+  dropped image (`/thumb/<project>/<name>`), thumbnailed whole-frame (`style`
+  `fit`) where a shot keeps the top 9:16 of its page (`top`), both cached and
+  keyed by style; the Drop grid and `/recent` (`thumb`) use it.
 - `/poub/<project>/<name>`: `?raw` serves text files inline as `text/plain`
   Images, videos and audio are served inline, everything else as an
   attachment. An SVG counts as an image (`IMAGE_LIKE_SUFFIXES`) and is served
@@ -202,8 +206,10 @@ Data:
   `{items: [{p, k, h, t, i}]}` (path, kind, link, mtime, icon), rebuilt per
   vault scan (`notes_entries()`). With `?q=`, a full-text search over the
   shared markdown notes (`notes.search()`): every word must appear in the
-  text or the path, at most `SEARCH_NOTES_MAX` notes with
-  `SEARCH_HITS_PER_NOTE` lines each, best first. Folded texts are cached by
+  text or the path: the markdown notes first, with up to `SEARCH_HITS_PER_NOTE`
+  lines each (`notes.search()`), then the other shared files and the folders
+  whose name matches (`name_matches()`), `hits: []` and their `k`, newest
+  first, up to `SEARCH_NOTES_MAX` results in all. Folded texts are cached by
   mtime and size up to `SEARCH_CACHE_MAX_CHARS`. 404 without a vault.
 - `/clip/raw[?n=]`: the clip, or history entry n (1 is the newest), `/clip/state`
 - `/comments/<project>/<name>`: `{name, lines, comments}` for a markdown

@@ -44,7 +44,7 @@ view, Ctrl+Shift+Tab goes back, and the footer shows where you are:
 
 | View | Rows |
 | --- | --- |
-| Notes | every shared note and file, newest first; typing searches the note text and the paths and lists the matching lines underneath the note |
+| Notes | every shared note and file, newest first; typing searches the note text and the name of every shared entry, and lists the matching lines underneath a note |
 | Clipboard | the current shared clipboard and its history, newest first |
 | Drops | the dropped files, newest first |
 | Shots | the screenshots, newest first |
@@ -69,6 +69,9 @@ downloaded when they are selected.
 
 ## Notes
 
+- An image drop previews from sharei's thumbnail (480 px), so a phone photo does
+  not travel over the network to fill the pane; a note or a markdown drop keeps
+  its full text.
 - Notes and markdown drops are drawn in the preview pane the way raffi's
   own scripts draw them (`scripts/github/pr.py`): headings and bold, code
   spans and fences, task lists, callouts, pipe tables, wikilinks as links,

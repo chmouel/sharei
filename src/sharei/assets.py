@@ -1782,7 +1782,7 @@ SEARCH_JS = """
             const folder = slash < 0 ? '' : result.p.slice(0, slash);
             const titleMarks = wordMarks(title, data.terms);
             if (!result.hits.length) {
-              built.push(row(result.h, 'note', result.i, title, titleMarks, folder, new Set(), when(result.t)));
+              built.push(row(result.h, result.k || 'note', result.i, title, titleMarks, folder, new Set(), when(result.t)));
               continue;
             }
             for (const hit of result.hits) {
@@ -1790,8 +1790,8 @@ SEARCH_JS = """
                 hit.s, wordMarks(hit.s, data.terms), 'L' + hit.n));
             }
           }
-          const notes = data.results.length;
-          show(built, notes ? built.length + ' lines in ' + notes + (notes === 1 ? ' note' : ' notes') : 'Nothing matches');
+          const results_count = data.results.length;
+          show(built, results_count ? built.length + ' lines in ' + results_count + (results_count === 1 ? ' result' : ' results') : 'Nothing matches');
         })
         .catch((error) => { if (error.name !== 'AbortError') status.textContent = 'Search failed'; });
     }, 160);
