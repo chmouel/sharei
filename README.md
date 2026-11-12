@@ -316,6 +316,10 @@ another and nothing travels.
 
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 
+The red dot next to the play button saves the selected scenario as a looping
+GIF or as a video (MP4, or WebM in browsers that can't write MP4), made in
+your browser.
+
 A box can show a picture with mermaid's own syntax,
 `Bot@{ img: "bot.svg", label: "Agent", pos: "b", w: 40, h: 40 }`. Put the
 picture next to the markdown file and `sharec` sends it along, or use an

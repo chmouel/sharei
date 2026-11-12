@@ -154,6 +154,15 @@ Pages:
   listed in the diagram's title. `sharec` scans `img:` values in mermaid
   fences (`mermaid_blocks()`) with the same checks as markdown images, and
   leaves `/icons/` paths alone.
+  The record button saves a story client-side: `diagramCanvas()` draws a
+  clone of the SVG with computed styles inlined and every `<image>` turned
+  into a data URL (`diagramImageData()`, same-origin fetch only, since an
+  SVG drawn as an image loads nothing external) at the home viewBox. GIF
+  steps the timeline offline with `advance(60)` under `.recording` (no
+  transitions or glow) and encodes with the built-in `gifWriter()`; video
+  plays in real time into `captureStream()` and `MediaRecorder`
+  (`diagramVideoType()`). The page CSP blocks `blob:` images, so frames go
+  through `data:` URLs.
   `docs/diagram-walkthroughs.md` is the design spec and a live demo, with
   its icons in `docs/diagram-icons/`.
   Linkify ignores scheme-less links so `README.md` stays text.

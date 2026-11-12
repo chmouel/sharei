@@ -110,6 +110,32 @@ vanish halfway.
 With `prefers-reduced-motion` set, there is no travelling dot and no glow
 pulse. Nodes and edges change state in plain steps of about half a second.
 
+## Saving a story as a GIF or a video
+
+The red dot in the toolbar saves the selected story as a file to drop into a
+pull request, a chat or slides. Everything happens in the browser and nothing
+is sent to the server.
+
+GIF replays the story off screen in 60 ms frames, with the glow and fades
+turned off so every frame is stable. It comes out at most 960 pixels wide,
+loops forever and holds the last frame for 2.4 seconds. Frames only store the
+part of the picture that changed, so a short story stays a few hundred
+kilobytes. Colours are cut to 256 per frame, so gradients band a little.
+
+Video plays the story in real time and records it with `MediaRecorder`: MP4
+(H.264) where the browser can write it, WebM otherwise. It goes up to 1920
+pixels wide, keeps the glow and the smooth fades, and holds the last frame
+for 1.5 seconds. It takes as long as the story does.
+
+Both draw the diagram at its fitted size, whatever the zoom, on the page's
+background colour and in the current theme. The button shows the progress
+and a second press cancels. Pictures are copied into the file: same-origin
+ones such as `/icons/` and dropped files are fetched, while pictures from
+other sites cannot be read back and show as the placeholder. The video
+option is hidden when the browser cannot record a canvas. Chrome writes both
+formats. Safari may refuse to draw mermaid's HTML labels onto a canvas, and
+the button then says the export failed.
+
 ## Pictures in boxes
 
 Mermaid 12 can put a picture in a node:
@@ -232,7 +258,6 @@ The markdown is untrusted, and so is everything in a walkthrough.
 - Two dots moving at once, for parallel branches.
 - Autoplay or looping stories.
 - Sequence, state and other diagram types.
-- Exporting a story as a video. A screen recording does the job for now.
 - Mermaid icon packs (`icon: "fa:..."`). The built-in icons cover the same
   need through `img:`.
 

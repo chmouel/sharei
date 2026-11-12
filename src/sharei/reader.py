@@ -48,15 +48,23 @@ MARKDOWN_CSS = """
   .diagram-dialog .diagram-stage:active { cursor:grabbing; }
   .diagram-dialog .diagram-stage > svg { width:100%; height:100%; max-width:none !important; padding:56px 16px 16px; }
   .diagram-dialog .diagram-tools { top:max(10px, env(safe-area-inset-top)); right:max(10px, env(safe-area-inset-right)); }
-  .diagram-play { display:flex; align-items:center; gap:2px; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
+  .diagram-play { position:relative; display:flex; align-items:center; gap:2px; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
   .diagram-play select { max-width:14em; height:30px; padding:0 4px; border:0; border-radius:6px; background:none; color:var(--fgColor-default); font:500 12px/1 system-ui,-apple-system,sans-serif; cursor:pointer; }
   .diagram-play select:hover { background:var(--bgColor-muted); }
   .diagram-play button[hidden] { display:none; }
-  .diagram-play button:first-of-type svg { fill:currentColor; }
-  .diagram-play button:first-of-type { color:var(--fgColor-accent); }
-  .diagram-play.playing button:first-of-type svg { fill:none; }
-  .diagram-play button:last-of-type svg { fill:currentColor; stroke:none; }
-  .mermaid-diagram:has(.diagram-play.playing) .diagram-tools { opacity:1; }
+  .diagram-play .play-toggle svg { fill:currentColor; }
+  .diagram-play .play-toggle { color:var(--fgColor-accent); }
+  .diagram-play.playing .play-toggle svg { fill:none; }
+  .diagram-play .play-stop svg { fill:currentColor; stroke:none; }
+  .diagram-play .play-record svg { fill:var(--fgColor-danger); stroke:none; }
+  .diagram-play .play-record.busy { width:auto; min-width:30px; padding:0 6px; color:var(--fgColor-default); font:600 11px/1 system-ui,-apple-system,sans-serif; font-variant-numeric:tabular-nums; }
+  .diagram-export { position:absolute; top:calc(100% + 6px); right:0; z-index:3; display:flex; flex-direction:column; gap:2px; min-width:11em; padding:4px; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); box-shadow:0 8px 24px color-mix(in srgb, var(--fgColor-default) 18%, transparent); }
+  .diagram-export[hidden] { display:none; }
+  .diagram-tools .diagram-export button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; width:100%; height:auto; padding:7px 10px; color:var(--fgColor-default); font:500 13px/1.2 system-ui,-apple-system,sans-serif; text-align:left; }
+  .diagram-export button small { color:var(--fgColor-muted); font-size:11px; }
+  .diagram-stage.recording :is(g.node, g.image-shape, g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:none !important; }
+  .diagram-stage.recording :is(g.node, g.image-shape).play-active { animation:none; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--fgColor-accent) 65%, transparent)); }
+  .mermaid-diagram:has(.diagram-play.playing, .diagram-export:not([hidden]), .play-record.busy) .diagram-tools { opacity:1; }
   .diagram-stage :is(g.node, g.image-shape) { transition:opacity .25s; }
   .diagram-stage :is(g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:fill .25s, stroke .25s; }
   .diagram-stage g.node.play-active :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-active > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; }
@@ -823,6 +831,7 @@ const DIAGRAM_ICONS = {
   play: '<path d="M5 3.2v9.6L12.6 8z"/>',
   pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>',
   stop: '<rect x="4" y="4" width="8" height="8" rx="1.2"/>',
+  record: '<circle cx="8" cy="8" r="4.6"/>',
 };
 const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
 let diagramDialog = null;
@@ -855,7 +864,7 @@ function panZoom(holder, scenarios) {
   const fullButton = button('full', 'Full screen');
   stage.append(tools, svg);
   holder.append(stage);
-  if (scenarios.length) playDiagram(stage, svg, tools, scenarios);
+  if (scenarios.length) playDiagram(stage, svg, tools, scenarios, home);
   holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom';
 
   const full = () => Boolean(diagramDialog && diagramDialog.open && diagramDialog.contains(stage));
@@ -1090,7 +1099,291 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 let diagramsPlaying = 0;
 let playBusyWrapped = false;
 
-function playDiagram(stage, svg, tools, scripts) {
+// A saved frame is the diagram as a standalone SVG image. Page CSS does not reach inside an
+// image, so the computed styles that matter are copied inline, and pictures become data URLs.
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const PICTURE_SHAPE = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'opacity', 'filter', 'visibility'];
+const PICTURE_TEXT = ['font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'color', 'margin-top', 'margin-bottom'];
+
+async function diagramImageData(svg) {
+  const found = new Map();
+  for (const image of svg.querySelectorAll('image')) {
+    const href = image.getAttribute('href') || image.getAttributeNS(XLINK_NS, 'href');
+    if (!href || found.has(href)) continue;
+    if (href.startsWith('data:')) {
+      found.set(href, href);
+      continue;
+    }
+    try {
+      const url = new URL(href, location.href);
+      if (url.origin !== location.origin) throw new Error('other site');
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(response.status);
+      const blob = await response.blob();
+      found.set(href, await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      }));
+    } catch (error) {
+      found.set(href, DIAGRAM_IMAGE_MISSING);
+    }
+  }
+  return found;
+}
+
+function diagramPicture(svg, home, size, images) {
+  const copy = svg.cloneNode(true);
+  const from = svg.querySelectorAll('*');
+  const to = copy.querySelectorAll('*');
+  for (let at = 0; at < from.length; at++) {
+    const element = from[at];
+    let names = null;
+    if (element instanceof SVGTextContentElement) names = PICTURE_SHAPE.concat(PICTURE_TEXT);
+    else if (element instanceof SVGGraphicsElement) names = PICTURE_SHAPE;
+    else if (element instanceof HTMLElement) names = PICTURE_TEXT;
+    if (!names) continue;
+    const computed = getComputedStyle(element);
+    for (const name of names) to[at].style.setProperty(name, computed.getPropertyValue(name), 'important');
+  }
+  copy.setAttribute('viewBox', [home.x, home.y, home.w, home.h].join(' '));
+  copy.setAttribute('width', String(size.w));
+  copy.setAttribute('height', String(size.h));
+  copy.removeAttribute('style');
+  for (const image of copy.querySelectorAll('image')) {
+    const href = image.getAttribute('href') || image.getAttributeNS(XLINK_NS, 'href');
+    image.removeAttributeNS(XLINK_NS, 'href');
+    image.setAttribute('href', images.get(href) || DIAGRAM_IMAGE_MISSING);
+  }
+  const picture = new Image();
+  picture.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(copy));
+  return picture.decode().then(() => picture);
+}
+
+// limit caps the longer side; the area cap keeps H.264 inside the level it is asked for.
+async function diagramCanvas(svg, home, limit) {
+  const PAD = 24;
+  const scale = Math.min(2, (limit - 2 * PAD) / Math.max(home.w, home.h), Math.sqrt(1900000 / (home.w * home.h)));
+  const size = { w: home.w * scale, h: home.h * scale };
+  const even = (value) => Math.max(2, Math.round(value / 2) * 2);
+  const element = document.createElement('canvas');
+  element.width = even(size.w + 2 * PAD);
+  element.height = even(size.h + 2 * PAD);
+  const context = element.getContext('2d', { willReadFrequently: true });
+  const background = getComputedStyle(article).getPropertyValue('--bgColor-default').trim() || getComputedStyle(document.body).backgroundColor;
+  const images = await diagramImageData(svg);
+  return {
+    element: element,
+    width: element.width,
+    height: element.height,
+    async draw() {
+      const picture = await diagramPicture(svg, home, size, images);
+      context.fillStyle = background;
+      context.fillRect(0, 0, element.width, element.height);
+      context.drawImage(picture, (element.width - size.w) / 2, (element.height - size.h) / 2, size.w, size.h);
+    },
+    pixels: () => context.getImageData(0, 0, element.width, element.height).data,
+  };
+}
+
+function diagramVideoType() {
+  if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return '';
+  const types = ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+  return types.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function diagramExportName(title, extension) {
+  const slug = (text) => text.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  let page = location.pathname.split('/').pop() || '';
+  try { page = decodeURIComponent(page); } catch (error) { /* keep it encoded */ }
+  page = page.replace(/\\.(md|markdown)$/i, '');
+  return ([slug(page), slug(title || '')].filter(Boolean).join('-').slice(0, 120) || 'diagram') + '.' + extension;
+}
+
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// An animated GIF: each frame stores only the rectangle that changed, with its own palette of
+// the 256 most common colours (5 bits per channel), and the rest mapped to the nearest one.
+function gifWriter(width, height) {
+  const parts = [];
+  const bytes = (...values) => parts.push(Uint8Array.from(values));
+  const word = (value) => [value & 255, (value >> 8) & 255];
+  const ascii = (text) => [...text].map((letter) => letter.charCodeAt(0));
+  bytes(...ascii('GIF89a'), ...word(width), ...word(height), 0, 0, 0);
+  bytes(0x21, 0xff, 11, ...ascii('NETSCAPE2.0'), 3, 1, 0, 0, 0);
+  let previous = null;
+  let pending = null;
+
+  function changed(after) {
+    if (!previous) return { x: 0, y: 0, w: width, h: height };
+    const before32 = new Uint32Array(previous.buffer, previous.byteOffset, width * height);
+    const after32 = new Uint32Array(after.buffer, after.byteOffset, width * height);
+    let top = -1;
+    let bottom = -1;
+    let left = width;
+    let right = -1;
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        if (before32[row + x] === after32[row + x]) continue;
+        if (top < 0) top = y;
+        bottom = y;
+        if (x < left) left = x;
+        if (x > right) right = x;
+      }
+    }
+    return top < 0 ? null : { x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
+  }
+
+  function quantize(pixels, rect) {
+    const count = rect.w * rect.h;
+    const keys = new Uint16Array(count);
+    const counts = new Uint32Array(32768);
+    const sums = new Uint32Array(32768 * 3);
+    let at = 0;
+    for (let y = rect.y; y < rect.y + rect.h; y++) {
+      for (let x = rect.x; x < rect.x + rect.w; x++) {
+        const offset = (y * width + x) * 4;
+        const red = pixels[offset];
+        const green = pixels[offset + 1];
+        const blue = pixels[offset + 2];
+        const key = ((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3);
+        keys[at++] = key;
+        counts[key]++;
+        sums[key * 3] += red;
+        sums[key * 3 + 1] += green;
+        sums[key * 3 + 2] += blue;
+      }
+    }
+    const used = [];
+    for (let key = 0; key < 32768; key++) if (counts[key]) used.push(key);
+    used.sort((first, second) => counts[second] - counts[first]);
+    const kept = used.slice(0, 256);
+    const bits = Math.max(1, Math.ceil(Math.log2(kept.length)));
+    const palette = new Uint8Array(3 << bits);
+    const lookup = new Int16Array(32768);
+    kept.forEach((key, slot) => {
+      for (let channel = 0; channel < 3; channel++) palette[slot * 3 + channel] = Math.round(sums[key * 3 + channel] / counts[key]);
+      lookup[key] = slot;
+    });
+    for (const key of used.slice(256)) {
+      const red = sums[key * 3] / counts[key];
+      const green = sums[key * 3 + 1] / counts[key];
+      const blue = sums[key * 3 + 2] / counts[key];
+      let best = 0;
+      let distance = Infinity;
+      for (let slot = 0; slot < kept.length; slot++) {
+        const dr = palette[slot * 3] - red;
+        const dg = palette[slot * 3 + 1] - green;
+        const db = palette[slot * 3 + 2] - blue;
+        const here = dr * dr + dg * dg + db * db;
+        if (here < distance) {
+          distance = here;
+          best = slot;
+        }
+      }
+      lookup[key] = best;
+    }
+    const indices = new Uint8Array(count);
+    for (let index = 0; index < count; index++) indices[index] = lookup[keys[index]];
+    return { palette: palette, indices: indices, bits: bits };
+  }
+
+  function lzw(indices, minimum) {
+    const out = [];
+    const clear = 1 << minimum;
+    const stop = clear + 1;
+    let size = minimum + 1;
+    let next = stop + 1;
+    let dictionary = new Map();
+    let buffer = 0;
+    let filled = 0;
+    const emit = (code) => {
+      buffer |= code << filled;
+      filled += size;
+      while (filled >= 8) {
+        out.push(buffer & 255);
+        buffer >>>= 8;
+        filled -= 8;
+      }
+    };
+    emit(clear);
+    let prefix = indices[0];
+    for (let at = 1; at < indices.length; at++) {
+      const symbol = indices[at];
+      const key = (prefix << 8) | symbol;
+      const known = dictionary.get(key);
+      if (known !== undefined) {
+        prefix = known;
+        continue;
+      }
+      emit(prefix);
+      if (next < 4096) {
+        dictionary.set(key, next++);
+        if (next > 1 << size && size < 12) size++;
+      } else {
+        emit(clear);
+        dictionary = new Map();
+        size = minimum + 1;
+        next = stop + 1;
+      }
+      prefix = symbol;
+    }
+    emit(prefix);
+    emit(stop);
+    if (filled > 0) out.push(buffer & 255);
+    return Uint8Array.from(out);
+  }
+
+  function write(frame) {
+    const { palette, indices, bits } = quantize(frame.pixels, frame.rect);
+    const delay = Math.max(2, Math.round(frame.delay / 10));
+    bytes(0x21, 0xf9, 4, 0x04, ...word(delay), 0, 0);
+    bytes(0x2c, ...word(frame.rect.x), ...word(frame.rect.y), ...word(frame.rect.w), ...word(frame.rect.h), 0x80 | (bits - 1));
+    parts.push(palette);
+    const minimum = Math.max(2, bits);
+    const data = lzw(indices, minimum);
+    bytes(minimum);
+    for (let at = 0; at < data.length; at += 255) {
+      const chunk = data.subarray(at, at + 255);
+      bytes(chunk.length);
+      parts.push(chunk);
+    }
+    bytes(0);
+  }
+
+  return {
+    add(pixels, delay) {
+      const rect = changed(pixels);
+      if (!rect) {
+        pending.delay += delay;
+        return;
+      }
+      if (pending) write(pending);
+      pending = { pixels: pixels, rect: rect, delay: delay };
+      previous = pixels;
+    },
+    finish() {
+      if (pending) write(pending);
+      pending = null;
+      bytes(0x3b);
+      return new Blob(parts, { type: 'image/gif' });
+    },
+  };
+}
+
+function playDiagram(stage, svg, tools, scripts, home) {
   const nodes = new Map();
   for (const group of svg.querySelectorAll(':is(g.node, g.image-shape)[id]')) {
     const match = /-flowchart-(.+)-\\d+$/.exec(group.id);
@@ -1138,17 +1431,37 @@ function playDiagram(stage, svg, tools, scripts) {
     scenarios.forEach((scenario, index) => picker.add(new Option(scenario.title, String(index))));
     controls.append(picker);
   }
-  const make = (icon, label) => {
+  const make = (icon, label, name) => {
     const element = document.createElement('button');
     element.type = 'button';
+    element.className = name;
     element.innerHTML = diagramIcon(icon);
     element.title = label;
     element.setAttribute('aria-label', label);
     controls.append(element);
     return element;
   };
-  const playButton = make('play', 'Play');
-  const stopButton = make('stop', 'Stop');
+  const playButton = make('play', 'Play', 'play-toggle');
+  const stopButton = make('stop', 'Stop', 'play-stop');
+  const recordButton = make('record', 'Save as GIF or video', 'play-record');
+  const exportMenu = document.createElement('div');
+  exportMenu.className = 'diagram-export';
+  exportMenu.hidden = true;
+  const exportChoice = (kind, text, note) => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.dataset.kind = kind;
+    element.textContent = text;
+    const small = document.createElement('small');
+    small.textContent = note;
+    element.append(small);
+    exportMenu.append(element);
+    return element;
+  };
+  exportChoice('gif', 'GIF', 'Loops, plays anywhere');
+  const videoType = diagramVideoType();
+  if (videoType) exportChoice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
+  controls.append(exportMenu);
   tools.prepend(controls);
 
   let timeline = [];
@@ -1310,11 +1623,9 @@ function playDiagram(stage, svg, tools, scripts) {
     segment.start();
     if (segment.frame) segment.frame(0);
   }
-  function tick(now) {
-    frame = 0;
-    if (!playing) return;
-    elapsed += Math.min(100, now - last);
-    last = now;
+  // Moves the timeline on by a number of milliseconds and says whether it reached the end.
+  function advance(delta) {
+    elapsed += delta;
     while (index < timeline.length && elapsed >= timeline[index].duration) {
       const done = timeline[index];
       elapsed -= done.duration;
@@ -1323,38 +1634,50 @@ function playDiagram(stage, svg, tools, scripts) {
       index++;
       if (index < timeline.length) enter(timeline[index]);
     }
-    if (index >= timeline.length) {
+    if (index >= timeline.length) return true;
+    const segment = timeline[index];
+    if (segment.frame) segment.frame(elapsed / segment.duration);
+    return false;
+  }
+  function restart(calm) {
+    clearMarks();
+    timeline = build(calm);
+    index = 0;
+    elapsed = 0;
+    finished = false;
+    enter(timeline[0]);
+  }
+  function tick(now) {
+    frame = 0;
+    if (!playing) return;
+    const done = advance(Math.min(100, now - last));
+    last = now;
+    if (done) {
       finished = true;
       pause();
       return;
     }
-    const segment = timeline[index];
-    if (segment.frame) segment.frame(elapsed / segment.duration);
     frame = requestAnimationFrame(tick);
   }
-  function play() {
-    if (playing) return;
-    if (finished || !timeline.length) {
-      clearMarks();
-      timeline = build(matchMedia('(prefers-reduced-motion: reduce)').matches);
-      index = 0;
-      elapsed = 0;
-      finished = false;
-      enter(timeline[0]);
-    }
-    playing = true;
-    diagramsPlaying++;
+  function busy(on) {
+    diagramsPlaying += on ? 1 : -1;
     if (!playBusyWrapped) {
       playBusyWrapped = true;
       const previousBusy = window.liveBusy;
       window.liveBusy = () => diagramsPlaying > 0 || (previousBusy ? previousBusy() : false);
     }
+  }
+  function play(motion) {
+    if (playing) return;
+    if (finished || !timeline.length) restart(!motion && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    playing = true;
+    busy(true);
     last = performance.now();
     frame = requestAnimationFrame(tick);
     sync();
   }
   function pause() {
-    if (playing) diagramsPlaying--;
+    if (playing) busy(false);
     playing = false;
     cancelAnimationFrame(frame);
     frame = 0;
@@ -1368,14 +1691,128 @@ function playDiagram(stage, svg, tools, scripts) {
     sync();
   }
 
+  // Saving replays the scenario from the start and draws every frame onto a canvas. A GIF steps
+  // the timeline by a fixed amount per frame; a video records while it plays in real time.
+  let exporting = null;
+  function exportProgress() {
+    if (!exporting) return;
+    const done = timeline.length ? Math.min(99, Math.floor(100 * index / timeline.length)) : 0;
+    recordButton.textContent = done + '%';
+  }
+  function exportEnd(error) {
+    if (!exporting) return;
+    const kind = exporting.kind;
+    exporting = null;
+    busy(false);
+    stage.classList.remove('recording');
+    recordButton.classList.remove('busy');
+    recordButton.innerHTML = diagramIcon('record');
+    for (const element of [playButton, stopButton]) element.disabled = false;
+    if (picker) picker.disabled = false;
+    const text = error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : 'Save as GIF or video';
+    recordButton.title = text;
+    recordButton.setAttribute('aria-label', text);
+    sync();
+  }
+  async function exportScenario(kind) {
+    if (exporting) return;
+    exporting = { kind: kind, cancelled: false };
+    const job = exporting;
+    pause();
+    busy(true);
+    for (const element of [playButton, stopButton]) element.disabled = true;
+    if (picker) picker.disabled = true;
+    recordButton.classList.add('busy');
+    recordButton.textContent = '0%';
+    recordButton.title = 'Cancel';
+    recordButton.setAttribute('aria-label', 'Cancel saving');
+    const name = diagramExportName(scenario().title, kind === 'gif' ? 'gif' : videoType.startsWith('video/mp4') ? 'mp4' : 'webm');
+    try {
+      const canvas = await diagramCanvas(svg, home, kind === 'gif' ? 960 : 1920);
+      if (kind === 'gif') {
+        stage.classList.add('recording');
+        const STEP = 60;
+        const gif = gifWriter(canvas.width, canvas.height);
+        restart(false);
+        for (;;) {
+          await canvas.draw();
+          if (job.cancelled) break;
+          const end = index >= timeline.length;
+          gif.add(canvas.pixels(), end ? 2400 : STEP);
+          if (end) break;
+          advance(STEP);
+          exportProgress();
+          await new Promise((resolve) => setTimeout(resolve));
+        }
+        if (job.cancelled) stop();
+        else {
+          finished = true;
+          saveBlob(gif.finish(), name);
+        }
+      } else {
+        await canvas.draw();
+        const stream = canvas.element.captureStream(30);
+        const recorder = new MediaRecorder(stream, { mimeType: videoType, videoBitsPerSecond: 6000000 });
+        const chunks = [];
+        recorder.addEventListener('dataavailable', (event) => { if (event.data.size) chunks.push(event.data); });
+        const stopped = new Promise((resolve) => recorder.addEventListener('stop', resolve, { once: true }));
+        recorder.start();
+        stop();
+        play(true);
+        let hold = 0;
+        while (!job.cancelled) {
+          await canvas.draw();
+          exportProgress();
+          if (finished) {
+            hold = hold || performance.now() + 1500;
+            if (performance.now() >= hold) break;
+          }
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+        pause();
+        recorder.stop();
+        await stopped;
+        for (const track of stream.getTracks()) track.stop();
+        if (job.cancelled) stop();
+        else saveBlob(new Blob(chunks, { type: recorder.mimeType || videoType }), name);
+      }
+      exportEnd();
+    } catch (error) {
+      exportEnd(error);
+    }
+  }
+
   playButton.addEventListener('click', () => (playing ? pause() : play()));
   stopButton.addEventListener('click', stop);
+  recordButton.addEventListener('click', () => {
+    if (exporting) {
+      exporting.cancelled = true;
+      return;
+    }
+    exportMenu.hidden = !exportMenu.hidden;
+  });
+  exportMenu.addEventListener('click', (event) => {
+    const choice = event.target.closest('button[data-kind]');
+    if (!choice) return;
+    exportMenu.hidden = true;
+    exportScenario(choice.dataset.kind);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!exportMenu.hidden && !controls.contains(event.target)) exportMenu.hidden = true;
+  });
+  controls.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || exportMenu.hidden) return;
+    event.stopPropagation();
+    event.preventDefault();
+    exportMenu.hidden = true;
+    recordButton.focus();
+  });
   if (picker) picker.addEventListener('change', () => {
     stop();
     play();
   });
   stage.addEventListener('keydown', (event) => {
-    if (event.key !== ' ' || !stage.closest('dialog') || event.target.closest('button, select')) return;
+    if (event.key !== ' ' || exporting || !stage.closest('dialog') || event.target.closest('button, select')) return;
     event.preventDefault();
     playing ? pause() : play();
   });
