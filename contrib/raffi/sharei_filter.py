@@ -59,7 +59,7 @@ LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 STRONG = re.compile(r"(\*\*|__)(.+?)\1")
 EMPHASIS = re.compile(r"(?<![\w*])([*_])(?!\s)(.+?)(?<!\s)\1(?![\w*])")
 PREVIEW_MAX = 40000
-IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
 BINARY_SUFFIXES = (
     ".pdf",
     ".mp4",
@@ -112,6 +112,33 @@ def answer(*args: str) -> dict:
 
 def route(path: str, timeout: float = 20) -> bytes:
     return sharec("cat", path, timeout=timeout)
+
+
+def local(link: str) -> str:
+    """The server route of a link sharei handed out, absolute or not."""
+    parts = urlsplit(link)
+    return parts.path + (f"?{parts.query}" if parts.query else "")
+
+
+def image_suffix(data: bytes) -> str:
+    """The extension of an image by its magic bytes: raffi decodes by name."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    for magic, suffix in (
+        (b"\x89PNG\r\n\x1a\n", ".png"),
+        (b"\xff\xd8\xff", ".jpg"),
+        (b"GIF8", ".gif"),
+    ):
+        if data.startswith(magic):
+            return suffix
+    head = data[:4096]
+    if head.lstrip().startswith(b"<") and b"<svg" in head:
+        return ".svg"
+    # "BM" alone is also how a text file can start, so ask for the zero reserved
+    # fields a bitmap header carries.
+    if data[:2] == b"BM" and data[6:10] == b"\x00\x00\x00\x00":
+        return ".bmp"
+    return ""
 
 
 def quietly(*args: str) -> None:
@@ -547,8 +574,9 @@ def preview() -> dict:
             "sections": [{"type": "text", "content": text[:PREVIEW_MAX]}],
         }
     link = os.environ.get("SHAREI_ROUTE", "")
+    value = value or link
     if kind == "shots":
-        key = urlsplit(link).path.removeprefix("/shot/")
+        key = local(link).removeprefix("/shot/")
         for candidate in (f"/thumb/{key}", f"/shot/{key}"):
             saved = download(candidate, ".png")
             if saved:
@@ -562,20 +590,20 @@ def preview() -> dict:
             "text": value,
             "metadata": [["URL", value]],
         }
-    saved = download(link, Path(urlsplit(link).path).suffix or ".bin")
+    saved = download(link, Path(local(link)).suffix)
     if saved and saved.lower().endswith(IMAGE_SUFFIXES):
         return {"badge": "sharei drop", "image": saved, "metadata": [["URL", value]]}
     try:
-        text = route(f"{link}?raw", timeout=1.5).decode("utf-8")
+        text = route(f"{urlsplit(link).path}?raw", timeout=1.5).decode("utf-8")
     except (Fail, UnicodeDecodeError):
         text = ""
     found = {"badge": "sharei drop", "metadata": [["URL", value]]}
     if text:
-        marked = Path(link).suffix.lower() in (".md", ".markdown")
+        marked = Path(local(link)).suffix.lower() in (".md", ".markdown")
         found["sections"] = [
             {
                 "type": "text",
-                "heading": Path(link).name,
+                "heading": Path(local(link)).name,
                 "content": rendered(text) if marked else text[:PREVIEW_MAX],
             }
         ]
@@ -584,13 +612,22 @@ def preview() -> dict:
     return found
 
 
-def download(link: str, suffix: str) -> str | None:
-    """Fetch a route into the preview cache and return its local path."""
+def download(link: str, suffix: str = "") -> str | None:
+    """Fetch a route into the preview cache and return its local path.
+
+    The file is named after what it holds, not after the route: raffi picks the
+    decoder from the extension, so a webp screenshot saved as .png stays blank.
+    """
+    try:
+        data = route(local(link), timeout=1.5)
+    except Fail:
+        return None
+    suffix = image_suffix(data) or suffix or ".bin"
     digest = hashlib.sha1(link.encode()).hexdigest()[:16]
     target = cache_dir("previews") / f"{digest}{suffix.lower()}"
     try:
-        target.write_bytes(route(link, timeout=1.5))
-    except (Fail, OSError):
+        target.write_bytes(data)
+    except OSError:
         return None
     return str(target)
 

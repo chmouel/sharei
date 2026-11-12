@@ -417,6 +417,35 @@ def test_filter_drops_the_notes_view_without_a_vault(raffi):
     assert answer["view"] == "clip"
 
 
+def test_filter_names_previews_after_what_they_hold(sharec, tmp_path, monkeypatch):
+    module = load_filter()
+    assert module.image_suffix(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == ".webp"
+    assert module.image_suffix(b"\x89PNG\r\n\x1a\n") == ".png"
+    assert module.image_suffix(b"\xff\xd8\xff\xe0") == ".jpg"
+    assert module.image_suffix(b"GIF89a") == ".gif"
+    assert module.image_suffix(b"<svg xmlns='x'>") == ".svg"
+    prolog = b'<?xml version="1.0"?>\n<!-- ' + b"x" * 600 + b" -->\n<svg/>"
+    assert module.image_suffix(prolog) == ".svg"
+    assert module.image_suffix(b"not an image") == ""
+    assert module.image_suffix(b"BMP: a text file, not a bitmap") == ""
+    bitmap = (
+        b"BM" + (70).to_bytes(4, "little") + b"\x00" * 4 + (54).to_bytes(4, "little")
+    )
+    assert module.image_suffix(bitmap) == ".bmp"
+    monkeypatch.setenv("PATH", os.environ["PATH"])
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("SHAREI_URL", sharec.SHAREI_URL)
+    webp = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 8
+    sharec.upload("shot.png", webp, "")
+    saved = module.download("/poub/inbox/shot.png", ".png")
+    assert saved and saved.endswith(".webp")
+    assert Path(saved).read_bytes() == webp
+    assert module.download("/poub/inbox/missing.png") is None
+    sharec.upload("drawing.png", b"<?xml version='1.0'?><svg xmlns='http://x'/>", "")
+    svg = module.download("/poub/inbox/drawing.png", ".png")
+    assert svg and svg.endswith(".svg")
+
+
 def test_filter_shows_how_much_it_left_out():
     drawn = load_filter().truncation(40, 160)
     assert drawn["valid"] is False and "40 of 160" in drawn["title"]
