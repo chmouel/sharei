@@ -324,7 +324,9 @@ one step at a time while you talk over it, and so do the right and left
 arrow keys, `j` and `k`, while Space plays or pauses. The thin rail under
 the controls has a tick per step; click one to jump there. The camera
 button makes the view zoom in on each step as it plays and back out at the
-end, which helps on large diagrams. When your system
+end, which helps on large diagrams. Sequence diagrams play the same way:
+`%% Alice -> Bob` lights up the next message from Alice to Bob and the two
+participants it joins. When your system
 asks for less motion, the boxes change one after another and nothing
 travels.
 "Copy link" in the share menu gives an address that opens the diagram in

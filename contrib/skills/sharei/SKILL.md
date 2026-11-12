@@ -118,6 +118,10 @@ flowchart LR
   happen in parallel, such as a fan-out to several jobs.
   `%% play: Title` starts another scenario in the same
   diagram; `%% skip A B` fades boxes that scenario does not use.
+- A `sequenceDiagram` takes the same `%%` lines with participant ids:
+  each `%% A -> B` step lights up the next message from A to B in order.
+  Use it when a sequence diagram tells the story better than a flowchart,
+  such as a request bouncing between services.
 - Give picture boxes to the actors and main stages, and keep plain boxes for
   small steps; four to eight pictures read best. Always set `w`, `h` and
   `constraint: "on"`, or the picture stretches.

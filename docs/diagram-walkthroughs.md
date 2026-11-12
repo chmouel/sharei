@@ -1,7 +1,8 @@
 # Diagram walkthroughs
 
-sharei can play a mermaid flowchart as a short story. A labelled dot travels
-from box to box, the box it reaches lights up, finished boxes get a check mark,
+sharei can play a mermaid flowchart or sequence diagram as a short story. A
+labelled dot travels from box to box, the box it reaches lights up, finished
+boxes get a check mark,
 and boxes the story does not use fade out. One diagram can hold several
 stories, and boxes can carry pictures.
 
@@ -100,8 +101,49 @@ When a step names a node that does not exist or a pair with no edge, sharei
 skips it and lists it in the play button's tooltip. A block whose stories have
 no usable step gets no play button.
 
-Only flowcharts play (`flowchart` or `graph`, after optional front matter).
-Other diagram types keep pan and zoom.
+Flowcharts (`flowchart` or `graph`) and sequence diagrams
+(`sequenceDiagram`) play, after optional front matter. Other diagram types
+keep pan and zoom.
+
+## Sequence diagrams
+
+In a sequence diagram the names are participant ids, and each step takes the
+next message from the first to the second, counting from the message the
+previous step used:
+
+````markdown
+```mermaid
+sequenceDiagram
+  participant Dev as Developer
+  participant GH as GitHub
+  actor P as PaC
+  Dev->>GH: push
+  GH-->>P: webhook
+  P->>P: read .tekton
+  P-)GH: status
+  Dev->>GH: push again
+
+%% play: Push
+%% Dev -> GH | You push
+%% GH -> P : event | GitHub calls PaC
+%% P -> P | It reads the pipelines
+%% P -> GH | The status goes back
+%% Dev -> GH | Second push
+```
+````
+
+The two `Dev -> GH` steps light up "push" and then "push again". When no
+message is left below, the search starts again from the top, so a story can
+also jump back. A step must follow the message's direction: `GH -> Dev` never
+matches a `Dev->>GH` message. Self messages (`P -> P`) work, and notes, loops
+and other boxes are left alone.
+
+While a step plays, its message line and text light up and the dot travels
+along the line. Participants behave like flowchart boxes: the top and bottom
+boxes and the lifeline light up together, then turn green once done, and
+`%% skip P` fades all three. The comma form sends dots down several messages
+at once. Clicking a participant does not spotlight it; that stays a
+flowchart feature.
 
 ## What playing looks like
 
@@ -340,6 +382,14 @@ The mapping relies on how mermaid 12.3 names things:
   numeric tail instead of splitting on underscores.
 - A two-way edge is one path with markers at both ends.
 
+In sequence diagrams, participants are `rect.actor` (top and bottom, each
+inside its own `g` with the `text.actor`), `g.actor-man` for actors, and
+`line.actor-line`, all carrying the participant id in `name`. Messages are
+`line` or `path` elements with class `messageLine0` or `messageLine1`, in
+source order, each preceded by its `text.messageText`. Mermaid insets message
+ends from the lifelines, so `playDiagram()` gives each message the
+participants whose lifelines are nearest to its two ends.
+
 When mermaid is upgraded, play the demo above in both directions and in both
 stories, and check that the tooltip lists no ignored step. If those names
 change, steps start showing up as ignored.
@@ -371,9 +421,9 @@ The markdown is untrusted, and so is everything in a walkthrough.
 
 ## Not covered
 
-- Two dots moving at once, for parallel branches.
 - Autoplay or looping stories.
-- Sequence, state and other diagram types.
+- State, class and other diagram types.
+- Spotlighting participants in sequence diagrams.
 - Mermaid icon packs (`icon: "fa:..."`). The built-in icons cover the same
   need through `img:`.
 

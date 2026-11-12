@@ -90,6 +90,19 @@ MARKDOWN_CSS = """
   .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-success) 14%, var(--bgColor-default)) !important; }
   .diagram-stage g.node.play-done :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-done > g:first-child > path:last-child { stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
   .diagram-stage :is(g.node, g.image-shape).play-skipped { opacity:.3; }
+  .diagram-stage .play-actor { transition:opacity .25s; }
+  .diagram-stage .play-actor > :is(rect, line, circle) { transition:fill .25s, stroke .25s; }
+  .diagram-stage .play-actor.play-active > rect.actor { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; stroke:var(--fgColor-accent) !important; stroke-width:2px !important; }
+  .diagram-stage g.actor-man.play-active > :is(line, circle) { stroke:var(--fgColor-accent) !important; stroke-width:2px !important; }
+  .diagram-stage line.play-actor.play-active { stroke:var(--fgColor-accent) !important; stroke-width:3px !important; stroke-dasharray:none !important; }
+  .diagram-stage g.play-actor.play-active { animation:play-glow 1.1s ease-in-out infinite alternate; }
+  .diagram-stage .play-actor.play-done > rect.actor, .diagram-stage g.actor-man.play-done > :is(line, circle) { stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
+  .diagram-stage .play-actor.play-done > rect.actor { fill:color-mix(in srgb, var(--fgColor-success) 14%, var(--bgColor-default)) !important; }
+  .diagram-stage .play-actor.play-skipped { opacity:.3; }
+  .diagram-stage text.messageText { transition:fill .25s; }
+  .diagram-stage text.messageText.play-edge { fill:var(--fgColor-accent) !important; font-weight:600; }
+  .diagram-stage text.messageText.play-edge-done { fill:var(--fgColor-success) !important; }
+  .diagram-stage.recording g.play-actor.play-active { animation:none; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--fgColor-accent) 65%, transparent)); }
   .diagram-stage.focusable :is(g.node, g.image-shape) { cursor:pointer; }
   .diagram-stage.drawing, .diagram-dialog .diagram-stage.drawing, .diagram-stage.drawing > svg * { touch-action:none; cursor:crosshair; }
   .diagram-ink { pointer-events:none; }
@@ -103,8 +116,8 @@ MARKDOWN_CSS = """
   .diagram-stage g.node.focus-on :is(.label-container, .label-container > *), .diagram-stage g.image-shape.focus-on > g:first-child > path:last-child { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
   .diagram-stage :is(g.node, g.image-shape).focus-on { filter:drop-shadow(0 0 8px color-mix(in srgb, var(--fgColor-accent) 70%, transparent)); }
   .diagram-stage path.focus-near:not(.play-edge) { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
-  .diagram-stage path.play-edge { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
-  .diagram-stage path.play-edge-done { stroke:color-mix(in srgb, var(--fgColor-success) 65%, var(--borderColor-default)) !important; }
+  .diagram-stage :is(path, line).play-edge { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
+  .diagram-stage :is(path, line).play-edge-done { stroke:color-mix(in srgb, var(--fgColor-success) 65%, var(--borderColor-default)) !important; }
   .diagram-stage .play-check circle { fill:var(--fgColor-success) !important; stroke:var(--bgColor-default) !important; stroke-width:1.5px !important; }
   .diagram-stage .play-check path { fill:none !important; stroke:var(--bgColor-default) !important; stroke-width:1.8px !important; stroke-linecap:round; stroke-linejoin:round; }
   .diagram-stage .play-token { pointer-events:none; }
@@ -112,7 +125,7 @@ MARKDOWN_CSS = """
   .diagram-stage .play-tag rect { fill:var(--fgColor-accent); }
   .diagram-stage .play-tag text { fill:var(--bgColor-default); font:600 12px/1 system-ui,-apple-system,sans-serif; }
   @keyframes play-glow { from { filter:drop-shadow(0 0 2px color-mix(in srgb, var(--fgColor-accent) 45%, transparent)); } to { filter:drop-shadow(0 0 9px color-mix(in srgb, var(--fgColor-accent) 75%, transparent)); } }
-  @media (prefers-reduced-motion:reduce) { .diagram-stage :is(g.node, g.image-shape).play-active { animation:none; filter:drop-shadow(0 0 5px color-mix(in srgb, var(--fgColor-accent) 60%, transparent)); } .diagram-stage :is(g.node, g.image-shape, g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:none; } }
+  @media (prefers-reduced-motion:reduce) { .diagram-stage :is(g.node, g.image-shape, g.play-actor).play-active { animation:none; filter:drop-shadow(0 0 5px color-mix(in srgb, var(--fgColor-accent) 60%, transparent)); } .diagram-stage :is(g.node, g.image-shape, g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:none; } }
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
 """
 
@@ -1214,7 +1227,8 @@ function panZoom(holder, scenarios) {
 //   %% A -> B : label     sends a token from node A to node B along the edge between them
 //   %% A -> B, C          sends one token down each edge at once (A, B -> C joins two)
 //   %% skip A B           fades nodes for the rest of the scenario
-function flowchartLines(source) {
+// In a sequence diagram A and B are participants, and each step takes the next A to B message.
+function diagramLines(source, kinds) {
   const lines = source.split(/\\r?\\n/);
   let at = 0;
   while (at < lines.length && !lines[at].trim()) at++;
@@ -1224,11 +1238,12 @@ function flowchartLines(source) {
     at++;
   }
   const head = lines.slice(at).map((line) => line.trim()).find((line) => line && !line.startsWith('%%'));
-  return head && /^(?:flowchart|graph)\\b/.test(head) ? lines.slice(at) : null;
+  return head && kinds.test(head) ? lines.slice(at) : null;
 }
+const flowchartLines = (source) => diagramLines(source, /^(?:flowchart|graph)\\b/);
 
 function playScript(source) {
-  const lines = flowchartLines(source);
+  const lines = diagramLines(source, /^(?:flowchart|graph|sequenceDiagram)\\b/);
   if (!lines) return [];
   const scenarios = [];
   let current = null;
@@ -1827,7 +1842,40 @@ function diagramShare(stage, svg, tools) {
 }
 
 function playDiagram(stage, svg, tools, scripts, home, share) {
-  const nodes = diagramNodes(svg);
+  const sequence = svg.getAttribute('aria-roledescription') === 'sequence';
+  // A sequence participant is drawn several times (box or stick figure at the top and bottom,
+  // and its lifeline), so the first one stands for it and parts lists them all.
+  const parts = new Map();
+  const messages = [];
+  let nodes = null;
+  if (sequence) {
+    nodes = new Map();
+    const lifelines = [];
+    for (const element of svg.querySelectorAll('rect.actor[name], g.actor-man[name], line.actor-line[name]')) {
+      const name = element.getAttribute('name');
+      const part = element.tagName === 'rect' ? element.parentNode : element;
+      if (element.tagName === 'line') lifelines.push({ name: name, x: Number(element.getAttribute('x1')) });
+      if (!nodes.has(name)) {
+        nodes.set(name, part);
+        parts.set(part, []);
+      }
+      part.classList.add('play-actor');
+      parts.get(nodes.get(name)).push(part);
+    }
+    const nearest = (x) => lifelines.reduce((best, line) => (Math.abs(line.x - x) < Math.abs(best.x - x) ? line : best)).name;
+    if (lifelines.length) {
+      for (const path of svg.querySelectorAll(':is(line, path):is(.messageLine0, .messageLine1)')) {
+        const texts = [];
+        for (let before = path.previousElementSibling; before && before.matches('text.messageText'); before = before.previousElementSibling) texts.unshift(before);
+        const start = path.getPointAtLength(0);
+        const end = path.getPointAtLength(path.getTotalLength());
+        messages.push({ from: nearest(start.x), to: nearest(end.x), path: path, texts: texts });
+      }
+    }
+  } else nodes = diagramNodes(svg);
+  const each = (node, change) => {
+    for (const part of parts.get(node) || [node]) change(part);
+  };
   const edges = [...svg.querySelectorAll('path[data-edge][data-id]')];
   const edgeBetween = (from, to) => edges.find((path) => {
     const id = path.dataset.id;
@@ -1839,6 +1887,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   const scenarios = scripts.map((script) => {
     const steps = [];
     const problems = [];
+    let cursor = 0;
     for (const step of script.steps) {
       if (step.skip) {
         const found = step.skip.map((name) => nodes.get(name)).filter(Boolean);
@@ -1847,7 +1896,16 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
         continue;
       }
       const pairs = step.from.length > 1 && step.to.length > 1 ? [] : step.from.flatMap((from) => step.to.map((to) => [from, to]));
+      const taken = new Set();
       const moves = pairs.map(([fromName, toName]) => {
+        if (sequence) {
+          // The next matching message after the previous step, wrapping round to the top.
+          const order = messages.map((message, at) => (at + cursor) % messages.length);
+          const at = order.find((at) => !taken.has(at) && messages[at].from === fromName && messages[at].to === toName);
+          if (at === undefined) return null;
+          taken.add(at);
+          return { from: nodes.get(fromName), to: nodes.get(toName), path: messages[at].path, texts: messages[at].texts, reverse: false, at: at };
+        }
         const from = nodes.get(fromName);
         const to = nodes.get(toName);
         const forward = from && to && edgeBetween(fromName, toName);
@@ -1858,6 +1916,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
         problems.push(step.text);
         continue;
       }
+      if (sequence) cursor = Math.max(...moves.map((move) => move.at)) + 1;
       steps.push({ moves: moves, label: step.label, caption: step.caption });
     }
     return { title: script.title, steps: steps, problems: problems };
@@ -1967,7 +2026,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   }
 
   function badge(node) {
-    if (node.querySelector(':scope > .play-check')) return;
+    if (sequence || node.querySelector(':scope > .play-check')) return;
     const frame = node.classList.contains('image-shape') ? node.querySelector(':scope > g') : null;
     let box = node.getBBox();
     if (frame) {
@@ -1989,14 +2048,18 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     node.append(mark);
   }
   function setActive(node) {
-    node.classList.remove('play-done', 'play-skipped');
+    each(node, (part) => {
+      part.classList.remove('play-done', 'play-skipped');
+      part.classList.add('play-active');
+    });
     node.querySelector(':scope > .play-check')?.remove();
-    node.classList.add('play-active');
     active.add(node);
   }
   function setDone(node) {
-    node.classList.remove('play-active');
-    node.classList.add('play-done');
+    each(node, (part) => {
+      part.classList.remove('play-active');
+      part.classList.add('play-done');
+    });
     badge(node);
     active.delete(node);
   }
@@ -2059,7 +2122,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     }
     return left < Infinity ? { x: left, y: top, width: right - left, height: bottom - top } : null;
   }
-  const stepArea = (step) => area(step.skip || step.moves.flatMap((move) => [move.from, move.to, move.path]));
+  const stepArea = (step) => area(step.skip || step.moves.flatMap((move) => (sequence ? [move.path, ...move.texts] : [move.from, move.to, move.path])));
   // The camera moves only while a story plays on screen, never while it is rebuilt or saved.
   function look(step) {
     if (playing && !exporting) stage.diagramCamera?.look(stepArea(step));
@@ -2070,6 +2133,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
     stage.diagramCamera?.look(stepArea(steps[Math.min(reached, steps.length - 1)]));
   }
 
+  const lit = (move) => [move.path, ...(move.texts || [])];
   // The timeline is a list of segments that only advances while playing, so pausing is free.
   function build(calm) {
     const segments = [];
@@ -2080,9 +2144,11 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
           say(step.caption);
           look(step);
           for (const node of step.skip) {
-            node.classList.remove('play-active', 'play-done');
+            each(node, (part) => {
+              part.classList.remove('play-active', 'play-done');
+              part.classList.add('play-skipped');
+            });
             node.querySelector(':scope > .play-check')?.remove();
-            node.classList.add('play-skipped');
             active.delete(node);
           }
         } });
@@ -2108,8 +2174,10 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
         run.token?.remove();
         tokens = tokens.filter((dot) => dot !== run.token);
         run.token = null;
-        run.move.path.classList.remove('play-edge');
-        run.move.path.classList.add('play-edge-done');
+        for (const element of lit(run.move)) {
+          element.classList.remove('play-edge');
+          element.classList.add('play-edge-done');
+        }
         setActive(run.move.to);
       };
       segments.push({
@@ -2120,8 +2188,10 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
           runs.forEach((run, at) => {
             run.arrived = false;
             run.token = null;
-            run.move.path.classList.remove('play-edge-done');
-            run.move.path.classList.add('play-edge');
+            for (const element of lit(run.move)) {
+              element.classList.remove('play-edge-done');
+              element.classList.add('play-edge');
+            }
             if (calm) return;
             const own = run.move.path.getScreenCTM();
             const root = svg.getScreenCTM();

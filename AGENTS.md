@@ -146,7 +146,13 @@ Pages:
   SVG. A step is `{moves: [{from, to, path, reverse}], label, caption}`;
   several moves (`A -> B, C` or `A, B -> C`) share one segment as long as
   the slowest, each dot timed by its own edge and arriving on its own.
-  `active` is a Set, since several boxes can be lit. Step mode stops at segments flagged `stop` (one per step) and goes
+  `active` is a Set, since several boxes can be lit.
+  `sequenceDiagram` blocks play too (`diagramLines()` takes the allowed
+  kinds): `nodes` maps a participant id to one of its parts (top and bottom
+  actor groups, `g.actor-man`, `line.actor-line`, all `.play-actor`) and
+  `each()` styles every part; each `messageLine0/1` gets from/to from the
+  lifelines nearest its ends, and a step takes the next untaken message in
+  that direction after a per-story cursor, wrapping once. Step mode stops at segments flagged `stop` (one per step) and goes
   back by replaying instantly with `advance(Infinity, true)`; its key
   handler (arrows, j/k, PageUp/PageDown, Space to play or pause) runs before panZoom's so a
   plain arrow steps and Shift+arrow pans.
