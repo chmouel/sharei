@@ -322,6 +322,8 @@ button. The arrows on each side of the play button go through the story
 one step at a time while you talk over it, and so do the right and left
 arrow keys, `j` and `k`, or Space and Shift+Space. When your system asks
 for less motion, the boxes change one after another and nothing travels.
+"Copy link" in the record menu gives an address that opens the diagram at
+the same story, step and highlighted boxes.
 
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 

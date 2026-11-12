@@ -150,6 +150,20 @@ dot travels stay bright. A saved GIF or video keeps the spotlight as it was
 when you pressed record. Like a playing story, the spotlight holds off the
 page's live reload.
 
+## Linking to a moment
+
+"Copy link" in the record menu copies the page address with a hash such as
+`#diagram=2&story=1&step=3&focus=Agent,Logs`. Diagrams count from 1 in page
+order, stories too, and `step` is the number of steps already played. Someone
+who opens the link lands on that diagram with the story stopped after step 3
+and the same boxes in the spotlight, so the next arrow press plays step 4. A
+step past the end shows the story finished. Each part is optional: a link
+with only `focus` lights boxes and leaves the story alone.
+
+The copy replaces the current address without adding a history entry, and
+editing the hash by hand applies it at once. Values that match no story or
+no box are ignored.
+
 ## Saving a story as a GIF or a video
 
 The red dot in the toolbar saves the selected story as a file to drop into a

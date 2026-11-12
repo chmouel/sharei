@@ -147,6 +147,11 @@ Pages:
   back by replaying instantly with `advance(Infinity, true)`; its key
   handler (arrows, j/k, Space, PageUp/PageDown) runs before panZoom's so a
   plain arrow steps and Shift+arrow pans.
+  Deep links (`#diagram=N&story=S&step=K&focus=A,B`) go through
+  `diagramHash()`/`diagramFromHash()`, using the `where()`/`restore()` API
+  `playDiagram` returns and the `get()`/`set()` one from `focusDiagram`,
+  kept on the stage as `diagramPlay` and `diagramFocus`. The `=` keeps the
+  hash from matching a heading id.
   Labels and `| caption` text (the `.diagram-caption` bar, and a band that
   `diagramCanvas(..., captioned)` draws into exports) are set with
   `textContent` or `fillText`. Unresolved steps are dropped and

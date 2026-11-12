@@ -877,8 +877,8 @@ function panZoom(holder, scenarios) {
   const fullButton = button('full', 'Full screen');
   stage.append(tools, svg);
   holder.append(stage);
-  if (scenarios.length) playDiagram(stage, svg, tools, scenarios, home);
-  focusDiagram(stage, svg);
+  stage.diagramPlay = scenarios.length ? playDiagram(stage, svg, tools, scenarios, home) : null;
+  stage.diagramFocus = focusDiagram(stage, svg) || null;
   holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom' + (stage.classList.contains('focusable') ? ', click a box to highlight it' : '');
 
   const full = () => Boolean(diagramDialog && diagramDialog.open && diagramDialog.contains(stage));
@@ -1200,6 +1200,14 @@ function focusDiagram(stage, svg) {
     selected.clear();
     paint();
   });
+  return {
+    get: () => [...selected],
+    set(wanted) {
+      selected.clear();
+      for (const name of wanted) if (nodes.has(name)) selected.add(name);
+      paint();
+    },
+  };
 }
 
 // A saved frame is the diagram as a standalone SVG image. Page CSS does not reach inside an
@@ -1596,6 +1604,7 @@ function playDiagram(stage, svg, tools, scripts, home) {
     return element;
   };
   exportChoice('gif', 'GIF', 'Loops, plays anywhere');
+  const linkChoice = exportChoice('link', 'Copy link', 'To this story, step and spotlight');
   const videoType = diagramVideoType();
   if (videoType) exportChoice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
   controls.append(exportMenu);
@@ -1975,6 +1984,28 @@ function playDiagram(stage, svg, tools, scripts, home) {
     }
   }
 
+  function where() {
+    const total = scenario().steps.length;
+    return {
+      story: (picker ? Number(picker.value) : 0) + 1,
+      step: !timeline.length ? null : finished ? total : reached,
+    };
+  }
+  // Puts a story at the end of a given number of steps, the way stepping back does.
+  function restore(story, step) {
+    if (exporting) return;
+    if (picker && story >= 1 && story <= scenarios.length) picker.value = String(story - 1);
+    stop();
+    if (step === null) return;
+    const total = scenario().steps.length;
+    restart(matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (step >= total) {
+      while (advance(Infinity) !== true);
+      finished = true;
+    } else for (let at = 0; at < step; at++) advance(Infinity, true);
+    sync();
+  }
+
   playButton.addEventListener('click', () => (playing ? pause() : play()));
   backButton.addEventListener('click', stepBack);
   nextButton.addEventListener('click', stepNext);
@@ -1986,9 +2017,21 @@ function playDiagram(stage, svg, tools, scripts, home) {
     }
     exportMenu.hidden = !exportMenu.hidden;
   });
-  exportMenu.addEventListener('click', (event) => {
+  exportMenu.addEventListener('click', async (event) => {
     const choice = event.target.closest('button[data-kind]');
     if (!choice) return;
+    if (choice.dataset.kind === 'link') {
+      const note = linkChoice.querySelector('small');
+      const hash = diagramHash(stage);
+      if (!hash) return;
+      history.replaceState(history.state, '', location.pathname + location.search + hash);
+      note.textContent = (await copyText(location.href)) ? 'Copied' : 'Could not copy, the address bar has it';
+      setTimeout(() => {
+        exportMenu.hidden = true;
+        note.textContent = 'To this story, step and spotlight';
+      }, 900);
+      return;
+    }
     exportMenu.hidden = true;
     exportScenario(choice.dataset.kind);
   });
@@ -2018,6 +2061,35 @@ function playDiagram(stage, svg, tools, scripts, home) {
     forward ? stepNext() : stepBack();
   });
   sync();
+  return { where: where, restore: restore };
+}
+
+// #diagram=2&story=1&step=3&focus=A,B names the second diagram on the page, its first story
+// after three steps, and the boxes in the spotlight. Heading ids never hold '=', so it cannot
+// clash with them.
+function diagramHash(stage) {
+  const number = stage.dataset.diagram;
+  if (!number) return '';
+  const parts = ['diagram=' + number];
+  const at = stage.diagramPlay?.where();
+  if (at) {
+    parts.push('story=' + at.story);
+    if (at.step !== null) parts.push('step=' + at.step);
+  }
+  const lit = stage.diagramFocus?.get() || [];
+  if (lit.length) parts.push('focus=' + lit.map(encodeURIComponent).join(','));
+  return '#' + parts.join('&');
+}
+
+function diagramFromHash(stage) {
+  if (!location.hash.startsWith('#diagram=')) return false;
+  const wanted = new URLSearchParams(location.hash.slice(1));
+  if (wanted.get('diagram') !== stage.dataset.diagram) return false;
+  const number = (name) => (/^\\d+$/.test(wanted.get(name) || '') ? Number(wanted.get(name)) : null);
+  if (stage.diagramPlay && (number('story') !== null || number('step') !== null)) stage.diagramPlay.restore(number('story') || 1, number('step'));
+  if (stage.diagramFocus) stage.diagramFocus.set((wanted.get('focus') || '').split(',').filter(Boolean));
+  stage.closest('.mermaid-diagram')?.scrollIntoView({ block: 'center' });
+  return true;
 }
 
 function drawDiagrams() {
@@ -2030,7 +2102,7 @@ function drawDiagrams() {
     mermaid.initialize(themeVariables
       ? { startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: themeVariables }
       : { startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
-    for (const block of diagrams) {
+    for (const [position, block] of diagrams.entries()) {
       const id = 'mermaid-' + diagramCount++;
       try {
         const scenarios = playScript(block.textContent);
@@ -2045,6 +2117,11 @@ function drawDiagrams() {
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
         panZoom(holder, scenarios);
+        const stage = holder.querySelector(':scope > .diagram-stage');
+        if (stage) {
+          stage.dataset.diagram = String(position + 1);
+          diagramFromHash(stage);
+        }
         if (pictures.problems.length) holder.title += '\\nPictures not shown: ' + pictures.problems.join(', ');
         if (onDiagram) onDiagram();
       } catch (error) {
@@ -2298,6 +2375,9 @@ function findLine() {
 }
 findLine();
 addEventListener('hashchange', findLine);
+addEventListener('hashchange', () => {
+  for (const stage of document.querySelectorAll('.diagram-stage[data-diagram]')) if (diagramFromHash(stage)) break;
+});
 
 // Review mode: numbers for the source lines behind each block, and comments kept on the server
 // next to the file. Comment text only ever goes in through textContent.
