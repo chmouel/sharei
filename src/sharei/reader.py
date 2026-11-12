@@ -893,7 +893,8 @@ function panZoom(holder, scenarios) {
   const fullButton = button('full', 'Full screen');
   stage.append(tools, svg);
   holder.append(stage);
-  stage.diagramPlay = scenarios.length ? playDiagram(stage, svg, tools, scenarios, home) : null;
+  const share = diagramShare(stage, svg, tools);
+  stage.diagramPlay = scenarios.length ? playDiagram(stage, svg, tools, scenarios, home, share) : null;
   stage.diagramFocus = focusDiagram(stage, svg) || null;
   holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom' + (stage.classList.contains('focusable') ? ', click a box to highlight it' : '');
 
@@ -1600,7 +1601,101 @@ function gifWriter(width, height) {
   };
 }
 
-function playDiagram(stage, svg, tools, scripts, home) {
+// Every diagram can copy a link to its spotlight or save a picture of its current view; a story
+// adds its GIF and video choices to the same menu and takes over the button while one is saved.
+function diagramShare(stage, svg, tools) {
+  const group = document.createElement('div');
+  group.className = 'diagram-share';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'play-record';
+  button.innerHTML = diagramIcon('share');
+  const menu = document.createElement('div');
+  menu.className = 'diagram-export';
+  menu.hidden = true;
+  group.append(button, menu);
+  tools.prepend(group);
+  const share = {
+    button: button,
+    title: 'Share or save this diagram',
+    name: () => '',
+    choose: null,
+    cancel: () => false,
+    label(text) {
+      button.title = text || share.title;
+      button.setAttribute('aria-label', button.title);
+    },
+    choice(kind, text, note) {
+      const element = document.createElement('button');
+      element.type = 'button';
+      element.dataset.kind = kind;
+      element.dataset.note = note;
+      element.textContent = text;
+      const small = document.createElement('small');
+      small.textContent = note;
+      element.append(small);
+      menu.append(element);
+      return element;
+    },
+  };
+  share.link = share.choice('link', 'Copy link', 'To this diagram and spotlight');
+  share.choice('png', 'PNG', 'What you see right now');
+  share.label();
+
+  // A still keeps the current zoom, spotlight, dot and caption, so it draws the live viewBox.
+  async function savePicture() {
+    const box = svg.viewBox.baseVal;
+    const caption = stage.querySelector(':scope > .diagram-caption');
+    const text = caption && !caption.hidden ? caption.textContent : '';
+    try {
+      const canvas = await diagramCanvas(svg, { x: box.x, y: box.y, w: box.width, h: box.height }, 2400, Boolean(text), true);
+      await canvas.draw(text);
+      const blob = await new Promise((resolve) => canvas.element.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('the browser made no picture');
+      saveBlob(blob, diagramExportName(share.name(), 'png'));
+      share.label();
+    } catch (error) {
+      share.label('Could not save the PNG: ' + (error.message || error));
+    }
+  }
+
+  button.addEventListener('click', () => {
+    if (share.cancel()) return;
+    menu.hidden = !menu.hidden;
+  });
+  menu.addEventListener('click', async (event) => {
+    const choice = event.target.closest('button[data-kind]');
+    if (!choice) return;
+    if (choice.dataset.kind === 'link') {
+      const note = choice.querySelector('small');
+      const hash = diagramHash(stage);
+      if (!hash) return;
+      history.replaceState(history.state, '', location.pathname + location.search + hash);
+      note.textContent = (await copyText(location.href)) ? 'Copied' : 'Could not copy, the address bar has it';
+      setTimeout(() => {
+        menu.hidden = true;
+        note.textContent = choice.dataset.note;
+      }, 900);
+      return;
+    }
+    menu.hidden = true;
+    if (choice.dataset.kind === 'png') savePicture();
+    else if (share.choose) share.choose(choice.dataset.kind);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!menu.hidden && !group.contains(event.target)) menu.hidden = true;
+  });
+  group.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || menu.hidden) return;
+    event.stopPropagation();
+    event.preventDefault();
+    menu.hidden = true;
+    button.focus();
+  });
+  return share;
+}
+
+function playDiagram(stage, svg, tools, scripts, home, share) {
   const nodes = diagramNodes(svg);
   const edges = [...svg.querySelectorAll('path[data-edge][data-id]')];
   const edgeBetween = (from, to) => edges.find((path) => {
@@ -1662,32 +1757,14 @@ function playDiagram(stage, svg, tools, scripts, home) {
   rail.className = 'play-rail';
   rail.setAttribute('aria-hidden', 'true');
   controls.append(rail);
-  const share = document.createElement('div');
-  share.className = 'diagram-share';
-  const SHARE_TITLE = 'Share or save this story';
-  const recordButton = make('share', SHARE_TITLE, 'play-record');
-  share.append(recordButton);
-  const exportMenu = document.createElement('div');
-  exportMenu.className = 'diagram-export';
-  exportMenu.hidden = true;
-  const exportChoice = (kind, text, note) => {
-    const element = document.createElement('button');
-    element.type = 'button';
-    element.dataset.kind = kind;
-    element.textContent = text;
-    const small = document.createElement('small');
-    small.textContent = note;
-    element.append(small);
-    exportMenu.append(element);
-    return element;
-  };
-  const linkChoice = exportChoice('link', 'Copy link', 'To this story, step and spotlight');
-  exportChoice('png', 'PNG', 'A picture of what you see now');
-  exportChoice('gif', 'GIF', 'Loops, plays anywhere');
+  const recordButton = share.button;
+  share.title = 'Share or save this story';
+  share.label();
+  share.link.dataset.note = share.link.querySelector('small').textContent = 'To this story, step and spotlight';
+  share.choice('gif', 'GIF', 'Loops, plays anywhere');
   const videoType = diagramVideoType();
-  if (videoType) exportChoice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
-  share.append(exportMenu);
-  tools.prepend(controls, share);
+  if (videoType) share.choice('video', 'Video', videoType.startsWith('video/mp4') ? 'MP4, smaller and smoother' : 'WebM, smaller and smoother');
+  tools.prepend(controls);
   const caption = document.createElement('div');
   caption.className = 'diagram-caption';
   caption.setAttribute('aria-live', 'polite');
@@ -2054,27 +2131,8 @@ function playDiagram(stage, svg, tools, scripts, home) {
     recordButton.innerHTML = diagramIcon('share');
     for (const element of [backButton, playButton, nextButton, stopButton]) element.disabled = false;
     if (picker) picker.disabled = false;
-    const text = error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : SHARE_TITLE;
-    recordButton.title = text;
-    recordButton.setAttribute('aria-label', text);
+    share.label(error ? 'Could not save the ' + (kind === 'gif' ? 'GIF' : 'video') + ': ' + (error.message || error) : '');
     sync();
-  }
-  // A still keeps the current zoom, spotlight, dot and caption, so it draws the live viewBox.
-  async function savePicture() {
-    if (exporting) return;
-    const box = svg.viewBox.baseVal;
-    const text = caption.hidden ? '' : caption.textContent;
-    try {
-      const canvas = await diagramCanvas(svg, { x: box.x, y: box.y, w: box.width, h: box.height }, 2400, Boolean(text), true);
-      await canvas.draw(text);
-      const blob = await new Promise((resolve) => canvas.element.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error('the browser made no picture');
-      saveBlob(blob, diagramExportName(scenario().title, 'png'));
-      recordButton.title = SHARE_TITLE;
-    } catch (error) {
-      recordButton.title = 'Could not save the PNG: ' + (error.message || error);
-    }
-    recordButton.setAttribute('aria-label', recordButton.title);
   }
   async function exportScenario(kind) {
     if (exporting) return;
@@ -2177,42 +2235,13 @@ function playDiagram(stage, svg, tools, scripts, home) {
   backButton.addEventListener('click', stepBack);
   nextButton.addEventListener('click', stepNext);
   stopButton.addEventListener('click', stop);
-  recordButton.addEventListener('click', () => {
-    if (exporting) {
-      exporting.cancelled = true;
-      return;
-    }
-    exportMenu.hidden = !exportMenu.hidden;
-  });
-  exportMenu.addEventListener('click', async (event) => {
-    const choice = event.target.closest('button[data-kind]');
-    if (!choice) return;
-    if (choice.dataset.kind === 'link') {
-      const note = linkChoice.querySelector('small');
-      const hash = diagramHash(stage);
-      if (!hash) return;
-      history.replaceState(history.state, '', location.pathname + location.search + hash);
-      note.textContent = (await copyText(location.href)) ? 'Copied' : 'Could not copy, the address bar has it';
-      setTimeout(() => {
-        exportMenu.hidden = true;
-        note.textContent = 'To this story, step and spotlight';
-      }, 900);
-      return;
-    }
-    exportMenu.hidden = true;
-    if (choice.dataset.kind === 'png') savePicture();
-    else exportScenario(choice.dataset.kind);
-  });
-  document.addEventListener('pointerdown', (event) => {
-    if (!exportMenu.hidden && !share.contains(event.target)) exportMenu.hidden = true;
-  });
-  share.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || exportMenu.hidden) return;
-    event.stopPropagation();
-    event.preventDefault();
-    exportMenu.hidden = true;
-    recordButton.focus();
-  });
+  share.name = () => scenario().title;
+  share.choose = exportScenario;
+  share.cancel = () => {
+    if (!exporting) return false;
+    exporting.cancelled = true;
+    return true;
+  };
   if (picker) picker.addEventListener('change', () => {
     stop();
     play();

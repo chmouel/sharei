@@ -179,8 +179,11 @@ Pages:
   playDiagram calls it from each segment start while playing, from
   `play()` through `aim()`, and with null on finish and stop. A manual
   zoom, pan or reset cancels the glide. Exports skip it.
-  The share button (`.play-record` in `.diagram-share`) copies a deep link
-  or saves a story client-side: `diagramCanvas()` draws a
+  The share button (`.play-record` in `.diagram-share`) comes from
+  `diagramShare()`, which panZoom builds for every diagram with Copy link
+  and PNG; playDiagram adds GIF and Video through `share.choice()` and
+  sets `share.choose`, `share.cancel` and `share.name`. It copies a deep link
+  or saves client-side: `diagramCanvas()` draws a
   clone of the SVG with computed styles inlined and every `<image>` turned
   into a data URL (`diagramImageData()`, same-origin fetch only, since an
   SVG drawn as an image loads nothing external) at the home viewBox, or

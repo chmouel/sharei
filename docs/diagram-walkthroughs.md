@@ -182,7 +182,9 @@ no box are ignored.
 
 ## Saving a still picture
 
-"PNG" in the share menu saves what the diagram shows right now: the current
+Every diagram has a share button, with or without a story. Its "Copy link"
+keeps just the spotlight when there is no story, and "PNG" saves what the
+diagram shows right now: the current
 zoom and position, the spotlight, the dot and glow mid-step, and the caption
 in a band underneath when one is showing. It comes out 2400 pixels on its
 longer side, so a zoomed-in corner stays sharp enough for a slide. Like the
