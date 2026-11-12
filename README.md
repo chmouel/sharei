@@ -268,6 +268,47 @@ clipboard, ready to paste back to whoever wrote the file, and
 with `sharec plan.md --replace` and the comments stay: those on lines that
 moved follow them, and those on lines that changed are marked as such.
 
+## Diagrams
+
+Mermaid diagrams in a markdown file are drawn in the reader. Drag one to move
+around, pinch or Ctrl+scroll to zoom, and press the corner button to see it
+full screen.
+
+A flowchart can also play a walkthrough: a dot carrying a label travels from
+box to box, the box it reaches lights up, and the ones it has left get a tick.
+Write the steps as `%%` comments inside the diagram, which GitHub and other
+mermaid renderers ignore:
+
+````markdown
+```mermaid
+flowchart LR
+  Issue --> EL[EventListener] --> Run[Run agent] <--> Agent[Agent pod]
+  Run --> PR[Open PR] --> Comment
+
+%% play: Issue opened
+%% Issue -> EL : #42
+%% EL -> Run
+%% Run -> Agent : prompt
+%% Agent -> Run : tokens
+%% Run -> PR
+%% PR -> Comment : comment
+%% play: Pull request opened
+%% Issue -> EL : PR #44
+%% EL -> Run
+%% Run -> Agent : review
+%% Agent -> Run
+%% skip PR Comment
+```
+````
+
+Each `%% A -> B` step uses the node ids, follows the arrow drawn between
+those two boxes (backwards too), and can carry a label after `:`. `%% skip`
+fades boxes that a scenario does not use, and `%% play: title` starts
+another scenario, picked from a menu next to the play button. A step that
+names a missing box or arrow is ignored and listed when you hover the play
+button. When your system asks for less motion, the boxes change one after
+another and nothing travels.
+
 ## Privacy
 
 Everything stays on your computer. Markdown is formatted by your own browser,

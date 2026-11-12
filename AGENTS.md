@@ -128,6 +128,14 @@ Pages:
   zoom and a full-screen `<dialog>` by rewriting the SVG's `viewBox`, so
   it stays sharp and its box never resizes. A one-finger touch at the
   fitted size is left to page scrolling.
+  A flowchart's `%% play: title`, `%% A -> B : label` and `%% skip A B`
+  comment lines are read from the source by `playScript()` (mermaid drops
+  them) and played by `playDiagram()`: steps resolve to `g.node` ids
+  (`<svg>-flowchart-<id>-<n>`) and `path[data-edge]` `data-id`s
+  (`L_<from>_<to>_<n>`, walked backwards when only `B -> A` exists), a
+  token moves along `getPointAtLength`, and state is `play-*` classes on the
+  SVG. Labels are set with `textContent`. Unresolved steps are dropped and
+  listed in the Play button's title.
   Linkify ignores scheme-less links so `README.md` stays text.
   YAML front matter at line 1 (closed by `---` or `...` within 200 lines,
   with at least one `key:`) is claimed by the `sharei_frontmatter` block

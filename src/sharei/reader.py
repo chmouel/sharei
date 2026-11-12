@@ -48,6 +48,31 @@ MARKDOWN_CSS = """
   .diagram-dialog .diagram-stage:active { cursor:grabbing; }
   .diagram-dialog .diagram-stage > svg { width:100%; height:100%; max-width:none !important; padding:56px 16px 16px; }
   .diagram-dialog .diagram-tools { top:max(10px, env(safe-area-inset-top)); right:max(10px, env(safe-area-inset-right)); }
+  .diagram-play { display:flex; align-items:center; gap:2px; margin-right:3px; padding-right:3px; border-right:1px solid var(--borderColor-muted); }
+  .diagram-play select { max-width:14em; height:30px; padding:0 4px; border:0; border-radius:6px; background:none; color:var(--fgColor-default); font:500 12px/1 system-ui,-apple-system,sans-serif; cursor:pointer; }
+  .diagram-play select:hover { background:var(--bgColor-muted); }
+  .diagram-play button[hidden] { display:none; }
+  .diagram-play button:first-of-type svg { fill:currentColor; }
+  .diagram-play button:first-of-type { color:var(--fgColor-accent); }
+  .diagram-play.playing button:first-of-type svg { fill:none; }
+  .diagram-play button:last-of-type svg { fill:currentColor; stroke:none; }
+  .mermaid-diagram:has(.diagram-play.playing) .diagram-tools { opacity:1; }
+  .diagram-stage g.node { transition:opacity .25s; }
+  .diagram-stage g.node :is(.label-container, .label-container > *) { transition:fill .25s, stroke .25s; }
+  .diagram-stage g.node.play-active :is(.label-container, .label-container > *) { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; stroke:var(--fgColor-accent) !important; stroke-width:2px !important; }
+  .diagram-stage g.node.play-active { animation:play-glow 1.1s ease-in-out infinite alternate; }
+  .diagram-stage g.node.play-done :is(.label-container, .label-container > *) { fill:color-mix(in srgb, var(--fgColor-success) 14%, var(--bgColor-default)) !important; stroke:color-mix(in srgb, var(--fgColor-success) 70%, transparent) !important; }
+  .diagram-stage g.node.play-skipped { opacity:.3; }
+  .diagram-stage path.play-edge { stroke:var(--fgColor-accent) !important; stroke-width:2.5px !important; }
+  .diagram-stage path.play-edge-done { stroke:color-mix(in srgb, var(--fgColor-success) 65%, var(--borderColor-default)) !important; }
+  .diagram-stage .play-check circle { fill:var(--fgColor-success) !important; stroke:var(--bgColor-default) !important; stroke-width:1.5px !important; }
+  .diagram-stage .play-check path { fill:none !important; stroke:var(--bgColor-default) !important; stroke-width:1.8px !important; stroke-linecap:round; stroke-linejoin:round; }
+  .diagram-stage .play-token { pointer-events:none; }
+  .diagram-stage .play-token > circle { fill:var(--fgColor-accent); stroke:var(--bgColor-default); stroke-width:2px; filter:drop-shadow(0 0 5px var(--fgColor-accent)); }
+  .diagram-stage .play-tag rect { fill:var(--fgColor-accent); }
+  .diagram-stage .play-tag text { fill:var(--bgColor-default); font:600 12px/1 system-ui,-apple-system,sans-serif; }
+  @keyframes play-glow { from { filter:drop-shadow(0 0 2px color-mix(in srgb, var(--fgColor-accent) 45%, transparent)); } to { filter:drop-shadow(0 0 9px color-mix(in srgb, var(--fgColor-accent) 75%, transparent)); } }
+  @media (prefers-reduced-motion:reduce) { .diagram-stage g.node.play-active { animation:none; filter:drop-shadow(0 0 5px color-mix(in srgb, var(--fgColor-accent) 60%, transparent)); } .diagram-stage g.node, .diagram-stage g.node :is(.label-container, .label-container > *) { transition:none; } }
   @media (min-width:768px) { .page { padding:32px 32px 80px; } }
 """
 
@@ -792,12 +817,15 @@ const DIAGRAM_ICONS = {
   fit: '<path d="M13 8a5 5 0 1 1-1.46-3.54M13.5 2v3h-3"/>',
   full: '<path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"/>',
   close: '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>',
+  play: '<path d="M5 3.2v9.6L12.6 8z"/>',
+  pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>',
+  stop: '<rect x="4" y="4" width="8" height="8" rx="1.2"/>',
 };
 const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
 let diagramDialog = null;
 
 // Zooming and panning rewrite the viewBox, so the diagram stays sharp and keeps its place in the page.
-function panZoom(holder) {
+function panZoom(holder, scenarios) {
   const svg = holder.querySelector(':scope > svg');
   const box = svg && svg.viewBox.baseVal;
   if (!box || !box.width || !box.height) return;
@@ -824,6 +852,7 @@ function panZoom(holder) {
   const fullButton = button('full', 'Full screen');
   stage.append(tools, svg);
   holder.append(stage);
+  if (scenarios.length) playDiagram(stage, svg, tools, scenarios);
   holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom';
 
   const full = () => Boolean(diagramDialog && diagramDialog.open && diagramDialog.contains(stage));
@@ -957,6 +986,335 @@ function panZoom(holder) {
   apply();
 }
 
+// Walkthroughs are written as mermaid comments, which every other renderer ignores:
+//   %% play: Title        starts a scenario
+//   %% A -> B : label     sends a token from node A to node B along the edge between them
+//   %% skip A B           fades nodes for the rest of the scenario
+function playScript(source) {
+  const lines = source.split(/\\r?\\n/);
+  let at = 0;
+  while (at < lines.length && !lines[at].trim()) at++;
+  if (lines[at] && lines[at].trim() === '---') {
+    at++;
+    while (at < lines.length && lines[at].trim() !== '---') at++;
+    at++;
+  }
+  const head = lines.slice(at).map((line) => line.trim()).find((line) => line && !line.startsWith('%%'));
+  if (!head || !/^(?:flowchart|graph)\\b/.test(head)) return [];
+  const scenarios = [];
+  let current = null;
+  for (const line of lines.slice(at)) {
+    const comment = /^\\s*%%(?!\\{)\\s*(.*?)\\s*$/.exec(line);
+    if (!comment) continue;
+    const text = comment[1];
+    const title = /^play\\s*:\\s*(.*)$/i.exec(text);
+    if (title) {
+      current = { title: title[1] || 'Scenario ' + (scenarios.length + 1), steps: [] };
+      scenarios.push(current);
+      continue;
+    }
+    let step = null;
+    const move = /^([^\\s:]+?)\\s*-+>\\s*([^\\s:]+)\\s*(?::\\s*(.*))?$/.exec(text);
+    const skip = /^skip\\s+(.+)$/i.exec(text);
+    if (move) step = { from: move[1], to: move[2], label: move[3] || '', text: text };
+    else if (skip) step = { skip: skip[1].split(/[\\s,]+/).filter(Boolean), text: text };
+    if (!step) continue;
+    if (!current) {
+      current = { title: 'Walkthrough', steps: [] };
+      scenarios.push(current);
+    }
+    current.steps.push(step);
+  }
+  return scenarios.filter((scenario) => scenario.steps.length);
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+let diagramsPlaying = 0;
+let playBusyWrapped = false;
+
+function playDiagram(stage, svg, tools, scripts) {
+  const nodes = new Map();
+  for (const group of svg.querySelectorAll('g.node[id]')) {
+    const match = /-flowchart-(.+)-\\d+$/.exec(group.id);
+    if (match && !nodes.has(match[1])) nodes.set(match[1], group);
+  }
+  const edges = [...svg.querySelectorAll('path[data-edge][data-id]')];
+  const edgeBetween = (from, to) => edges.find((path) => {
+    const id = path.dataset.id;
+    const prefix = 'L_' + from + '_' + to + '_';
+    return id.startsWith(prefix) && /^\\d+$/.test(id.slice(prefix.length));
+  });
+
+  // Steps that name an unknown node or an edge that is not drawn are dropped and listed in the title.
+  const scenarios = scripts.map((script) => {
+    const steps = [];
+    const problems = [];
+    for (const step of script.steps) {
+      if (step.skip) {
+        const found = step.skip.map((name) => nodes.get(name)).filter(Boolean);
+        if (found.length < step.skip.length) problems.push(step.text);
+        if (found.length) steps.push({ skip: found });
+        continue;
+      }
+      const from = nodes.get(step.from);
+      const to = nodes.get(step.to);
+      const forward = from && to && edgeBetween(step.from, step.to);
+      const path = forward || (from && to && edgeBetween(step.to, step.from));
+      if (!path) {
+        problems.push(step.text);
+        continue;
+      }
+      steps.push({ from: from, to: to, path: path, reverse: !forward, label: step.label });
+    }
+    return { title: script.title, steps: steps, problems: problems };
+  }).filter((scenario) => scenario.steps.length);
+  if (!scenarios.length) return;
+
+  const controls = document.createElement('div');
+  controls.className = 'diagram-play';
+  let picker = null;
+  if (scenarios.length > 1) {
+    picker = document.createElement('select');
+    picker.name = 'scenario';
+    picker.setAttribute('aria-label', 'Scenario');
+    scenarios.forEach((scenario, index) => picker.add(new Option(scenario.title, String(index))));
+    controls.append(picker);
+  }
+  const make = (icon, label) => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.innerHTML = diagramIcon(icon);
+    element.title = label;
+    element.setAttribute('aria-label', label);
+    controls.append(element);
+    return element;
+  };
+  const playButton = make('play', 'Play');
+  const stopButton = make('stop', 'Stop');
+  tools.prepend(controls);
+
+  let timeline = [];
+  let index = 0;
+  let elapsed = 0;
+  let playing = false;
+  let finished = false;
+  let frame = 0;
+  let last = 0;
+  let active = null;
+  let token = null;
+
+  const scenario = () => scenarios[picker ? Number(picker.value) : 0];
+  function label(icon, text) {
+    playButton.innerHTML = diagramIcon(icon);
+    const problems = scenario().problems;
+    const title = problems.length ? text + ' (ignored: ' + problems.join('; ') + ')' : text;
+    playButton.title = title;
+    playButton.setAttribute('aria-label', title);
+  }
+  function sync() {
+    label(playing ? 'pause' : 'play', playing ? 'Pause' : finished ? 'Replay' : timeline.length ? 'Resume' : 'Play');
+    stopButton.hidden = !timeline.length;
+    controls.classList.toggle('playing', playing);
+  }
+
+  function badge(node) {
+    if (node.querySelector(':scope > .play-check')) return;
+    const box = node.getBBox();
+    const mark = document.createElementNS(SVG_NS, 'g');
+    mark.setAttribute('class', 'play-check');
+    mark.setAttribute('transform', 'translate(' + (box.x + box.width - 2) + ' ' + (box.y + 2) + ')');
+    const circle = document.createElementNS(SVG_NS, 'circle');
+    circle.setAttribute('r', '8');
+    const tick = document.createElementNS(SVG_NS, 'path');
+    tick.setAttribute('d', 'M-3.6 0.2l2.4 2.4 4.8-5');
+    mark.append(circle, tick);
+    node.append(mark);
+  }
+  function setActive(node) {
+    node.classList.remove('play-done', 'play-skipped');
+    node.querySelector(':scope > .play-check')?.remove();
+    node.classList.add('play-active');
+    active = node;
+  }
+  function setDone(node) {
+    node.classList.remove('play-active');
+    node.classList.add('play-done');
+    badge(node);
+    if (active === node) active = null;
+  }
+  function clearMarks() {
+    for (const element of svg.querySelectorAll('.play-active, .play-done, .play-skipped, .play-edge, .play-edge-done')) {
+      element.classList.remove('play-active', 'play-done', 'play-skipped', 'play-edge', 'play-edge-done');
+    }
+    for (const element of svg.querySelectorAll('.play-check')) element.remove();
+    token?.remove();
+    token = null;
+    active = null;
+  }
+
+  function makeToken(text) {
+    const group = document.createElementNS(SVG_NS, 'g');
+    group.setAttribute('class', 'play-token');
+    const dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('r', '6');
+    group.append(dot);
+    svg.append(group);
+    if (text) {
+      const tag = document.createElementNS(SVG_NS, 'g');
+      tag.setAttribute('class', 'play-tag');
+      const back = document.createElementNS(SVG_NS, 'rect');
+      const words = document.createElementNS(SVG_NS, 'text');
+      words.textContent = text;
+      words.setAttribute('text-anchor', 'middle');
+      words.setAttribute('y', '-14');
+      tag.append(back, words);
+      group.append(tag);
+      const box = words.getBBox();
+      back.setAttribute('x', String(box.x - 6));
+      back.setAttribute('y', String(box.y - 3));
+      back.setAttribute('width', String(box.width + 12));
+      back.setAttribute('height', String(box.height + 6));
+      back.setAttribute('rx', '5');
+    }
+    return group;
+  }
+
+  // The timeline is a list of segments that only advances while playing, so pausing is free.
+  function build(calm) {
+    const segments = [];
+    let at = null;
+    const DWELL = calm ? 650 : 420;
+    for (const step of scenario().steps) {
+      if (step.skip) {
+        segments.push({ duration: calm ? 400 : 320, start: () => {
+          for (const node of step.skip) {
+            node.classList.remove('play-active', 'play-done');
+            node.querySelector(':scope > .play-check')?.remove();
+            node.classList.add('play-skipped');
+            if (active === node) active = null;
+          }
+        } });
+        continue;
+      }
+      if (at !== step.from) {
+        segments.push({ duration: DWELL, start: () => {
+          if (active && active !== step.from) setDone(active);
+          setActive(step.from);
+        } });
+      } else {
+        segments.push({ duration: DWELL, start: () => {} });
+      }
+      const length = step.path.getTotalLength();
+      let matrix = null;
+      segments.push({
+        duration: calm ? 300 : Math.min(1700, Math.max(550, length * 3.2)),
+        start: () => {
+          setDone(step.from);
+          step.path.classList.remove('play-edge-done');
+          step.path.classList.add('play-edge');
+          if (calm) return;
+          const own = step.path.getScreenCTM();
+          const root = svg.getScreenCTM();
+          matrix = own && root ? root.inverse().multiply(own) : new DOMMatrix();
+          token = makeToken(step.label);
+        },
+        frame: (progress) => {
+          if (!token) return;
+          const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+          const point = step.path.getPointAtLength(length * (step.reverse ? 1 - eased : eased));
+          const placed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+          token.setAttribute('transform', 'translate(' + placed.x + ' ' + placed.y + ')');
+        },
+        end: () => {
+          token?.remove();
+          token = null;
+          step.path.classList.remove('play-edge');
+          step.path.classList.add('play-edge-done');
+          setActive(step.to);
+        },
+      });
+      at = step.to;
+    }
+    segments.push({ duration: DWELL, start: () => { if (active) setDone(active); } });
+    return segments;
+  }
+
+  function enter(segment) {
+    segment.start();
+    if (segment.frame) segment.frame(0);
+  }
+  function tick(now) {
+    frame = 0;
+    if (!playing) return;
+    elapsed += Math.min(100, now - last);
+    last = now;
+    while (index < timeline.length && elapsed >= timeline[index].duration) {
+      const done = timeline[index];
+      elapsed -= done.duration;
+      if (done.frame) done.frame(1);
+      if (done.end) done.end();
+      index++;
+      if (index < timeline.length) enter(timeline[index]);
+    }
+    if (index >= timeline.length) {
+      finished = true;
+      pause();
+      return;
+    }
+    const segment = timeline[index];
+    if (segment.frame) segment.frame(elapsed / segment.duration);
+    frame = requestAnimationFrame(tick);
+  }
+  function play() {
+    if (playing) return;
+    if (finished || !timeline.length) {
+      clearMarks();
+      timeline = build(matchMedia('(prefers-reduced-motion: reduce)').matches);
+      index = 0;
+      elapsed = 0;
+      finished = false;
+      enter(timeline[0]);
+    }
+    playing = true;
+    diagramsPlaying++;
+    if (!playBusyWrapped) {
+      playBusyWrapped = true;
+      const previousBusy = window.liveBusy;
+      window.liveBusy = () => diagramsPlaying > 0 || (previousBusy ? previousBusy() : false);
+    }
+    last = performance.now();
+    frame = requestAnimationFrame(tick);
+    sync();
+  }
+  function pause() {
+    if (playing) diagramsPlaying--;
+    playing = false;
+    cancelAnimationFrame(frame);
+    frame = 0;
+    sync();
+  }
+  function stop() {
+    pause();
+    clearMarks();
+    timeline = [];
+    finished = false;
+    sync();
+  }
+
+  playButton.addEventListener('click', () => (playing ? pause() : play()));
+  stopButton.addEventListener('click', stop);
+  if (picker) picker.addEventListener('change', () => {
+    stop();
+    play();
+  });
+  stage.addEventListener('keydown', (event) => {
+    if (event.key !== ' ' || !stage.closest('dialog') || event.target.closest('button, select')) return;
+    event.preventDefault();
+    playing ? pause() : play();
+  });
+  sync();
+}
+
 function drawDiagrams() {
   const diagrams = [...article.querySelectorAll('.highlight-source-mermaid')];
   if (!diagrams.length) return;
@@ -970,6 +1328,7 @@ function drawDiagrams() {
     for (const block of diagrams) {
       const id = 'mermaid-' + diagramCount++;
       try {
+        const scenarios = playScript(block.textContent);
         const result = await mermaid.render(id, block.textContent);
         const holder = document.createElement('div');
         holder.className = 'mermaid-diagram';
@@ -979,7 +1338,7 @@ function drawDiagrams() {
         }
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
-        panZoom(holder);
+        panZoom(holder, scenarios);
         if (onDiagram) onDiagram();
       } catch (error) {
         document.getElementById('d' + id)?.remove();
