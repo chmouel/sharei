@@ -31,6 +31,10 @@ proxy with authentication (see SECURITY.md).
   reusing the reader and comment helpers with explicit cache storage under
   `$XDG_CACHE_HOME/aniflow/comments/<root hash>/<document hash>.json`.
   Source files are never written; comments are isolated by served root.
+  `aniflow --spec` prints the packaged `src/sharei/aniflow-spec.md`, the
+  walkthrough syntax reference for agents, and exits. Update it with every
+  change to the `%%` syntax, picture rules or built-in icons; a test checks
+  that its icon table matches `ICON_NAMES`.
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
   `PUSH_ENABLED` stays false and every push route is a 404.
@@ -86,9 +90,12 @@ proxy with authentication (see SECURITY.md).
   notes, clipboard, drops and shots as views of one keyword. It only calls
   `sharec`, so it holds no address or login logic of its own.
 - `contrib/skills/sharei/SKILL.md`: an agent skill for using sharei through
-  `sharec` (reading shares, handing over `/md` documents, walkthrough
-  diagrams with pictures). Keep it free of personal hosts and logins, and
-  update it when `sharec` flags or the diagram syntax change.
+  `sharec` (reading shares, handing over `/md` documents). Keep it free of
+  personal hosts and logins, and update it when `sharec` flags change.
+- `contrib/skills/aniflow-diagrams/SKILL.md`: an agent skill for writing
+  animated walkthroughs that look good. It reads the syntax from
+  `aniflow --spec` rather than restating it, so it holds workflow and taste
+  only.
 - `config.example.toml`: every setting, with comments. Keep it in sync when you
   add a setting.
 - `tests/`: pytest. `conftest.py` has a `live_server` fixture that runs the
@@ -147,11 +154,20 @@ Pages:
   zoom and a full-screen `<dialog>` by rewriting the SVG's `viewBox`, so
   it stays sharp and its box never resizes. A one-finger touch at the
   fitted size is left to page scrolling.
-  A flowchart's `%% play: title`, `%% A -> B : label` and `%% skip A B`
-  comment lines are read from the source by `playScript()` (mermaid drops
-  them) and played by `playDiagram()`: steps resolve to `g.node` ids
-  (`<svg>-flowchart-<id>-<n>`) and `path[data-edge]` `data-id`s
-  (`L_<from>_<to>_<n>`, walked backwards when only `B -> A` exists), a
+  A flowchart's `%% play: title`, `%% A -> B : label`, `%% skip A B` and
+  `%% wait MS` comment lines are read from the source by `playScript()`
+  (mermaid drops them; each step keeps its document `line`, from the
+  fence's `data-line`) and played by `playDiagram()`: steps resolve to
+  `g.node` ids (`<svg>-flowchart-<id>-<n>`) and `path[data-edge]`
+  `data-id`s. `diagramEdges()` gets `{id, from, to}` for every edge from
+  mermaid's parser (`mermaidAPI.getDiagramFromText`), since a declared id
+  (`A ok@--> B`) replaces `L_<from>_<to>_<n>` and names neither end;
+  `diagramLinks()` pairs paths with ends for playback and `focusDiagram()`,
+  falling back to splitting `L_` ids. `%% A -> B @ok` picks an edge by id;
+  without one the first edge drawn wins, walked backwards when only
+  `B -> A` exists. A wait becomes the next step's `hold` (`tail` after the
+  last), a duration-only segment of `ms * DIAGRAM_PACE` with no `stop`, so
+  rail ticks, `#step=` and step mode count real steps only. A
   token moves along `getPointAtLength`, and state is `play-*` classes on the
   SVG. A step is `{moves: [{from, to, path, reverse}], label, caption}`;
   several moves (`A -> B, C` or `A, B -> C`) share one segment as long as
@@ -177,8 +193,11 @@ Pages:
   and clear it.
   Labels and `| caption` text (the `.diagram-caption` bar, and a band that
   `diagramCanvas(..., captioned)` draws into exports) are set with
-  `textContent` or `fillText`. Unresolved steps are dropped and
-  listed in the Play button's title. Picture nodes (`@{ img: ... }`) render
+  `textContent` or `fillText`. Unresolved steps are dropped with a reason
+  and listed by `diagramWarnings()`: a `.play-warn` badge in the toolbar
+  opening a `.diagram-problems` list (story, line, reason, source, all
+  `textContent`) plus one `console.warn`, shown even when no story is
+  left to play. Picture nodes (`@{ img: ... }`) render
   as `g.image-shape` rather than `g.node`, so play styles and badges cover
   both. Before rendering, `diagramImages()` rewrites each `img:` value:
   local names go through `local()` to `/poub/`, https, same-origin paths

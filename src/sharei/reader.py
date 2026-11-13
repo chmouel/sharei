@@ -81,9 +81,18 @@ MARKDOWN_CSS = """
   .mermaid-diagram:has(.diagram-export:not([hidden])) { overflow:visible; }
   .diagram-tools .diagram-export button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; width:100%; height:auto; padding:7px 10px; color:var(--fgColor-default); font:500 13px/1.2 system-ui,-apple-system,sans-serif; text-align:left; }
   .diagram-export button small { color:var(--fgColor-muted); font-size:11px; }
+  .diagram-warnings { position:relative; }
+  .diagram-tools button.play-warn { display:flex; gap:3px; width:auto; padding:0 6px; color:var(--fgColor-attention); font:600 12px/1 system-ui,-apple-system,sans-serif; }
+  .diagram-tools button.play-warn:hover:not(:disabled) { color:var(--fgColor-attention); }
+  .diagram-problems { position:absolute; top:calc(100% + 9px); right:0; z-index:3; display:flex; flex-direction:column; gap:8px; width:max-content; max-width:min(30em, 80vw); max-height:50vh; overflow:auto; margin:0; padding:10px 12px; list-style:none; border:1px solid var(--borderColor-default); border-radius:9px; background:var(--bgColor-default); color:var(--fgColor-default); box-shadow:0 8px 24px color-mix(in srgb, var(--fgColor-default) 18%, transparent); font:13px/1.35 system-ui,-apple-system,sans-serif; text-align:left; }
+  .diagram-problems[hidden] { display:none; }
+  .diagram-problems li { display:flex; flex-direction:column; gap:2px; margin:0; }
+  .diagram-problems small { color:var(--fgColor-muted); font-size:11px; }
+  .diagram-problems code { color:var(--fgColor-muted); font-size:12px; overflow-wrap:anywhere; }
+  .mermaid-diagram:has(.diagram-problems:not([hidden])) { overflow:visible; }
   .diagram-stage.recording :is(g.node, g.image-shape, g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:none !important; }
   .diagram-stage.recording :is(g.node, g.image-shape).play-active { animation:none; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--fgColor-accent) 65%, transparent)); }
-  .mermaid-diagram:has(.diagram-play.playing, .diagram-export:not([hidden]), .play-record.busy) .diagram-tools { opacity:1; }
+  .mermaid-diagram:has(.diagram-play.playing, .diagram-export:not([hidden]), .diagram-problems:not([hidden]), .play-warn, .play-record.busy) .diagram-tools { opacity:1; }
   .diagram-stage :is(g.node, g.image-shape) { transition:opacity .25s; }
   .diagram-stage :is(g.node .label-container, g.node .label-container > *, g.image-shape > g:first-child > path) { transition:fill .25s, stroke .25s; }
   .diagram-stage g.node.play-active :is(.label-container, .label-container > *), .diagram-stage g.image-shape.play-active > g:first-child > path:first-child { fill:color-mix(in srgb, var(--fgColor-accent) 26%, var(--bgColor-default)) !important; }
@@ -933,12 +942,13 @@ const DIAGRAM_ICONS = {
   right: '<path d="M6 3.5L10.5 8 6 12.5"/>',
   pen: '<path d="M10.5 2.8l2.7 2.7-7.4 7.4-3.3.6.6-3.3z"/><path d="M9 4.3l2.7 2.7"/>',
   follow: '<path d="M2.5 5.5h2.2l1.1-1.7h4.4l1.1 1.7h2.2v7h-11z"/><circle cx="8" cy="9" r="2.1"/>',
+  warn: '<path d="M8 2.2l6 10.6H2z"/><path d="M8 6.6v2.8M8 11.1v.1"/>',
 };
 const diagramIcon = (name) => '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">' + DIAGRAM_ICONS[name] + '</svg>';
 let diagramDialog = null;
 
 // Zooming and panning rewrite the viewBox, so the diagram stays sharp and keeps its place in the page.
-function panZoom(holder, scenarios) {
+function panZoom(holder, scenarios, edges) {
   const svg = holder.querySelector(':scope > svg');
   const box = svg && svg.viewBox.baseVal;
   if (!box || !box.width || !box.height) return;
@@ -968,8 +978,8 @@ function panZoom(holder, scenarios) {
   stage.append(tools, svg);
   holder.append(stage);
   const share = diagramShare(stage, svg, tools);
-  stage.diagramPlay = scenarios.length ? playDiagram(stage, svg, tools, scenarios, home, share) : null;
-  stage.diagramFocus = focusDiagram(stage, svg) || null;
+  stage.diagramPlay = scenarios.length ? playDiagram(stage, svg, tools, scenarios, home, share, edges) : null;
+  stage.diagramFocus = focusDiagram(stage, svg, edges) || null;
   holder.title = 'Drag to move, Ctrl+scroll or pinch to zoom' + (stage.classList.contains('focusable') ? ', click a box to highlight it' : '');
 
   const full = () => Boolean(diagramDialog && diagramDialog.open && diagramDialog.contains(stage));
@@ -1280,7 +1290,9 @@ function panZoom(holder, scenarios) {
 //   %% play: Title        starts a scenario
 //   %% A -> B : label     sends a token from node A to node B along the edge between them
 //   %% A -> B, C          sends one token down each edge at once (A, B -> C joins two)
+//   %% A -> B @ok         takes the edge mermaid knows as ok (A ok@--> B) among several
 //   %% skip A B           fades nodes for the rest of the scenario
+//   %% wait 1500          holds the picture before the next step, in milliseconds at 1x
 // In a sequence diagram A and B are participants, and each step takes the next A to B message.
 function diagramLines(source, kinds) {
   const lines = source.split(/\\r?\\n/);
@@ -1296,39 +1308,72 @@ function diagramLines(source, kinds) {
 }
 const flowchartLines = (source) => diagramLines(source, /^(?:flowchart|graph)\\b/);
 
-function playScript(source) {
+const WAIT_MAX = 10000;
+
+// base is the document line of the opening fence, so each step can say where it was written.
+function playScript(source, base) {
   const lines = diagramLines(source, /^(?:flowchart|graph|sequenceDiagram)\\b/);
   if (!lines) return [];
+  const offset = (base || 0) + source.split(/\\r?\\n/).length - lines.length + 1;
   const scenarios = [];
   let current = null;
-  for (const line of lines) {
+  // A wait holds the picture before the step that follows it; one at the end holds the finish.
+  let hold = null;
+  const story = () => {
+    if (!current) {
+      current = { title: 'Walkthrough', steps: [], tail: null };
+      scenarios.push(current);
+    }
+    return current;
+  };
+  lines.forEach((line, at) => {
     const comment = /^\\s*%%(?!\\{)\\s*(.*?)\\s*$/.exec(line);
-    if (!comment) continue;
+    if (!comment) return;
     const text = comment[1];
     const title = /^play\\s*:\\s*(.*)$/i.exec(text);
     if (title) {
-      current = { title: title[1] || 'Scenario ' + (scenarios.length + 1), steps: [] };
+      if (current && hold) current.tail = hold;
+      hold = null;
+      current = { title: title[1] || 'Scenario ' + (scenarios.length + 1), steps: [], tail: null };
       scenarios.push(current);
-      continue;
+      return;
     }
     let step = null;
     // A sentence after | is the step's caption: A -> B : label | caption, or skip A B | caption.
     const bar = text.indexOf('|');
     const body = bar < 0 ? text : text.slice(0, bar).trim();
     const caption = bar < 0 ? '' : text.slice(bar + 1).trim();
+    const where = { caption: caption, text: text, line: offset + at };
+    if (/^wait\\b/i.test(body)) {
+      const wait = /^wait\\s+(\\d+)\\s*(?:ms)?$/i.exec(body);
+      if (!wait) step = Object.assign({ bad: 'wait needs a number of milliseconds' }, where);
+      else {
+        story();
+        hold = { ms: Math.min(WAIT_MAX, (hold ? hold.ms : 0) + Number(wait[1])), caption: caption || (hold ? hold.caption : '') };
+        return;
+      }
+    }
     // A, B -> C or A -> B, C (or B & C, as mermaid writes it) moves one dot down each edge at once.
+    // @id after a name picks the edge mermaid declared with that id.
     const move = /^([^:]+?)\\s*-+>\\s*([^:]+?)\\s*(?::\\s*(.*))?$/.exec(body);
     const skip = /^skip\\s+(.+)$/i.exec(body);
-    const names = (list) => list.split(/[\\s,&]+/).filter(Boolean);
-    if (move) step = { from: names(move[1]), to: names(move[2]), label: move[3] || '', caption: caption, text: text };
-    else if (skip) step = { skip: skip[1].split(/[\\s,]+/).filter(Boolean), caption: caption, text: text };
-    if (!step) continue;
-    if (!current) {
-      current = { title: 'Walkthrough', steps: [] };
-      scenarios.push(current);
-    }
-    current.steps.push(step);
-  }
+    const names = (list) => {
+      const found = [];
+      for (const word of list.replace(/\\s*@\\s*/g, '@').split(/[\\s,&]+/).filter(Boolean)) {
+        const [name, edge] = word.split('@');
+        if (name) found.push({ name: name, edge: edge || '' });
+        else if (found.length && edge) found[found.length - 1].edge = edge;
+      }
+      return found;
+    };
+    if (!step && move) step = Object.assign({ from: names(move[1]), to: names(move[2]), label: move[3] || '' }, where);
+    else if (!step && skip) step = Object.assign({ skip: skip[1].split(/[\\s,]+/).filter(Boolean) }, where);
+    if (!step) return;
+    step.hold = hold;
+    hold = null;
+    story().steps.push(step);
+  });
+  if (current && hold) current.tail = hold;
   return scenarios.filter((scenario) => scenario.steps.length);
 }
 
@@ -1408,25 +1453,50 @@ function diagramNodes(svg) {
   return nodes;
 }
 
-// Clicking a box puts it in the spotlight: the box and its arrows stay bright, the rest dims.
-// Shift, Ctrl or Cmd adds boxes; clicking the lone box, the background or Escape clears it.
-function focusDiagram(stage, svg) {
-  const nodes = diagramNodes(svg);
-  if (!nodes.size) return;
-  const names = new Map([...nodes].map(([name, group]) => [group, name]));
+// Every drawn flowchart edge with its two ends. mermaid's parser knows them, including the
+// edges declared with an id (A ok@--> B), whose data-id is that id and names neither end.
+async function diagramEdges(source) {
+  if (!flowchartLines(source)) return null;
+  try {
+    const parsed = await mermaid.mermaidAPI.getDiagramFromText(source);
+    return parsed.db.getEdges().filter((edge) => edge.id).map((edge) => ({ id: String(edge.id), from: edge.start, to: edge.end }));
+  } catch (error) {
+    return null;
+  }
+}
+// Without the parser, generated ids (L_<from>_<to>_<n>) are split against the known node ids.
+function diagramLinks(svg, nodes, edges) {
+  const ends = new Map((edges || []).map((edge) => [edge.id, edge]));
   const links = [];
   for (const path of svg.querySelectorAll('path[data-edge][data-id]')) {
     const id = path.dataset.id;
-    for (const from of nodes.keys()) {
-      if (!id.startsWith('L_' + from + '_')) continue;
-      const rest = id.slice(from.length + 3);
-      const to = [...nodes.keys()].find((name) => rest.startsWith(name + '_') && /^\\d+$/.test(rest.slice(name.length + 1)));
-      if (!to) continue;
-      const label = svg.querySelector('g.edgeLabels [data-id="' + CSS.escape(id) + '"]');
-      links.push({ from: from, to: to, parts: [path, label && (label.closest('g.edgeLabel') || label)].filter(Boolean) });
-      break;
+    let from = ends.get(id)?.from;
+    let to = ends.get(id)?.to;
+    if (!edges) {
+      for (const name of nodes.keys()) {
+        if (!id.startsWith('L_' + name + '_')) continue;
+        const rest = id.slice(name.length + 3);
+        to = [...nodes.keys()].find((end) => rest.startsWith(end + '_') && /^\\d+$/.test(rest.slice(end.length + 1)));
+        if (to) {
+          from = name;
+          break;
+        }
+      }
     }
+    if (!from || !to || !nodes.has(from) || !nodes.has(to)) continue;
+    const label = svg.querySelector('g.edgeLabels [data-id="' + CSS.escape(id) + '"]');
+    links.push({ id: id, from: from, to: to, path: path, label: label && (label.closest('g.edgeLabel') || label) });
   }
+  return links;
+}
+
+// Clicking a box puts it in the spotlight: the box and its arrows stay bright, the rest dims.
+// Shift, Ctrl or Cmd adds boxes; clicking the lone box, the background or Escape clears it.
+function focusDiagram(stage, svg, edges) {
+  const nodes = diagramNodes(svg);
+  if (!nodes.size) return;
+  const names = new Map([...nodes].map(([name, group]) => [group, name]));
+  const links = diagramLinks(svg, nodes, edges).map((link) => ({ from: link.from, to: link.to, parts: [link.path, link.label].filter(Boolean) }));
   stage.classList.add('focusable');
   const selected = new Set();
   let held = false;
@@ -1915,7 +1985,59 @@ function diagramShare(stage, svg, tools) {
   return share;
 }
 
-function playDiagram(stage, svg, tools, scripts, home, share) {
+// A walkthrough step that cannot play is dropped, and this badge says which and why, so a
+// broken story never plays short without a word.
+function diagramWarnings(stage, tools, scenarios) {
+  const rows = scenarios.flatMap((scenario) => scenario.problems.map((problem) => Object.assign({ story: scenario.title }, problem)));
+  if (!rows.length) return;
+  const group = document.createElement('div');
+  group.className = 'diagram-warnings';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'play-warn';
+  button.innerHTML = diagramIcon('warn');
+  const count = document.createElement('span');
+  count.textContent = String(rows.length);
+  button.append(count);
+  const text = rows.length === 1 ? '1 walkthrough step cannot play' : rows.length + ' walkthrough steps cannot play';
+  button.title = text;
+  button.setAttribute('aria-label', text);
+  button.setAttribute('aria-expanded', 'false');
+  const list = document.createElement('ul');
+  list.className = 'diagram-problems';
+  list.hidden = true;
+  for (const row of rows) {
+    const item = document.createElement('li');
+    const where = document.createElement('small');
+    where.textContent = row.story + ' · line ' + row.line;
+    const reason = document.createElement('span');
+    reason.textContent = row.reason;
+    const source = document.createElement('code');
+    source.textContent = '%% ' + row.text;
+    item.append(where, reason, source);
+    list.append(item);
+  }
+  group.append(button, list);
+  tools.prepend(group);
+  const show = (open) => {
+    list.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+  };
+  button.addEventListener('click', () => show(list.hidden));
+  document.addEventListener('pointerdown', (event) => {
+    if (!list.hidden && !group.contains(event.target)) show(false);
+  });
+  group.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || list.hidden) return;
+    event.stopPropagation();
+    event.preventDefault();
+    show(false);
+    button.focus();
+  });
+  console.warn('Diagram walkthrough: ' + text + '\\n' + rows.map((row) => row.story + ', line ' + row.line + ': ' + row.reason + ' (%% ' + row.text + ')').join('\\n'));
+}
+
+function playDiagram(stage, svg, tools, scripts, home, share, edges) {
   const sequence = svg.getAttribute('aria-roledescription') === 'sequence';
   // A sequence participant is drawn several times (box or stick figure at the top and bottom,
   // and its lifeline), so the first one stands for it and parts lists them all.
@@ -1950,51 +2072,100 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   const each = (node, change) => {
     for (const part of parts.get(node) || [node]) change(part);
   };
-  const edges = [...svg.querySelectorAll('path[data-edge][data-id]')];
-  const edgeBetween = (from, to) => edges.find((path) => {
-    const id = path.dataset.id;
-    const prefix = 'L_' + from + '_' + to + '_';
-    return id.startsWith(prefix) && /^\\d+$/.test(id.slice(prefix.length));
-  });
+  const links = sequence ? [] : diagramLinks(svg, nodes, edges);
+  const named = new Map(links.map((link) => [link.id, link]));
+  // Without an id, the first edge drawn from one box to the other, either way round.
+  const edgeFor = (from, to, id) => {
+    if (id) {
+      const link = named.get(id);
+      if (!link) return { problem: 'no edge with the id ' + id };
+      if (link.from === from && link.to === to) return { path: link.path, reverse: false };
+      if (link.from === to && link.to === from) return { path: link.path, reverse: true };
+      return { problem: 'edge ' + id + ' does not join ' + from + ' and ' + to };
+    }
+    const forward = links.find((link) => link.from === from && link.to === to);
+    const back = forward || links.find((link) => link.from === to && link.to === from);
+    return back ? { path: back.path, reverse: !forward } : { problem: 'no edge between ' + from + ' and ' + to };
+  };
+  const box = sequence ? 'participant' : 'box';
 
-  // Steps that name an unknown node or an edge that is not drawn are dropped and listed in the title.
-  const scenarios = scripts.map((script) => {
+  // Steps that name an unknown node or an edge that is not drawn are dropped and listed by
+  // diagramWarnings with their line. A dropped step's wait moves on to the next one.
+  const resolved = scripts.map((script) => {
     const steps = [];
     const problems = [];
     let cursor = 0;
+    let hold = null;
+    const drop = (step, reason) => {
+      problems.push({ line: step.line, text: step.text, reason: reason });
+      hold = step.hold || hold;
+    };
     for (const step of script.steps) {
-      if (step.skip) {
-        const found = step.skip.map((name) => nodes.get(name)).filter(Boolean);
-        if (found.length < step.skip.length) problems.push(step.text);
-        if (found.length) steps.push({ skip: found, caption: step.caption });
+      if (step.bad) {
+        drop(step, step.bad);
         continue;
       }
-      const pairs = step.from.length > 1 && step.to.length > 1 ? [] : step.from.flatMap((from) => step.to.map((to) => [from, to]));
+      if (step.skip) {
+        const found = step.skip.map((name) => nodes.get(name)).filter(Boolean);
+        const missing = step.skip.filter((name) => !nodes.has(name));
+        if (missing.length) problems.push({ line: step.line, text: step.text, reason: 'no ' + box + ' named ' + missing.join(', ') });
+        if (found.length) {
+          steps.push({ skip: found, caption: step.caption, hold: step.hold || hold });
+          hold = null;
+        } else hold = step.hold || hold;
+        continue;
+      }
+      const missing = [...step.from, ...step.to].map((end) => end.name).filter((name) => !nodes.has(name));
+      if (missing.length) {
+        drop(step, 'no ' + box + ' named ' + [...new Set(missing)].join(', '));
+        continue;
+      }
+      if (step.from.length > 1 && step.to.length > 1) {
+        drop(step, 'several boxes on both sides; write one step per edge');
+        continue;
+      }
+      if (sequence && [...step.from, ...step.to].some((end) => end.edge)) {
+        drop(step, 'edge ids only work in flowcharts');
+        continue;
+      }
       const taken = new Set();
-      const moves = pairs.map(([fromName, toName]) => {
+      let problem = '';
+      const moves = step.from.flatMap((from) => step.to.map((to) => {
+        if (problem) return null;
+        if (from.edge && to.edge && from.edge !== to.edge) {
+          problem = 'two edge ids for ' + from.name + ' and ' + to.name;
+          return null;
+        }
         if (sequence) {
           // The next matching message after the previous step, wrapping round to the top.
           const order = messages.map((message, at) => (at + cursor) % messages.length);
-          const at = order.find((at) => !taken.has(at) && messages[at].from === fromName && messages[at].to === toName);
-          if (at === undefined) return null;
+          const at = order.find((at) => !taken.has(at) && messages[at].from === from.name && messages[at].to === to.name);
+          if (at === undefined) {
+            problem = 'no message from ' + from.name + ' to ' + to.name;
+            return null;
+          }
           taken.add(at);
-          return { from: nodes.get(fromName), to: nodes.get(toName), path: messages[at].path, texts: messages[at].texts, reverse: false, at: at };
+          return { from: nodes.get(from.name), to: nodes.get(to.name), path: messages[at].path, texts: messages[at].texts, reverse: false, at: at };
         }
-        const from = nodes.get(fromName);
-        const to = nodes.get(toName);
-        const forward = from && to && edgeBetween(fromName, toName);
-        const path = forward || (from && to && edgeBetween(toName, fromName));
-        return path ? { from: from, to: to, path: path, reverse: !forward } : null;
-      });
-      if (!moves.length || moves.includes(null)) {
-        problems.push(step.text);
+        const edge = edgeFor(from.name, to.name, from.edge || to.edge);
+        if (edge.problem) {
+          problem = edge.problem;
+          return null;
+        }
+        return { from: nodes.get(from.name), to: nodes.get(to.name), path: edge.path, reverse: edge.reverse };
+      }));
+      if (problem) {
+        drop(step, problem);
         continue;
       }
       if (sequence) cursor = Math.max(...moves.map((move) => move.at)) + 1;
-      steps.push({ moves: moves, label: step.label, caption: step.caption });
+      steps.push({ moves: moves, label: step.label, caption: step.caption, hold: step.hold || hold });
+      hold = null;
     }
-    return { title: script.title, steps: steps, problems: problems };
-  }).filter((scenario) => scenario.steps.length);
+    return { title: script.title, steps: steps, problems: problems, tail: hold || script.tail };
+  });
+  diagramWarnings(stage, tools, resolved);
+  const scenarios = resolved.filter((scenario) => scenario.steps.length);
   if (!scenarios.length) return;
 
   const controls = document.createElement('div');
@@ -2074,10 +2245,8 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   const scenario = () => scenarios[picker ? Number(picker.value) : 0];
   function label(icon, text) {
     playButton.innerHTML = diagramIcon(icon);
-    const problems = scenario().problems;
-    const title = problems.length ? text + ' (ignored: ' + problems.join('; ') + ')' : text;
-    playButton.title = title;
-    playButton.setAttribute('aria-label', title);
+    playButton.title = text;
+    playButton.setAttribute('aria-label', text);
   }
   function sync() {
     label(playing ? 'pause' : 'play', playing ? 'Pause' : finished ? 'Replay' : timeline.length ? 'Resume' : 'Play');
@@ -2225,7 +2394,12 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
   function build(calm) {
     const segments = [];
     const DWELL = calm ? 650 : 420;
+    // A wait is in milliseconds at 1x, and segments are in the units diagramRate() scales.
+    const wait = (hold) => {
+      if (hold && hold.ms) segments.push({ duration: hold.ms * DIAGRAM_PACE, start: () => { if (hold.caption) say(hold.caption); } });
+    };
     for (const step of scenario().steps) {
+      wait(step.hold);
       if (step.skip) {
         segments.push({ duration: calm ? 400 : 320, stop: true, start: () => {
           say(step.caption);
@@ -2307,6 +2481,7 @@ function playDiagram(stage, svg, tools, scripts, home, share) {
         },
       });
     }
+    wait(scenario().tail);
     segments.push({ duration: DWELL, start: () => { for (const node of [...active]) setDone(node); } });
     return segments;
   }
@@ -2628,8 +2803,9 @@ function drawDiagrams() {
     for (const [position, block] of diagrams.entries()) {
       const id = 'mermaid-' + diagramCount++;
       try {
-        const scenarios = playScript(block.textContent);
+        const scenarios = playScript(block.textContent, Number(block.dataset.line) || 0);
         const pictures = await diagramImages(block.textContent);
+        const edges = await diagramEdges(pictures.source);
         const result = await mermaid.render(id, pictures.source);
         const holder = document.createElement('div');
         holder.className = 'mermaid-diagram';
@@ -2640,7 +2816,7 @@ function drawDiagrams() {
         holder.innerHTML = result.svg;
         block.replaceWith(holder);
         if (block.classList.contains('slide-on')) holder.classList.add('slide-on');
-        panZoom(holder, scenarios);
+        panZoom(holder, scenarios, edges);
         const stage = holder.querySelector(':scope > .diagram-stage');
         if (stage) {
           stage.dataset.diagram = String(position + 1);

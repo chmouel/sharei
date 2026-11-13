@@ -270,6 +270,25 @@ def test_main_rejects_missing_directory(tmp_path, monkeypatch, capsys):
     assert "not a directory" in capsys.readouterr().err
 
 
+def test_spec_prints_reference_without_serving(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["aniflow", str(tmp_path / "missing"), "--spec"])
+
+    def unexpected_server(*args, **kwargs):
+        pytest.fail("--spec must not start a server")
+
+    monkeypatch.setattr(aniflow, "Server", unexpected_server)
+    aniflow.main()
+    output = capsys.readouterr().out
+    for directive in ("%% play:", "%% skip", "%% wait", "@ok"):
+        assert directive in output
+    listed = set(
+        re.findall(
+            r"`([a-z-]+)`", output.split("### Built-in icons")[1].split("\n## ")[0]
+        )
+    )
+    assert listed == server.ICON_NAMES
+
+
 def post_comment(request, action, target, data=None, query="", headers=None):
     return request(
         f"/comments/{action}/{target}{query}",

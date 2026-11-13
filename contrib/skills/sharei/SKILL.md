@@ -82,82 +82,12 @@ view renders it. Keep diagrams small and labelled in plain words, and skip
 them when a list or table says it just as well.
 
 When a flowchart shows something that happens in order (a request going
-through services, a pipeline run, a bot answering an issue), make it a
-walkthrough with pictures. The `/md` page plays it: a labelled dot travels
-along the arrows, the box it reaches lights up and finished boxes get a tick.
-GitHub and other renderers ignore the `%%` lines and draw a plain flowchart.
-Static structure, such as a dependency graph or a class layout, gains nothing
-from playback; leave it as a plain diagram.
-
-````markdown
-```mermaid
-flowchart LR
-  Issue@{ img: "/icons/issue.svg", label: "Issue opened", w: 48, h: 48, constraint: "on" }
-  Bot@{ img: "/icons/agent.svg", label: "Bot", w: 48, h: 48, constraint: "on" }
-  Fetch[Fetch context]
-  PR@{ img: "/icons/pull-request.svg", label: "Pull request", w: 48, h: 48, constraint: "on" }
-  Issue --> Bot --> Fetch --> Bot --> PR
-
-%% play: New issue
-%% Issue -> Bot : #42 | A user opens issue #42 and the bot picks it up
-%% Bot -> Fetch
-%% Fetch -> Bot : files | The bot reads the files the issue points at
-%% Bot -> PR : fix | It opens a pull request with the fix
-%% play: Question only
-%% Issue -> Bot : question
-%% skip Fetch PR
-```
-````
-
-- Steps use node ids, never labels, and need an arrow between the two
-  boxes (backwards works). `: text` is the label on the dot, keep it to a
-  word or two. `| sentence` after it is a caption shown under the diagram
-  while that step plays: one short plain sentence saying what happens, on
-  the steps that need explaining. `%% A -> B, C` sends dots down both
-  arrows at once and `%% A, B -> C` joins two; use it where things really
-  happen in parallel, such as a fan-out to several jobs.
-  `%% play: Title` starts another scenario in the same
-  diagram; `%% skip A B` fades boxes that scenario does not use.
-- A `sequenceDiagram` takes the same `%%` lines with participant ids:
-  each `%% A -> B` step lights up the next message from A to B in order.
-  Use it when a sequence diagram tells the story better than a flowchart,
-  such as a request bouncing between services.
-- Notes meant for a talk read best split into `##` sections: the reader's
-  Present button turns each one into a slide, and a section that is just
-  a diagram with a story fills the screen.
-- Give picture boxes to the actors and main stages, and keep plain boxes for
-  small steps; four to eight pictures read best. Always set `w`, `h` and
-  `constraint: "on"`, or the picture stretches.
-- Use sharei's built-in icons first: `img: "/icons/<name>.svg"`. They need
-  no upload and `sharec` leaves them alone. `sharec cat /icons/` prints the
-  current list; the names are:
-  - people and agents: user users reviewer agent model brain skill prompt
-    sparkles tool
-  - git: issue pull-request commit branch merge fork repository tag release
-    comment review diff code file-code
-  - events and CI: event webhook listener trigger pipeline task step test
-    build deploy rerun follow-up schedule queue wait timer clock check
-    success fail warning bug fix stop play pause
-  - platform: cluster node pod container namespace service network ingress
-    route load-balancer database storage cache cloud registry image config
-    operator controller api terminal cli laptop phone browser globe
-  - security: identity fingerprint key token secret unlock policy shield
-    refuse audit certificate
-  - data and output: logs report document folder search inspect metrics
-    monitor dashboard alert notification mail chat upload download link
-    filter decision idea
-- When nothing fits, draw a small SVG in the same style (48×48 viewBox, a
-  rounded square tinted at 12% opacity with a stroked symbol in one colour).
-  Put it next to the markdown file, in a subfolder like `icons/`, and use a
-  relative path: `sharec -y` uploads it only from the document's git
-  repository or, outside a repository, its own folder. An https URL works
-  too; no logos you don't have the right to use. `/icons/` paths do not
-  render on GitHub, so a diagram that must look right there needs relative
-  or https pictures.
-- A picture that is missing or fails to load shows a placeholder, and the
-  diagram's hover text names it. Hovering the play button lists steps that
-  did not match a box or arrow. The full syntax is in sharei's
-  `docs/diagram-walkthroughs.md`.
+through services, a pipeline run, a bot answering an issue), make it an
+animated walkthrough with the `aniflow-diagrams` skill; the `/md` view plays
+it. Pictures referenced by a relative path are uploaded by `sharec -y` only
+from the document's git repository or, outside one, its own folder.
+`/icons/` pictures need no upload. Open the `view` link once after sharing
+and fix any steps listed under the diagram's warning badge.
 
 ### Review comments
 

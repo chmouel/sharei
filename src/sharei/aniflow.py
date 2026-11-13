@@ -6,6 +6,7 @@ import html
 import os
 import secrets
 import socket
+import sys
 from datetime import UTC, datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +19,7 @@ from sharei.themes import theme_script, theme_select
 
 FILES = "/files/"
 HELP = Path(__file__).with_name("aniflow-help.md")
+SPEC = Path(__file__).with_name("aniflow-spec.md")
 NEXT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>'
 
 
@@ -331,7 +333,15 @@ def main() -> None:
         default=0,
         help="port to listen on (default: an available port)",
     )
+    parser.add_argument(
+        "--spec",
+        action="store_true",
+        help="print the diagram walkthrough syntax reference and exit",
+    )
     args = parser.parse_args()
+    if args.spec:
+        sys.stdout.write(SPEC.read_text("utf-8"))
+        return
     if not args.directory.is_dir():
         parser.error(f"not a directory: {args.directory}")
     try:

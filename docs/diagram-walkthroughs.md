@@ -69,8 +69,11 @@ so the diagram still draws everywhere else and only sharei plays it.
 %% A -> B : label | text  the same, with a sentence shown under the diagram
 %% A -> B, C            one dot down each edge at the same time
 %% A, B -> C            dots from A and from B meet at C
+%% A -> B @ok           takes the edge declared as A ok@--> B
 %% skip A B             fades these nodes until the story ends
 %% skip A B | text      the same, with a sentence
+%% wait 1500            holds the picture for 1.5 s before the next step
+%% wait 1500 | text     the same, with a sentence shown while it waits
 ```
 
 The sentence after `|` is the step's caption, for the part you would say out
@@ -93,13 +96,57 @@ mermaid writes it. `A -> B, C` sends a dot down each edge at once, and
 own edge would have alone, so a short edge finishes first and its box lights
 up while the longer one is still travelling. The step ends when the last dot
 arrives. The label rides on the first dot only. Every listed box takes part:
-if one pair has no edge, the whole step is skipped and listed in the
-tooltip. Listing several boxes on both sides (`A, B -> C, D`) is ambiguous,
-so sharei skips it the same way.
+if one pair has no edge, the whole step is skipped. Listing several boxes on
+both sides (`A, B -> C, D`) is ambiguous, so sharei skips it the same way;
+write one step per edge instead.
 
-When a step names a node that does not exist or a pair with no edge, sharei
-skips it and lists it in the play button's tooltip. A block whose stories have
-no usable step gets no play button.
+### Choosing between parallel edges
+
+When two edges join the same boxes, a plain `A -> B` takes the first one
+drawn. To pick another, give the edges ids in mermaid (`B ok@-->|pass| C`) and
+name the id after the box in the step: `%% B -> C @ok`. The id can follow any
+box in a list (`A -> B @ok, C`). It works either way round, so `C -> B @ok`
+runs the dot backwards, but the named edge must join the two boxes in the
+step. Edges with ids light up in the spotlight like any other. Sequence
+diagrams have no edge ids, so a step there that names one is dropped.
+
+```mermaid
+flowchart LR
+  P[Push] --> T[Tests]
+  T ok@-->|pass| D[Deploy]
+  T bad@-->|fail| D
+  D --> N[Notify]
+
+%% play: Green build
+%% P -> T : commit
+%% wait 1200 | The tests take a while
+%% T -> D @ok : pass | Every test passes, so the deploy goes ahead
+%% D -> N
+%% play: Red build
+%% P -> T : commit
+%% T -> D @bad : fail | A test fails and the deploy step only reports it
+%% D -> N : failure
+```
+
+### Waiting
+
+`%% wait MS` holds the picture as it is for that many milliseconds before the
+next step starts: the lit boxes stay lit and the dot is gone. Several waits in
+a row add up, to at most 10 seconds. A wait after the last step holds the
+finish before it settles. The time is at 1× and follows the speed button.
+With a `| caption`, the sentence shows during the wait; the next step then
+shows its own caption or hides it. Step mode does not stop on a wait. It runs
+through it with the step that follows, and waits get no tick on the rail.
+
+### Steps that cannot play
+
+When a step names a node that does not exist, a pair with no edge, an
+unknown edge id, or a `wait` without a number, sharei leaves it out and the
+rest of the story plays. A warning badge with the count shows in the
+toolbar, and opening it lists each dropped step with its story, its line in
+the document and the reason. The same list goes to the browser console. A
+wait in front of a dropped step moves on to the next one. A block whose
+stories have no usable step gets no play button, only the badge.
 
 Flowcharts (`flowchart` or `graph`) and sequence diagrams
 (`sequenceDiagram`) play, after optional front matter. Other diagram types
@@ -393,20 +440,28 @@ All of this happens in the browser, in `MARKDOWN_JS` in
 `src/sharei/reader.py`. The server does not change.
 
 1. Before rendering, `playScript()` reads the stories out of the block's
-   source, since mermaid drops comments from its output. `diagramImages()`
-   resolves and preloads the pictures and rewrites their URLs in the source
-   it hands to mermaid.
+   source, since mermaid drops comments from its output, and notes each
+   step's line in the document. `diagramImages()` resolves and preloads the
+   pictures and rewrites their URLs in the source it hands to mermaid.
+   `diagramEdges()` asks mermaid's parser
+   (`mermaidAPI.getDiagramFromText`) for the flowchart's edges with their
+   ids and ends.
 2. Mermaid renders with `securityLevel: 'strict'`.
 3. `panZoom()` adds the toolbar and stage, and `playDiagram()` maps the
-   stories onto the SVG.
+   stories onto the SVG. Dropped steps go to `diagramWarnings()`.
 
 The mapping relies on how mermaid 12.3 names things:
 
 - Nodes are `g.node`, or `g.image-shape` for picture nodes, with an id ending
   in `-flowchart-<nodeId>-<n>`.
-- Edges are `path[data-edge]` with `data-id="L_<from>_<to>_<n>"`. Node ids may
-  contain `_` and `-`, so the lookup matches the prefix `L_<from>_<to>_` with a
-  numeric tail instead of splitting on underscores.
+- Edges are `path[data-edge]` whose `data-id` is the edge's id from the
+  parser: `L_<from>_<to>_<n>` when mermaid makes one up, or the id written in
+  the source (`A ok@--> B`), which names neither end. `diagramLinks()` pairs
+  each path with its ends through that id, for playback and the spotlight
+  alike. If the parser call fails, it falls back to splitting generated ids:
+  node ids may contain `_` and `-`, so it matches the prefix `L_<from>_<to>_`
+  with a numeric tail instead of splitting on underscores, and edges with
+  their own ids are then unknown.
 - A two-way edge is one path with markers at both ends.
 
 In sequence diagrams, participants are `rect.actor` (top and bottom, each
@@ -417,13 +472,14 @@ source order, each preceded by its `text.messageText`. Mermaid insets message
 ends from the lifelines, so `playDiagram()` gives each message the
 participants whose lifelines are nearest to its two ends.
 
-When mermaid is upgraded, play the demo above in both directions and in both
-stories, and check that the tooltip lists no ignored step. If those names
-change, steps start showing up as ignored.
+When mermaid is upgraded, play the demos above in both directions and in
+every story, and check that no warning badge shows. If those names change,
+steps start showing up there.
 
 The playback is a list of timed segments driven by `requestAnimationFrame`.
 Each segment has a start action and, for travel, a frame callback that places
-the dot with `getPointAtLength`. The last segment of each step carries a
+the dot with `getPointAtLength`. A wait is a segment with only a duration.
+The last segment of each step carries a
 `stop` flag: step mode pauses there, and going back replays the timeline
 instantly up to the wanted flag. The dot lives in the root SVG's coordinates
 (the path's transform is folded in through `getScreenCTM`), so zooming, which
@@ -436,7 +492,7 @@ so a few of these use `!important`.
 
 The markdown is untrusted, and so is everything in a walkthrough.
 
-- Story titles, step labels and tooltips reach the page through
+- Story titles, step labels, warnings and tooltips reach the page through
   `textContent` and `createElementNS`, never as HTML.
 - Picture URLs go through the allowlist above before mermaid sees them.
   Anything that does not pass is swapped for the built-in placeholder, which

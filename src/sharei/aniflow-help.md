@@ -99,7 +99,7 @@ section to copy its example. More in the header has the source for this whole gu
 Run this in the directory that holds your Markdown:
 
 ```sh
-uvx --from sharei aniflow
+uvx --from git+https://github.com/chmouel/sharei aniflow
 ```
 
 Open the URL in the terminal. aniflow picks an available port on localhost.

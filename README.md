@@ -91,7 +91,7 @@ systemctl --user enable --now sharei
 Run `aniflow` to browse Markdown in the current directory and its subfolders:
 
 ```sh
-uvx --from sharei aniflow
+uvx --from git+https://github.com/chmouel/sharei aniflow
 ```
 
 Open the URL it prints; it picks an available local port. Documents use
@@ -104,6 +104,9 @@ To serve another directory or choose a different port:
 ```sh
 aniflow ./docs --port 8080
 ```
+
+`aniflow --spec` prints the walkthrough syntax and the built-in icon names,
+handy as a cheat sheet or for a coding agent writing diagrams.
 
 `aniflow` is also installed by `uv tool install sharei`. It binds to
 `127.0.0.1` by default; use `--host` to change that. It serves files read only
@@ -288,7 +291,9 @@ and the screenshots from its search box.
 Coding agents that support skills (Claude Code, Copilot CLI, Codex and the
 like) can use [`contrib/skills/sharei`](contrib/skills/sharei/SKILL.md): copy
 or link that folder into the agent's skills directory and it will read what
-you shared, hand you reports as `/md` pages and draw walkthrough diagrams.
+you shared and hand you reports as `/md` pages.
+[`contrib/skills/aniflow-diagrams`](contrib/skills/aniflow-diagrams/SKILL.md)
+teaches them to draw animated walkthrough diagrams that look good.
 
 Images show up right in terminals that speak the kitty graphics protocol
 (kitty, Ghostty, WezTerm, Konsole). The image fills the window: j, Space or
@@ -353,9 +358,12 @@ sentence after `|`, as in `%% A -> B : #42 | A user opens an issue`, shows
 under the diagram while that step plays. `%% A -> B, C` sends a dot down
 both arrows at once, and `%% A, B -> C` brings two together. `%% skip`
 fades boxes that a scenario does not use, and `%% play: title` starts
-another scenario, picked from a menu next to the play button. A step that
-names a missing box or arrow is ignored and listed when you hover the play
-button. The arrows on each side of the play button go through the story
+another scenario, picked from a menu next to the play button. When two
+arrows join the same boxes, give them ids in mermaid (`B ok@--> C`) and
+pick one with `%% B -> C @ok`. `%% wait 1500` holds the picture for a
+second and a half before the next step. A step that names a missing box or
+arrow is left out, and a warning badge in the toolbar lists it with its
+line and the reason. The arrows on each side of the play button go through the story
 one step at a time while you talk over it, and so do the right and left
 arrow keys, `j` and `k`, while Space plays or pauses. The speed button
 (or `<` and `>`) slows the story down or speeds it up, and saved GIFs and
