@@ -617,8 +617,8 @@ flowchart TD
 
 You can also use HTTPS pictures or `data:image/` URLs. If a picture fails to
 load, aniflow shows a placeholder and lists the problem in the diagram's
-tooltip. If a story skips a step you expected to see, hover over Play: its
-tooltip lists node IDs or edges it could not find.
+tooltip. Step 15 shows what happens when a story names something the
+diagram does not have.
 
 ## Step 13: Present and inspect a diagram
 
@@ -683,7 +683,91 @@ as playing the story; the format is MP4 or WebM, depending on the browser.
 Your browser makes these files. Local pictures and built-in icons appear
 in the export. Pictures hosted on another site use a placeholder in exports.
 
-## Step 15: Choose another kind of diagram
+## Step 15: Pick an arrow and take a pause
+
+When two arrows join the same boxes, a plain `Tests -> Deploy` takes the
+first one drawn. Give the arrows ids in Mermaid, such as `Tests ok@-->`,
+and name the id after the box in the step: `%% Tests -> Deploy @ok`.
+
+`%% wait 1200` holds the picture for 1.2 seconds before the next step. It
+follows the speed button, and a caption after `|` shows while it waits.
+Step mode runs through a wait together with the step after it.
+
+<details class="example-source">
+<summary>Show the Markdown</summary>
+
+````markdown
+```mermaid
+flowchart LR
+  Push[Push] --> Tests[Run tests]
+  Tests ok@-->|pass| Deploy[Deploy]
+  Tests bad@-->|fail| Deploy
+  Deploy --> Notify[Notify]
+
+%% play: Green build
+%% Push -> Tests : commit
+%% wait 1200 | The tests take a while.
+%% Tests -> Deploy @ok : pass | Every test passes, so the deploy goes ahead.
+%% Deploy -> Notify
+
+%% play: Red build
+%% Push -> Tests : commit
+%% Tests -> Deploy @bad : fail | A test fails and the deploy only reports it.
+%% Deploy -> Notify : failure
+```
+````
+
+</details>
+
+```mermaid
+flowchart LR
+  Push[Push] --> Tests[Run tests]
+  Tests ok@-->|pass| Deploy[Deploy]
+  Tests bad@-->|fail| Deploy
+  Deploy --> Notify[Notify]
+
+%% play: Green build
+%% Push -> Tests : commit
+%% wait 1200 | The tests take a while.
+%% Tests -> Deploy @ok : pass | Every test passes, so the deploy goes ahead.
+%% Deploy -> Notify
+
+%% play: Red build
+%% Push -> Tests : commit
+%% Tests -> Deploy @bad : fail | A test fails and the deploy only reports it.
+%% Deploy -> Notify : failure
+```
+
+Play Green build, then Red build: the dot takes the top arrow in one and
+the bottom arrow in the other.
+
+If a step names a box that does not exist, two boxes with no arrow between
+them, or an unknown id, aniflow leaves that step out and plays the rest. A
+warning badge with the count appears in the toolbar. Open it to see each
+dropped step with its story, its line in the document and the reason.
+
+## Step 16: Comment on a diagram
+
+Open the diagram above in full screen and press the speech bubble button.
+A comments panel opens beside the diagram, or along the bottom on a phone.
+
+- Hover a box or an arrow to outline it, then click it to write a comment.
+  Click the background to comment on the whole diagram.
+- Press Ctrl+Enter to save. Escape drops the draft, and a second Escape
+  closes the panel.
+- Each comment gets a numbered pin that follows zoom and pan. Click a pin to
+  find its card. Cards have Reply, Edit and Delete.
+- Copy for agent puts this diagram's comments on the clipboard, ready to
+  paste to whoever writes the file. Copy all takes every comment on the
+  page.
+
+A diagram comment belongs to the source line that declares its box or
+arrow, so the copied text quotes that line under a header such as
+`aniflow-help.md:725 (diagram 7, arrow "Run tests → Deploy (pass)")`.
+Giving arrows ids gives each one its own line. Comments stay in aniflow's cache like line
+comments; pins and panels never appear in a PNG, GIF or video.
+
+## Step 17: Choose another kind of diagram
 
 Sequence, state, class and pie diagrams have pan, zoom, full screen and PNG
 export. Use flowcharts for the spotlight and playback comments.
