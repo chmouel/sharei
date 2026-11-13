@@ -251,6 +251,8 @@ COMMENTS_DIR = ".comments"
 COMMENTS_MAX = 200
 COMMENT_MAX_CHARS = 4000
 COMMENT_MAX_LINES = 200
+COMMENT_TARGET_MAX = 120
+COMMENT_TARGET_KINDS = ("node", "edge", "diagram")
 COMMENTS_LOCK = threading.Lock()
 # Share target bodies are parsed in memory, so they get a lower cap than /upload.
 SHARE_MAX_BYTES = 200 * 1024**2
@@ -1109,9 +1111,27 @@ def comments_forget(path: Path) -> None:
             pass
 
 
+def comment_target_valid(target: object) -> bool:
+    """A diagram comment's target: the box, arrow or whole diagram it is about."""
+    return (
+        isinstance(target, dict)
+        and set(target) <= {"kind", "id", "label", "diagram"}
+        and target.get("kind") in COMMENT_TARGET_KINDS
+        and all(
+            isinstance(target.get(key, ""), str)
+            and len(target.get(key, "")) <= COMMENT_TARGET_MAX
+            for key in ("id", "label")
+        )
+        and isinstance(target.get("diagram"), int)
+        and not isinstance(target.get("diagram"), bool)
+        and 1 <= target["diagram"] <= 999
+    )
+
+
 def comment_valid(entry: object) -> bool:
     return (
         isinstance(entry, dict)
+        and ("target" not in entry or comment_target_valid(entry["target"]))
         and isinstance(entry.get("id"), str)
         and isinstance(entry.get("body"), str)
         and isinstance(entry.get("quote"), list)
@@ -1170,7 +1190,7 @@ def comment_anchor(entry: dict, lines: list[str]) -> dict:
     start, end, quoted = entry["start"], entry["end"], entry["quote"]
     shown = {
         key: entry[key]
-        for key in ("id", "body", "quote", "created", "updated")
+        for key in ("id", "body", "quote", "target", "created", "updated")
         if key in entry
     }
     if lines[start - 1 : end] == quoted:
@@ -1229,11 +1249,29 @@ def comments_prompt(view: dict, app: str = "sharei") -> str:
             else f"{comment['start']}-{comment['end']}"
         )
         head = f"{name}:{where}"
+        if target := comment.get("target"):
+            about = f"diagram {target['diagram']}"
+            label = target.get("label") or target.get("id")
+            if target["kind"] != "diagram" and label:
+                kind = "box" if target["kind"] == "node" else "arrow"
+                about += f", {kind} {json.dumps(label, ensure_ascii=False)}"
+            head += f" ({about})"
         if comment["outdated"]:
             head += " (outdated: these lines changed since the comment)"
         quoted = "\n".join(f"> {line}".rstrip() for line in comment["quote"])
         parts.append(f"{head}\n{quoted}\n{comment['body'].strip()}")
     return "\n\n".join(parts) + "\n"
+
+
+def comments_in_lines(view: dict, query: str) -> dict:
+    """With ?lines=A-B, only the comments that start inside those lines, as one diagram's fence."""
+    wanted = (parse_qs(query).get("lines") or [""])[-1]
+    match = re.fullmatch(r"(\d{1,7})-(\d{1,7})", wanted)
+    if not match:
+        return view
+    first, last = int(match[1]), int(match[2])
+    kept = [c for c in view["comments"] if first <= c["start"] <= last]
+    return {**view, "comments": kept}
 
 
 def comment_change(
@@ -1270,17 +1308,21 @@ def comment_change(
                 return f"a comment covers at most {COMMENT_MAX_LINES} lines"
             if len(entries) >= COMMENTS_MAX:
                 return f"a file holds at most {COMMENTS_MAX} comments"
-            entries.append(
-                {
-                    "id": secrets.token_hex(6),
-                    "start": start,
-                    "end": end,
-                    "quote": lines[start - 1 : end],
-                    "body": body,
-                    "created": now,
-                    "updated": now,
-                }
-            )
+            target = data.get("target")
+            if target is not None and not comment_target_valid(target):
+                return "target must name a node, edge or diagram"
+            entry = {
+                "id": secrets.token_hex(6),
+                "start": start,
+                "end": end,
+                "quote": lines[start - 1 : end],
+                "body": body,
+                "created": now,
+                "updated": now,
+            }
+            if target is not None:
+                entry["target"] = target
+            entries.append(entry)
         else:
             index = next(
                 (
@@ -2981,6 +3023,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_json({"error": "not found"}, status=404)
                 return
+            view = comments_in_lines(view, parsed.query)
             if (parse_qs(parsed.query).get("format") or [""])[-1] == "prompt":
                 self.send_bytes(
                     comments_prompt(view).encode("utf-8"),

@@ -107,6 +107,11 @@ marked `outdated`. Without `--replace` the upload gets a new name
 (`plan-1.md`) and starts with no comments. `/recent` drop items carry a
 `comments` count.
 
+Comments made on a diagram name what they point at: the prompt header reads
+`plan.md:9 (diagram 1, box "Build")` or `(diagram 1, arrow "A → B")`, and the
+JSON adds `target: {kind: node|edge|diagram, id, label, diagram}`. The quoted
+line is the mermaid source line declaring that box or arrow.
+
 ## What the user shared
 
 ```bash

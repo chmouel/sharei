@@ -720,6 +720,59 @@ def test_comments_add_edit_delete_and_prompt(live_server):
     )
 
 
+DIAGRAM = b"# Flow\n\n```mermaid\nflowchart LR\n  A[Build] --> B[Ship]\n```\n"
+
+
+def test_diagram_comments_name_their_target(live_server):
+    upload(live_server, "flow.md", DIAGRAM)
+    box = {"kind": "node", "id": "A", "label": "Build", "diagram": 1}
+    view = comment(
+        live_server,
+        "add",
+        "flow.md",
+        {"start": 5, "end": 5, "body": "Cache this", "target": box},
+    )
+    [entry] = view["comments"]
+    assert entry["target"] == box
+    edited = comment(
+        live_server, "edit", "flow.md", {"body": "Cache it"}, f"?id={entry['id']}"
+    )
+    assert edited["comments"][0]["target"] == box
+    whole = {"kind": "diagram", "diagram": 1}
+    comment(
+        live_server,
+        "add",
+        "flow.md",
+        {"start": 3, "end": 3, "body": "Too small", "target": whole},
+    )
+    _, _, body = get(live_server + "/comments/inbox/flow.md?format=prompt")
+    assert body.decode() == (
+        "Review comments on flow.md (sharei):\n\n"
+        "flow.md:3 (diagram 1)\n> ```mermaid\nToo small\n\n"
+        'flow.md:5 (diagram 1, box "Build")\n> '
+        "  A[Build] --> B[Ship]\nCache it\n"
+    )
+    _, _, body = get(live_server + "/comments/inbox/flow.md?format=prompt&lines=4-9")
+    assert body.decode().count("flow.md:") == 1
+    assert "Cache it" in body.decode()
+    for target in (
+        {"kind": "table", "diagram": 1},
+        {"kind": "node", "id": "A"},
+        {"kind": "node", "id": "x" * 121, "diagram": 1},
+        {"kind": "edge", "diagram": 1, "extra": 1},
+        "A",
+    ):
+        assert (
+            comment_error(
+                live_server,
+                "add",
+                "flow.md",
+                {"start": 5, "end": 5, "body": "x", "target": target},
+            )
+            == 400
+        )
+
+
 def test_comments_reject_bad_input(live_server, sharei_root):
     upload(live_server, "plan.md", PLAN)
     upload(live_server, "notes.txt", b"text\n")

@@ -339,6 +339,19 @@ def test_comments_crud_and_feedback(aniflow_server, local_docs, tmp_path):
     assert status == 200 and json.loads(body)["comments"] == []
 
 
+def test_diagram_comment_target_in_cache_storage(aniflow_server):
+    target = {"kind": "edge", "id": "A-B", "label": "A → B", "diagram": 2}
+    status, _, body = post_comment(
+        aniflow_server,
+        "add",
+        "file/README.md",
+        {"start": 1, "end": 1, "body": "Dashed?", "target": target},
+    )
+    assert status == 200 and json.loads(body)["comments"][0]["target"] == target
+    _, _, body = aniflow_server("/comments/file/README.md?format=prompt")
+    assert 'README.md:1 (diagram 2, arrow "A → B")' in body.decode()
+
+
 def test_comments_persist_and_are_separate_by_root_and_document(
     aniflow_server,
     aniflow_servers,

@@ -113,7 +113,9 @@ the service.
   - `<root>/<project>/drop/*`: dropped files
   - `<root>/<project>/drop/.comments/<name>.json`: review comments on a
     markdown drop, a list of `{id, start, end, quote, body, created,
-    updated}`; `quote` holds the source lines when the comment was written
+    updated, target?}`; `quote` holds the source lines when the comment was
+    written; `target` (`{kind: node|edge|diagram, id, label, diagram}`,
+    checked by `comment_target_valid()`) marks a diagram comment
   - `<root>/.expiry.json`: expiries set from the UI, mapping a path relative
     to the root to an epoch
 - Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
@@ -275,6 +277,19 @@ Pages:
   `comment_anchor()` keeps a comment whose lines still equal its `quote`,
   moves it to the single other place the quote appears, or marks it
   `outdated` at its clamped range.
+  Diagram comments (`diagramComments()`, built by `panZoom` as
+  `stage.diagramNotes`) only run in full screen on pages with
+  `data-comments`. The `aside.diagram-notes` panel is appended to the
+  shared dialog as a sibling of the stage, so typing never reaches the
+  stage's key handlers. A pick hit-tests nodes, edge labels, then the
+  nearest edge path (cached `getPointAtLength` samples, 10px), else the
+  whole diagram, and works out its anchor line from the fence's
+  `data-line` and source: a node's first non-`%%` line using its id, an
+  edge's `id@` line or the nth line naming both ends, the fence line for
+  the whole diagram. Pins are `g.diagram-pins` in SVG coordinates scaled
+  by `1/CTM.a`; `diagramPicture()` drops them. `focusDiagram` ignores
+  clicks while `.commenting` is on. Saving fires `sharei-comments` on
+  window so the line review redraws.
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
@@ -353,7 +368,10 @@ Data:
   mtime and size up to `SEARCH_CACHE_MAX_CHARS`. 404 without a vault.
 - `/clip/raw[?n=]`: the clip, or history entry n (1 is the newest), `/clip/state`
 - `/comments/<project>/<name>`: `{name, lines, comments}` for a markdown
-  drop, or `?format=prompt` for the text `sharec get comments` prints
+  drop, or `?format=prompt` for the text `sharec get comments` prints.
+  `?lines=A-B` keeps the comments starting in that range
+  (`comments_in_lines()`, also used by aniflow); a diagram's Copy for agent
+  passes its fence range
 
 POST:
 
@@ -373,7 +391,7 @@ POST:
 - `/clip/history/restore?id=`, `/clip/history/delete?id=`, `/clip/history/clear`
 - `/shots/delete/<key>`, `/shots/delete-all[?project=]`
 - `/poub/delete/<project>/<name>`, `/poub/delete-all[?project=]`
-- `/comments/add/<project>/<name>` (JSON `{start, end, body}`),
+- `/comments/add/<project>/<name>` (JSON `{start, end, body, target?}`),
   `/comments/edit/...?id=` (`{body}`), `/comments/delete/...?id=`: return
   the comments view. Limits: `COMMENTS_MAX` per file, `COMMENT_MAX_CHARS`,
   `COMMENT_MAX_LINES` quoted

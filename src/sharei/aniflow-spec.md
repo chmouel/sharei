@@ -157,3 +157,9 @@ keys play its story before moving on.
 A link like `#diagram=2&story=1&step=3&focus=A,B` opens the second diagram
 in full screen with its first story stopped after three steps and boxes A
 and B spotlit. Every part is optional.
+
+In full screen, the comment button lets a reader comment on a box, an arrow
+or the whole diagram. Such a comment is stored as a line comment on the
+fence line that declares the box or arrow, so the copied prompt reads
+`file.md:9 (diagram 1, box "Build")` followed by that line and the comment.
+Declaring an edge id (`ok@-->`) gives each arrow its own line to anchor to.

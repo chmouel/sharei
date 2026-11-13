@@ -313,6 +313,8 @@ clipboard, ready to paste back to whoever wrote the file, and
 `sharec get comments plan.md` prints the same thing. Send a revised version
 with `sharec plan.md --replace` and the comments stay: those on lines that
 moved follow them, and those on lines that changed are marked as such.
+A diagram shown full screen has its own comment button: click a box or an
+arrow to comment on it, and Copy for agent copies that diagram's comments.
 
 ## Diagrams
 

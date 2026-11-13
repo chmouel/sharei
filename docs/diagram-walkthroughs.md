@@ -290,6 +290,33 @@ reload.
 A PNG keeps the strokes, since it saves what you see. The laser trail never
 reaches a picture, and GIF and video exports leave out the strokes too.
 
+## Commenting on a diagram
+
+In full screen, the speech bubble button opens a comments panel beside the
+diagram (a sheet along the bottom on a phone). It only appears on pages that
+take comments: shared markdown in sharei and every page in aniflow. With
+the panel open, hovering outlines the box or arrow under the pointer, and a
+click opens a draft for it. A click on the background comments on the whole
+diagram. Ctrl+Enter saves, Escape drops the draft, and a second Escape
+closes the panel.
+
+Each comment gets a numbered pin on its box or arrow. The pins follow zoom
+and pan at the same size on screen and never reach an export. Hovering a
+card outlines what it points at, and clicking a pin opens its card. Cards
+have Reply, Edit and Delete, and a comment whose source line changed is
+marked outdated, like any line comment.
+
+A diagram comment is an ordinary review comment on the line of the fence
+that declares its box or arrow, with the box or arrow named in it. A box
+anchors to the first line that uses its id, an arrow to the line that
+declares it (its `id@`, or both ends), and the whole diagram to the opening
+fence. So the line gutter, `sharec get comments` and Copy as prompt show
+them too, with a header such as `plan.md:9 (diagram 1, box "Build")` or
+`plan.md:12 (diagram 1, arrow "Build → Deploy (passed)")`.
+
+"Copy for agent" puts this diagram's comments on the clipboard as that same
+prompt, and "Copy all" copies every comment on the page.
+
 ## Linking to a moment
 
 "Copy link" in the share menu copies the page address with a hash such as

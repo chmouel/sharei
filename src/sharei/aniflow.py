@@ -225,6 +225,7 @@ class Handler(server.Handler):
             except OSError:
                 self.send_json({"error": "Could not read comments"}, status=500)
                 return
+            view = server.comments_in_lines(view, parsed.query)
             if (parse_qs(parsed.query).get("format") or [""])[-1] == "prompt":
                 self.send_bytes(
                     server.comments_prompt(view, "aniflow").encode("utf-8"),
