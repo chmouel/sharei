@@ -13,28 +13,25 @@ proxy with authentication (see SECURITY.md).
   settings, storage, the page builders, the request handler and `main`.
   Entry point `sharei` (`main`). HTML, CSS and JS are inline Python strings;
   there is no build step and no frontend toolchain. The static ones live in
-  their own modules, which server.py imports by name:
-  - `src/sharei/themes.py`: `THEMES`, `READER_THEMES` and the theme CSS/JS
-  - `src/sharei/reader.py`: the markdown reader's CSS and `MARKDOWN_JS`
-  - `src/sharei/assets.py`: CSS/JS for the app pages and the code, PDF and
-    player viewers
+  their own module, `src/sharei/assets.py` (CSS/JS for the app pages, the
+  code, PDF and player viewers, and `READER_CSS`/`READER_JS`, the sharei
+  glue on the `/md` reader).
   Code that reads a setting `main()` assigns (`ROOT`, `PUBLIC_URL`,
   `PUSH_ENABLED`, `QR_ENABLED`, `THEME_DEFAULT`...) stays in server.py, so
   tests can keep monkeypatching `server.*`.
-- `src/sharei/aniflow.py`: the read-only local Markdown browser, entry point
-  `aniflow`. Serves the current directory (or a directory argument) on an
-  available localhost port, reusing the reader without sharei configuration
-  or Obsidian processing. `/files/` holds its directory and document routes.
-  `/help` renders the packaged `src/sharei/aniflow-help.md` demo and walkthrough.
-  `aniflow_brand.py` and `aniflow_ui.py` hold its logo and local UI. All Markdown
-  pages support `/comments/{help|file/<path>}` and the add/edit/delete routes,
-  reusing the reader and comment helpers with explicit cache storage under
-  `$XDG_CACHE_HOME/aniflow/comments/<root hash>/<document hash>.json`.
-  Source files are never written; comments are isolated by served root.
-  `aniflow --spec` prints the packaged `src/sharei/aniflow-spec.md`, the
-  walkthrough syntax reference for agents, and exits. Update it with every
-  change to the `%%` syntax, picture rules or built-in icons; a test checks
-  that its icon table matches `ICON_NAMES`.
+- aniflow (https://github.com/chmouel/aniflow, the `aniflow` package) is
+  sharei's one runtime dependency. It holds the markdown reader, diagram
+  walkthroughs, slides and line review as a JS library built into
+  `aniflow/static/`, plus the Python pieces sharei builds on:
+  `aniflow.web.Handler` (Host/Origin checks, `send_*`, `send_asset` for
+  `/static/`, `/vendor/` and `/icons/`, `handle_comment`, `send_comments`),
+  `aniflow.comments` (the comment model and limits), `aniflow.page`
+  (`reader_page`, `reader_options`, `reader_headers`) and `aniflow.themes`.
+  Reader and diagram internals are documented in aniflow's AGENTS.md; change
+  them there. The dependency is the git URL, pinned to a commit in
+  `uv.lock`; `uv lock --upgrade-package aniflow` moves it to the latest
+  push. To try local aniflow changes, `uv pip install -e ../aniflow` and
+  use `uv run --no-sync` until the next `uv sync`.
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
   `PUSH_ENABLED` stays false and every push route is a 404.
@@ -67,23 +64,17 @@ proxy with authentication (see SECURITY.md).
   routes; any other key quits), then delete the image by id
   (inline when stdin is not a terminal), and print text files with
   control characters stripped; anything else, `-f` or `-o` saves a file.
-- `src/sharei/vendor/`: third-party assets served at `/vendor/`:
-  github-markdown-css, markdown-it with its footnote and emoji plugins and
-  DOMPurify (the `/md` renderer, `MARKDOWN_SCRIPTS`), mermaid, markerjs,
-  highlight.js (common languages
-  bundle), qrcode-generator (`qrcode.js`, loaded lazily by `QR_JS`, which
+- `src/sharei/vendor/`: sharei's own third-party assets, served at
+  `/vendor/` after aniflow's (which provides github-markdown-css,
+  markdown-it, DOMPurify, highlight.js and mermaid): markerjs,
+  qrcode-generator (`qrcode.js`, loaded lazily by `QR_JS`, which
   every page includes through `qr_script()`; `[data-qr]` buttons open it,
   an empty value meaning the current page, and loopback URLs are rebased on
   `public_url`; with `qr = false`, `QR_ENABLED` drops the buttons, the
-  script and the `qrcode.js` route), pdf.js (`pdf.min.mjs` and `pdf.worker.min.mjs`, the
-  modern build of pdfjs-dist, Apache-2.0). Keep their licence files next to them;
-  they ship in the wheel. marker.js is linkware: its credit line under the
-  editor must stay visible.
-- `src/sharei/icons/`: diagram icons served at `/icons/<name>.svg`, 48×48
-  tiles built from Lucide (ISC, `LICENSE.lucide`) by
-  `contrib/icons/make_icons.py`, which holds the name, glyph and colour
-  table. Regenerate rather than edit: `npm pack lucide-static`, unpack, then
-  `python contrib/icons/make_icons.py <package> src/sharei/icons`.
+  script and the `qrcode.js` route), pdf.js (`pdf.min.mjs` and
+  `pdf.worker.min.mjs`, the modern build of pdfjs-dist, Apache-2.0). Keep
+  their licence files next to them; they ship in the wheel. marker.js is
+  linkware: its credit line under the editor must stay visible.
 - `contrib/_sharec`: zsh completion. `contrib/sharei.service`: systemd user
   unit, expecting `~/.local/bin/sharei` from `uv tool install`.
 - `contrib/raffi/`: a raffi script filter (`sharei_filter.py`) listing the
@@ -92,10 +83,6 @@ proxy with authentication (see SECURITY.md).
 - `contrib/skills/sharei/SKILL.md`: an agent skill for using sharei through
   `sharec` (reading shares, handing over `/md` documents). Keep it free of
   personal hosts and logins, and update it when `sharec` flags change.
-- `contrib/skills/aniflow-diagrams/SKILL.md`: an agent skill for writing
-  animated walkthroughs that look good. It reads the syntax from
-  `aniflow --spec` rather than restating it, so it holds workflow and taste
-  only.
 - `config.example.toml`: every setting, with comments. Keep it in sync when you
   add a setting.
 - `tests/`: pytest. `conftest.py` has a `live_server` fixture that runs the
@@ -115,7 +102,7 @@ the service.
     markdown drop, a list of `{id, start, end, quote, body, created,
     updated, target?}`; `quote` holds the source lines when the comment was
     written; `target` (`{kind: node|edge|diagram, id, label, diagram}`,
-    checked by `comment_target_valid()`) marks a diagram comment
+    checked by `aniflow.comments`) marks a diagram comment
   - `<root>/.expiry.json`: expiries set from the UI, mapping a path relative
     to the root to an epoch
 - Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
@@ -141,155 +128,17 @@ Pages:
 - `/shots`: screenshots
 - `/clip`: clipboard
 - `/drop`: dropped files
-- `/md/<project>/<name>`: a dropped markdown file, rendered in the browser.
-  The page carries the text as an escaped JSON block; `MARKDOWN_JS` renders
-  it with markdown-it, writes GitHub's markup for task lists, alerts, tables,
-  footnotes and code (`div.highlight.highlight-source-<lang>`, which the
-  mermaid step looks for) so github-markdown.css styles it, then sanitizes
-  with DOMPurify.
-  `READER_CSS` styles the result on top of github-markdown.css, scoped under
-  `.reader` so it wins on specificity. The page frames code blocks with a
-  copy button, turns the contents into a sticky side rail from 1240px that
-  follows the section being read, draws a progress line under the bar, and
-  colours mermaid's base theme from the page's CSS variables.
-  `panZoom()` gives each diagram drag to pan, Ctrl/Cmd+wheel or pinch to
-  zoom and a full-screen `<dialog>` by rewriting the SVG's `viewBox`, so
-  it stays sharp and its box never resizes. A one-finger touch at the
-  fitted size is left to page scrolling.
-  A flowchart's `%% play: title`, `%% A -> B : label`, `%% skip A B` and
-  `%% wait MS` comment lines are read from the source by `playScript()`
-  (mermaid drops them; each step keeps its document `line`, from the
-  fence's `data-line`) and played by `playDiagram()`: steps resolve to
-  `g.node` ids (`<svg>-flowchart-<id>-<n>`) and `path[data-edge]`
-  `data-id`s. `diagramEdges()` gets `{id, from, to}` for every edge from
-  mermaid's parser (`mermaidAPI.getDiagramFromText`), since a declared id
-  (`A ok@--> B`) replaces `L_<from>_<to>_<n>` and names neither end;
-  `diagramLinks()` pairs paths with ends for playback and `focusDiagram()`,
-  falling back to splitting `L_` ids. `%% A -> B @ok` picks an edge by id;
-  without one the first edge drawn wins, walked backwards when only
-  `B -> A` exists. A wait becomes the next step's `hold` (`tail` after the
-  last), a duration-only segment of `ms * DIAGRAM_PACE` with no `stop`, so
-  rail ticks, `#step=` and step mode count real steps only. A
-  token moves along `getPointAtLength`, and state is `play-*` classes on the
-  SVG. A step is `{moves: [{from, to, path, reverse}], label, caption}`;
-  several moves (`A -> B, C` or `A, B -> C`) share one segment as long as
-  the slowest, each dot timed by its own edge and arriving on its own.
-  `active` is a Set, since several boxes can be lit.
-  `sequenceDiagram` blocks play too (`diagramLines()` takes the allowed
-  kinds): `nodes` maps a participant id to one of its parts (top and bottom
-  actor groups, `g.actor-man`, `line.actor-line`, all `.play-actor`) and
-  `each()` styles every part; each `messageLine0/1` gets from/to from the
-  lifelines nearest its ends, and a step takes the next untaken message in
-  that direction after a per-story cursor, wrapping once. Step mode stops at segments flagged `stop` (one per step) and goes
-  back by replaying instantly with `advance(Infinity, true)`; its key
-  handler (arrows, j/k, PageUp/PageDown, Space to play or pause, `<`/`>`
-  for speed) runs before panZoom's so a
-  plain arrow steps and Shift+arrow pans.
-  Deep links (`#diagram=N&story=S&step=K&focus=A,B`) go through
-  `diagramHash()`/`diagramFromHash()`, using the `where()`/`restore()` API
-  `playDiagram` returns and the `get()`/`set()` one from `focusDiagram`,
-  kept on the stage as `diagramPlay` and `diagramFocus`. The `=` keeps the
-  hash from matching a heading id. A match opens the diagram full screen
-  through `stage.diagramFull()`, which calls `openFull()` directly: a
-  synthetic click on the button would reach the spotlight's click handler
-  and clear it.
-  Labels and `| caption` text (the `.diagram-caption` bar, and a band that
-  `diagramCanvas(..., captioned)` draws into exports) are set with
-  `textContent` or `fillText`. Unresolved steps are dropped with a reason
-  and listed by `diagramWarnings()`: a `.play-warn` badge in the toolbar
-  opening a `.diagram-problems` list (story, line, reason, source, all
-  `textContent`) plus one `console.warn`, shown even when no story is
-  left to play. Picture nodes (`@{ img: ... }`) render
-  as `g.image-shape` rather than `g.node`, so play styles and badges cover
-  both. Before rendering, `diagramImages()` rewrites each `img:` value:
-  local names go through `local()` to `/poub/`, https, same-origin paths
-  and `data:image/` stay, anything else becomes `DIAGRAM_IMAGE_MISSING`.
-  Each picture is preloaded with a timeout, because one failed load makes
-  mermaid reject the whole diagram; failures get the placeholder and are
-  listed in the diagram's title. `sharec` scans `img:` values in mermaid
-  fences (`mermaid_blocks()`) with the same checks as markdown images, and
-  leaves `/icons/` paths alone.
-  `focusDiagram()` makes flowchart boxes clickable: it maps edges to their
-  ends from `L_<from>_<to>_<n>` against the known node ids, and sets
-  `focus-on`/`focus-near` with `.focusing` on the stage. Pointer capture
-  makes the stage the click target, so it hit-tests with
-  `elementFromPoint()` and node bounding boxes. Playback and the spotlight
-  share `diagramBusy()` to pause the live reload.
-  `drawRail()` keeps the `.play-rail` ticks in step with `reached`; a
-  tick click is `restore()` to the step before, then `stepNext()`.
-  Camera follow: panZoom exposes `stage.diagramCamera.look(rect)`, which
-  `glideTo()`s a viewBox around the rect (null means home) when the toggle
-  is on (localStorage `sharei-diagram-follow`) and motion is allowed.
-  playDiagram calls it from each segment start while playing, from
-  `play()` through `aim()`, and with null on finish and stop. A manual
-  zoom, pan or reset cancels the glide. Exports skip it.
-  Pen and laser (panZoom, `penButton`): `setDrawing()` adds `.drawing`
-  and holds `diagramBusy()`. Ink is a `g.diagram-ink` appended to the
-  SVG, in diagram coordinates through `getScreenCTM()`, with
-  `vector-effect: non-scaling-stroke`. One pointer draws `.ink-stroke`
-  paths instead of panning; a second pointer removes the stroke and
-  pinches. Hover feeds `.ink-laser` and its head circle, pruned per frame
-  after 320ms. `diagramPicture()` drops the laser always and all ink
-  unless `still` (PNG).
-  The share button (`.play-record` in `.diagram-share`) comes from
-  `diagramShare()`, which panZoom builds for every diagram with Copy link
-  and PNG; playDiagram adds GIF and Video through `share.choice()` and
-  sets `share.choose`, `share.cancel` and `share.name`. It copies a deep link
-  or saves client-side: `diagramCanvas()` draws a
-  clone of the SVG with computed styles inlined and every `<image>` turned
-  into a data URL (`diagramImageData()`, same-origin fetch only, since an
-  SVG drawn as an image loads nothing external) at the home viewBox, or
-  at the live viewBox for a PNG (`savePicture()`, `still` lifts the 2x and
-  H.264 area caps). GIF
-  steps the timeline offline with `advance(60)` under `.recording` (no
-  transitions or glow) and encodes with the built-in `gifWriter()`; video
-  plays in real time into `captureStream()` and `MediaRecorder`
-  (`diagramVideoType()`). The page CSP blocks `blob:` images, so frames go
-  through `data:` URLs.
-  Presentation (`PRESENT_BUTTON`, the block after the diagram hashchange
-  listener): `slideGroups()` splits the article's direct children on H2,
-  or H1 when there are several. `present()` sets `slide-on` on one group,
-  `presenting` on the body (CSS hides the rest) and `slide-solo` when the
-  slide is one diagram plus under 240 characters, and keeps `#slide=N` with
-  `replaceState`. Arrow keys call the story's `walk()` first, which returns
-  false at either end. The key handler is a document capture listener so a
-  focused stage does not step twice; Escape is a window listener so the ink
-  and spotlight handlers clear first.
-  Speed: `tick()` and the GIF loop advance by real time times
-  `diagramRate()`, the shared `diagramSpeed` (localStorage
-  `sharei-diagram-speed`) times `DIAGRAM_PACE`, so segment durations stay
-  in raw units. `setDiagramSpeed()` fires `sharei-diagram-speed` on window
-  to relabel every diagram's `.play-speed` button.
-  `docs/diagram-walkthroughs.md` is the design spec and a live demo, with
-  its icons in `docs/diagram-icons/`.
-  Linkify ignores scheme-less links so `README.md` stays text.
-  YAML front matter at line 1 (closed by `---` or `...` within 200 lines,
-  with at least one `key:`) is claimed by the `sharei_frontmatter` block
-  rule and drawn by `frontPanel()` as a `dl.frontmatter` properties panel
-  covering its lines.
-  A `sharei_lines` core rule copies markdown-it's `token.map` onto blocks as
-  `data-line`/`data-line-end` (1-based, inclusive; a tight list item takes
-  its hidden paragraph's range) and `data-code` on code blocks. The review
-  button (`REVIEW_BUTTON`, `REVIEW_DOCK`) turns on a line gutter built from
-  those attributes. Picking lines (shift-click, or a second tap on touch) sets
-  `#Lx-Ly`, which also opens review on load. Comments are fetched from and
-  posted to `data-comments` and drawn with `textContent`. On read,
-  `comment_anchor()` keeps a comment whose lines still equal its `quote`,
-  moves it to the single other place the quote appears, or marks it
-  `outdated` at its clamped range.
-  Diagram comments (`diagramComments()`, built by `panZoom` as
-  `stage.diagramNotes`) only run in full screen on pages with
-  `data-comments`. The `aside.diagram-notes` panel is appended to the
-  shared dialog as a sibling of the stage, so typing never reaches the
-  stage's key handlers. A pick hit-tests nodes, edge labels, then the
-  nearest edge path (cached `getPointAtLength` samples, 10px), else the
-  whole diagram, and works out its anchor line from the fence's
-  `data-line` and source: a node's first non-`%%` line using its id, an
-  edge's `id@` line or the nth line naming both ends, the fence line for
-  the whole diagram. Pins are `g.diagram-pins` in SVG coordinates scaled
-  by `1/CTM.a`; `diagramPicture()` drops them. `focusDiagram` ignores
-  clicks while `.commenting` is on. Saving fires `sharei-comments` on
-  window so the line review redraws.
+- `/md/<project>/<name>`: a dropped markdown file, rendered in the browser
+  by aniflow's reader. `markdown_page()` builds it with `page.reader_page()`
+  and `page.reader_options()` and adds sharei's chrome (bar, QR, search,
+  banner). Before aniflow boots, `READER_JS` reads the `#sharei-drop` JSON
+  (`{poub, md}`) and `#notes-links`, and sets `window.aniflowPage` with the
+  link and image resolvers (drop pictures and `img:` values go to `/poub/`,
+  markdown links to `/md/`), plus `obsidianFlavour` and `stripComments` on
+  notes. Comments go to `/comments/<project>/<name>`, stored by sharei;
+  their anchoring and limits come from `aniflow.comments`. Storage keys and
+  events are aniflow's (`aniflow-diagram-speed`, `aniflow-comments`...);
+  only the theme keeps `sharei-theme`.
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
@@ -308,10 +157,11 @@ Pages:
 - `/notes/<path>`: a note in the `/md` reader with breadcrumbs and no
   review, Raw or comments; a text file in the `/view` page; any other
   file as a download, like `/notes-file`. The page
-  embeds `notes.link_map()` as `#notes-links`, and `obsidianFlavour()` in
-  `MARKDOWN_JS` uses it for wikilinks, embeds and standard links (a null
+  embeds `notes.link_map()` as `#notes-links`, and `obsidianFlavour()`
+  uses it for wikilinks, embeds and standard links (a null
   target becomes `.note-missing` text), plus `==mark==`, inline `#tags`,
   `%%comments%%`, and any callout type with `-`/`+` folding as `<details>`
+  (all in `READER_JS`)
 - `/notes-pdf/<path>`: a vault PDF in the pdf.js page
 
 Every page also carries the notes picker when a vault is set
@@ -322,7 +172,7 @@ substrings on a word boundary first, a match in the name beats one in the
 folders). Text mode queries `/notes-search?q=` with a debounce. Tab switches
 mode, kept in localStorage `sharei-search-mode`. Both fold case and accents
 the same way (NFKD, combining marks dropped). A text hit links to
-`/notes/<path>#find=<line>:<words>`; `findLine()` in `MARKDOWN_JS` scrolls to
+`/notes/<path>#find=<line>:<words>`; `findLine()` in `READER_JS` scrolls to
 the innermost `data-line` block and wraps the words in `mark.find-hit`.
 Pages with `default-src 'none'` (`/view`, `/play`, `/pdf`) allow
 `connect-src 'self'` for that fetch.
@@ -346,10 +196,8 @@ Files:
   `send_file` answers a single `Range` with 206, so players can seek.
 - `/download/...` for APKs
 - `/vendor/...`
-- `/icons/<name>.svg`: a built-in diagram icon, looked up by name in
-  `ICON_NAMES` (read from the folder at import), never joined from the
-  request, and served with `vector_headers`. `/icons/` lists the names as
-  JSON.
+- `/static/...`, `/icons/<name>.svg`: aniflow's built files and diagram
+  icons, served by `send_asset()`
 
 Data:
 
@@ -370,7 +218,7 @@ Data:
 - `/comments/<project>/<name>`: `{name, lines, comments}` for a markdown
   drop, or `?format=prompt` for the text `sharec get comments` prints.
   `?lines=A-B` keeps the comments starting in that range
-  (`comments_in_lines()`, also used by aniflow); a diagram's Copy for agent
+  (`aniflow.comments.in_lines()`); a diagram's Copy for agent
   passes its fence range
 
 POST:
@@ -402,7 +250,8 @@ POST:
 
 These exist on purpose. Keep them when changing or adding code.
 
-- Every request goes through `request_allowed()`. It checks the Host header
+- Every request goes through aniflow's `request_allowed()`, fed by
+  `allowed_hosts()`/`allowed_origins()` from the settings. It checks the Host header
   (local names, non-global IPs and `allow_hosts`) and, for POSTs, the Origin
   (same origin or `allow_origins`). New routes must stay inside `do_GET` or
   `do_POST` after that check.
@@ -468,9 +317,10 @@ These exist on purpose. Keep them when changing or adding code.
 
 ## Conventions
 
-- Python 3.12+, stdlib first. Pillow and pillow-heif are the only optional
-  imports, loaded lazily behind `heif_available()` and `render_thumbnail()`,
-  so everything keeps working without them. Don't add runtime dependencies.
+- Python 3.12+, stdlib first. aniflow is the only runtime dependency.
+  Pillow and pillow-heif are the only optional imports, loaded lazily behind
+  `heif_available()` and `render_thumbnail()`, so everything keeps working
+  without them. Don't add other runtime dependencies.
 - Format and lint with `ruff format` and `ruff check`. `subprocess.run` needs
   an explicit `check=`.
 - The UI is mobile first: a bottom tab bar on phones, a left rail from 900px
@@ -484,17 +334,17 @@ These exist on purpose. Keep them when changing or adding code.
   else a plain download. Any button with `data-share` and `data-name` is
   wired by it and stays `hidden` where the browser has no `navigator.share`,
   so a desktop without the API shows no half-broken button.
-- Colours always come from CSS variables, never literals. A theme is an
-  entry in `THEMES` (the `THEME_KEYS` palette plus `light` or `dark` mode),
-  and every theme besides light and dark also needs a `READER_THEMES`
-  entry that overrides GitHub's markdown and syntax variables for `/md`
-  and `/view`.
-  `theme_reader_css()` lifts GitHub's light and dark variables out of the
-  vendored `github-markdown.css` media queries and keys them on
-  `html[data-mode]`; a test guards that extraction. `THEME_JS` runs in the
-  head of every page (with the nonce on `/md` and `/view`), reads the choice
-  from localStorage `sharei-theme`, falls back to the `theme` setting, and
-  sets `data-theme` and `data-mode` on `<html>`.
+- Colours always come from CSS variables, never literals. Themes live in
+  `aniflow.themes`: a theme is an entry in `THEMES` (the `THEME_KEYS`
+  palette plus `light` or `dark` mode), and every theme besides light and
+  dark also needs a `READER_THEMES` entry that overrides GitHub's markdown
+  and syntax variables for `/md` and `/view`. `theme_reader_css()` lifts
+  GitHub's light and dark variables out of the vendored
+  `github-markdown.css` media queries and keys them on `html[data-mode]`.
+  sharei's `theme_script()` wraps aniflow's with the key `sharei-theme`;
+  it runs in the head of every page (with the nonce on `/md` and `/view`),
+  reads the choice from that localStorage key, falls back to the `theme`
+  setting, and sets `data-theme` and `data-mode` on `<html>`.
 - `sharec` uses `gum` for menus and prompts, and `yazi` when present to
   pick files. Its environment variables:
   - `SHAREI_URL`: server for every request. Unset, `target()` uses

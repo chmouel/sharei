@@ -83,9 +83,10 @@ them when a list or table says it just as well.
 
 When a flowchart shows something that happens in order (a request going
 through services, a pipeline run, a bot answering an issue), make it an
-animated walkthrough with the `aniflow-diagrams` skill; the `/md` view plays
-it. Pictures referenced by a relative path are uploaded by `sharec -y` only
-from the document's git repository or, outside one, its own folder.
+animated walkthrough with the `aniflow-diagrams` skill (from
+https://github.com/chmouel/aniflow); the `/md` view plays it. Pictures
+referenced by a relative path are uploaded by `sharec -y` only from the
+document's git repository or, outside one, its own folder.
 `/icons/` pictures need no upload. Open the `view` link once after sharing
 and fix any steps listed under the diagram's warning badge.
 

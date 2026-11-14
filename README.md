@@ -88,42 +88,14 @@ systemctl --user enable --now sharei
 
 ## Read local Markdown with aniflow
 
-Run `aniflow` to browse Markdown in the current directory and its subfolders:
+sharei's Markdown reader, diagram walkthroughs and slides come from
+[aniflow](https://github.com/chmouel/aniflow), which is installed along with
+sharei. aniflow also works as a standalone command that browses the Markdown in
+a folder with the same reader:
 
 ```sh
-uvx --from git+https://github.com/chmouel/sharei aniflow
+uvx --from git+https://github.com/chmouel/aniflow aniflow
 ```
-
-Open the URL it prints; it picks an available local port. Documents use
-sharei's reader, with syntax highlighting, colour themes and interactive
-Mermaid flowcharts. Relative links and images stay relative to each document,
-including pictures in flowcharts. The built-in `/icons/` pictures work too.
-
-To serve another directory or choose a different port:
-
-```sh
-aniflow ./docs --port 8080
-```
-
-`aniflow --spec` prints the walkthrough syntax and the built-in icon names,
-handy as a cheat sheet or for a coding agent writing diagrams.
-
-`aniflow` is also installed by `uv tool install sharei`. It binds to
-`127.0.0.1` by default; use `--host` to change that. It serves files read only
-from the chosen directory, excluding hidden paths and symlinks that lead
-outside it. It uses standard Markdown, without Obsidian features, and needs
-no sharei configuration or running sharei service.
-
-Demo & help opens a playable diagram first, followed by a walkthrough from
-your first Markdown file to pictures, multiple stories and exports. Source
-examples stay folded until you need them. The guide ships with aniflow and
-works even when you serve an empty folder.
-
-Use Comments on any Markdown page, including the demo, to comment on source
-lines, edit or delete feedback, and copy it with the quoted text. Comments
-persist in `$XDG_CACHE_HOME/aniflow` (usually `~/.cache/aniflow`), separated
-by served folder and document. Your source files stay untouched. Refresh
-the browser after saving changes to a document.
 
 ## Notifications
 
@@ -292,8 +264,8 @@ Coding agents that support skills (Claude Code, Copilot CLI, Codex and the
 like) can use [`contrib/skills/sharei`](contrib/skills/sharei/SKILL.md): copy
 or link that folder into the agent's skills directory and it will read what
 you shared and hand you reports as `/md` pages.
-[`contrib/skills/aniflow-diagrams`](contrib/skills/aniflow-diagrams/SKILL.md)
-teaches them to draw animated walkthrough diagrams that look good.
+[`aniflow-diagrams`](https://github.com/chmouel/aniflow/tree/main/skills/aniflow-diagrams),
+from the aniflow repository, teaches them to draw animated walkthrough diagrams that look good.
 
 Images show up right in terminals that speak the kitty graphics protocol
 (kitty, Ghostty, WezTerm, Konsole). The image fills the window: j, Space or
@@ -398,11 +370,11 @@ included, and "Copy link" keeps the highlighted boxes.
 A box can show a picture with mermaid's own syntax,
 `Bot@{ img: "bot.svg", label: "Agent", pos: "b", w: 40, h: 40 }`. Put the
 picture next to the markdown file and `sharec` sends it along, or use an
-https link. sharei also comes with about a hundred icons for agents, pull
+https link. aniflow also comes with about a hundred icons for agents, pull
 requests, pipelines, pods, tokens and the like: write
 `img: "/icons/agent.svg"` and nothing needs uploading. A picture that fails to load is replaced by a placeholder and
 named when you hover the diagram. The
-[walkthrough design notes](docs/diagram-walkthroughs.md) have the full syntax
+[walkthrough design notes](https://github.com/chmouel/aniflow/blob/main/docs/diagram-walkthroughs.md) have the full syntax
 and a demo you can play.
 
 ## Privacy

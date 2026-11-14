@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 
 import pytest
+from aniflow import comments
 
 
 def get(url):
@@ -794,9 +795,8 @@ def test_comments_reject_bad_input(live_server, sharei_root):
         )
         == 400
     )
-    from sharei import server
 
-    too_long = "x" * (server.COMMENT_MAX_CHARS + 1)
+    too_long = "x" * (comments.COMMENT_MAX_CHARS + 1)
     assert (
         comment_error(
             live_server, "add", "plan.md", {"start": 1, "end": 1, "body": too_long}
@@ -884,15 +884,23 @@ def test_deleting_markdown_drops_its_comments(live_server, sharei_root):
 
 def test_markdown_page_offers_review(live_server):
     upload(live_server, "plan.md", PLAN)
-    _, _, body = get(live_server + "/md/inbox/plan.md")
-    assert b'id="review"' in body and b'data-comments="/comments/inbox/plan.md"' in body
+    _, headers, body = get(live_server + "/md/inbox/plan.md")
+    scripts = headers["Content-Security-Policy"].split("script-src")[1].split(";")[0]
+    assert "'self'" not in scripts
+    options = json.loads(
+        re.search(rb'id="aniflow-options">([^<]*)</script>', body).group(1)
+    )
+    assert b'id="review"' in body
+    assert options["comments"]["url"] == "/comments/inbox/plan.md"
+    assert b'id="sharei-drop"' in body
 
 
 def test_markdown_page_keeps_front_matter_for_the_panel(live_server):
     note = "---\ncreated: 2026-11-06T12:50:17\ntags: [pac]\n---\n# Title\n"
     upload(live_server, "note.md", note.encode())
     _, _, body = get(live_server + "/md/inbox/note.md")
-    assert b"frontMatterPlugin(markdown)" in body
+    assert b'src="/static/aniflow.min.js"' in body
+    assert get(live_server + "/static/aniflow.min.js")[0] == 200
     assert b"created: 2026-11-06T12:50:17" in body
 
 

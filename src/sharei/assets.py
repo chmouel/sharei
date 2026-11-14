@@ -1871,3 +1871,248 @@ SEARCH_JS = """
   });
 })();
 """
+
+
+READER_CSS = """
+  .reader .crumbs .note-icon { width:1.25em; height:1.25em; margin-right:5px; object-fit:contain; vertical-align:-.3em; }
+  .reader .markdown-body mark { padding:.05em .2em; border-radius:3px; background:color-mix(in srgb, var(--fgColor-attention) 26%, transparent); color:inherit; }
+  .reader .markdown-body .note-tag { padding:0 7px; border-radius:999px; background:color-mix(in srgb, var(--fgColor-accent) 14%, transparent); color:var(--fgColor-accent); font-size:.9em; font-weight:500; white-space:nowrap; }
+  .reader .markdown-body .note-missing { color:var(--fgColor-muted); text-decoration:underline dotted color-mix(in srgb, var(--fgColor-muted) 50%, transparent); text-underline-offset:.2em; }
+"""
+
+READER_JS = r"""
+// sharei's side of the reader: links and pictures in a drop resolve to its folder, notes
+// get Obsidian's syntax through the vault's link map, and #find= marks a search hit.
+(() => {
+  const data = (id) => {
+    const element = document.getElementById(id);
+    return element ? JSON.parse(element.textContent) : null;
+  };
+  const drop = data('sharei-drop');
+  const noteLinks = data('notes-links');
+  const article = document.querySelector('article.markdown-body');
+
+  const outside = /^(?:[a-z][a-z0-9+.-]*:|#|\/)/i;
+  const markdownName = /\.(?:md|markdown)$/i;
+
+  function noteSlug(text) {
+    return text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-') || 'section';
+  }
+
+  function noteAnchor(heading) {
+    if (!heading.startsWith('#') || heading.startsWith('#^')) return '';
+    return '#' + noteSlug(heading.slice(1).split('#').pop());
+  }
+
+  // [[target#heading|alias]] and ![[file|300]]. The server resolved every target into
+  // noteLinks; one it left out, or mapped to null, is not shared and stays plain text.
+  function wikilink(inner, embed, escape) {
+    const bar = inner.indexOf('|');
+    const ref = bar < 0 ? inner : inner.slice(0, bar);
+    const alias = bar < 0 ? '' : inner.slice(bar + 1).trim();
+    const at = ref.search(/[#^]/);
+    const target = (at < 0 ? ref : ref.slice(0, at)).trim();
+    const heading = at < 0 ? '' : ref.slice(at);
+    const anchor = noteAnchor(heading);
+    const size = /^(\d+)(?:x(\d+))?$/.exec(alias);
+    const parts = heading && !heading.startsWith('#^') ? heading.slice(1).split('#').filter(Boolean) : [];
+    const label = (size ? '' : alias) || [target, ...parts].filter(Boolean).join(' › ');
+    if (!target) return anchor ? '<a href="' + escape(anchor) + '">' + escape(label) + '</a>' : escape(label);
+    const entry = noteLinks[target];
+    if (!entry) return '<span class="note-missing">' + escape(label) + '</span>';
+    if (embed && entry.src) {
+      const dimensions = size ? ' width="' + size[1] + '"' + (size[2] ? ' height="' + size[2] + '"' : '') : '';
+      return '<img src="' + escape(entry.src) + '" alt="' + escape(size ? target : alias || target) + '"' + dimensions + '>';
+    }
+    return '<a href="' + escape(entry.href + anchor) + '">' + escape(label) + '</a>';
+  }
+
+  // Obsidian comments are hidden in reading view; fenced code keeps its %% as written.
+  function stripComments(text) {
+    return text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$|%%[\s\S]*?%%/gm, (all, fence) => (fence ? all : ''));
+  }
+
+  function obsidianFlavour(markdown) {
+    const escape = markdown.utils.escapeHtml;
+    markdown.inline.ruler.before('link', 'obsidian_wikilink', (state, silent) => {
+      const start = state.pos;
+      const embed = state.src.charCodeAt(start) === 0x21;
+      const open = start + (embed ? 1 : 0);
+      if (state.src.charCodeAt(open) !== 0x5b || state.src.charCodeAt(open + 1) !== 0x5b) return false;
+      const close = state.src.indexOf(']]', open + 2);
+      if (close < 0 || close + 2 > state.posMax) return false;
+      const inner = state.src.slice(open + 2, close).replace(/\\\|/g, '|');
+      if (!inner.trim() || /[\[\]\n]/.test(inner)) return false;
+      if (!silent) state.push('html_inline', '', 0).content = wikilink(inner, embed, escape);
+      state.pos = close + 2;
+      return true;
+    });
+    markdown.inline.ruler.before('emphasis', 'obsidian_mark', (state, silent) => {
+      const start = state.pos;
+      if (state.src.charCodeAt(start) !== 0x3d || state.src.charCodeAt(start + 1) !== 0x3d) return false;
+      const match = /^==(?=[^\s=])([^\n]*?[^\s=])==/.exec(state.src.slice(start, state.posMax));
+      if (!match) return false;
+      if (!silent) {
+        const max = state.posMax;
+        state.push('mark_open', 'mark', 1);
+        state.pos = start + 2;
+        state.posMax = start + 2 + match[1].length;
+        state.md.inline.tokenize(state);
+        state.posMax = max;
+        state.push('mark_close', 'mark', -1);
+      }
+      state.pos = start + match[0].length;
+      return true;
+    });
+    markdown.inline.ruler.before('emphasis', 'obsidian_tag', (state, silent) => {
+      const start = state.pos;
+      if (state.src.charCodeAt(start) !== 0x23 || (start > 0 && !/\s/.test(state.src[start - 1]))) return false;
+      const match = /^#([\p{L}\p{N}_\/-]+)/u.exec(state.src.slice(start, state.posMax));
+      if (!match || /^[\d\/-]+$/.test(match[1])) return false;
+      if (!silent) state.push('html_inline', '', 0).content = '<span class="note-tag">#' + escape(match[1]) + '</span>';
+      state.pos = start + match[0].length;
+      return true;
+    });
+    // Plain markdown links and images go through the same map, so /ZAttachments/x.png and
+    // ../Other.md find their file, and anything unshared loses its link.
+    markdown.core.ruler.push('obsidian_links', (state) => {
+      for (const block of state.tokens) {
+        for (const token of block.children || []) {
+          if (token.type !== 'link_open' && token.type !== 'image') continue;
+          const name = token.type === 'image' ? 'src' : 'href';
+          const value = token.attrGet(name) || '';
+          if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) continue;
+          let path = value.split(/[?#]/)[0];
+          const hash = value.includes('#') ? value.slice(value.indexOf('#')) : '';
+          try { path = decodeURIComponent(path); } catch (error) { /* keep it encoded */ }
+          const entry = noteLinks[path.trim()];
+          if (!entry || (name === 'src' && !entry.src)) {
+            token.meta = { unlinked: true };
+            continue;
+          }
+          let heading = hash;
+          try { heading = decodeURIComponent(hash); } catch (error) { /* keep it encoded */ }
+          token.attrSet(name, name === 'src' ? entry.src : entry.href + noteAnchor(heading));
+        }
+      }
+    });
+    const rules = markdown.renderer.rules;
+    const plain = (tokens, index, options, env, self) => self.renderToken(tokens, index, options);
+    const linkOpen = rules.link_open || plain;
+    const linkClose = rules.link_close || plain;
+    const image = rules.image;
+    rules.link_open = (tokens, index, options, env, self) => {
+      const unlinked = Boolean(tokens[index].meta && tokens[index].meta.unlinked);
+      (env.unlinked = env.unlinked || []).push(unlinked);
+      return unlinked ? '<span class="note-missing">' : linkOpen(tokens, index, options, env, self);
+    };
+    rules.link_close = (tokens, index, options, env, self) =>
+      (env.unlinked || []).pop() ? '</span>' : linkClose(tokens, index, options, env, self);
+    rules.image = (tokens, index, options, env, self) =>
+      tokens[index].meta && tokens[index].meta.unlinked
+        ? escape(self.renderInlineAsText(tokens[index].children, options, env))
+        : image(tokens, index, options, env, self);
+  }
+
+  // Files are flat in the drop folder, so a relative ./img/a.png is looked up as a.png next to this file
+  function local(value) {
+    if (!value || outside.test(value)) return null;
+    const match = value.match(/^([^?#]*)(?:\?[^#]*)?(#.*)?$/);
+    let path = match[1];
+    try { path = decodeURIComponent(path); } catch (error) { /* keep it encoded */ }
+    const name = path.split('/').filter(Boolean).pop();
+    return name ? { name: name, hash: match[2] || '' } : null;
+  }
+
+  // #find=12:words, from the notes search: the innermost block holding source line 12, with
+  // the words marked the way the search matched them, ignoring case and accents.
+  function findLine() {
+    const wanted = /^#find=(\d+)(?::(.*))?$/.exec(location.hash);
+    if (!wanted) return;
+    const line = Number(wanted[1]);
+    let words = [];
+    try { words = decodeURIComponent(wanted[2] || '').split(/\s+/).filter(Boolean); } catch (error) { /* bad hash */ }
+    const fold = (text) => text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    words = words.map(fold).filter(Boolean);
+    let block = null, before = null;
+    for (const element of article.querySelectorAll('[data-line]')) {
+      const start = Number(element.dataset.line), end = Number(element.dataset.lineEnd || start);
+      if (start <= line && line <= end && (!block || block.contains(element))) block = element;
+      if (start <= line) before = element;
+    }
+    block = block || before;
+    if (!block) return;
+    article.querySelectorAll('mark.find-hit').forEach((mark) => {
+      const parent = mark.parentNode;
+      mark.replaceWith(...mark.childNodes);
+      parent.normalize();
+    });
+    article.querySelectorAll('.find-target').forEach((element) => element.classList.remove('find-target'));
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const text = node.nodeValue;
+      let folded = '';
+      const origin = [];
+      const ends = [];
+      for (let index = 0; index < text.length;) {
+        const character = String.fromCodePoint(text.codePointAt(index));
+        const piece = fold(character);
+        folded += piece;
+        for (let count = 0; count < piece.length; count++) { origin.push(index); ends.push(index + character.length); }
+        index += character.length;
+      }
+      const found = [];
+      for (const word of words) {
+        for (let at = folded.indexOf(word); at >= 0; at = folded.indexOf(word, at + word.length)) {
+          found.push([origin[at], ends[at + word.length - 1]]);
+        }
+      }
+      found.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+      const ranges = [];
+      for (const range of found) {
+        const previous = ranges[ranges.length - 1];
+        if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1]);
+        else ranges.push(range);
+      }
+      let current = node, offset = 0;
+      for (const [start, end] of ranges) {
+        const hit = current.splitText(start - offset);
+        current = hit.splitText(end - start);
+        offset = end;
+        const mark = document.createElement('mark');
+        mark.className = 'find-hit';
+        hit.replaceWith(mark);
+        mark.append(hit);
+      }
+    }
+    block.classList.add('find-target');
+    (block.querySelector('mark.find-hit') || block).scrollIntoView({ block: 'center' });
+  }
+
+  const page = {};
+  if (drop) {
+    page.resolveImage = (value) => {
+      const found = local(value);
+      return found ? drop.poub + encodeURIComponent(found.name) : null;
+    };
+    page.resolveLink = (value) => {
+      const found = local(value);
+      if (!found) return null;
+      return markdownName.test(found.name)
+        ? drop.md + encodeURIComponent(found.name) + found.hash
+        : drop.poub + encodeURIComponent(found.name);
+    };
+  }
+  if (noteLinks) {
+    page.plugins = [obsidianFlavour];
+    page.preprocess = stripComments;
+  }
+  window.aniflowPage = page;
+  addEventListener('DOMContentLoaded', () => {
+    findLine();
+    addEventListener('hashchange', findLine);
+  });
+})();
+"""

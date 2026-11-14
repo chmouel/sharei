@@ -3,6 +3,11 @@ revision = 5
 requires-python = ">=3.12"
 
 [[package]]
+name = "aniflow"
+version = "0.1.0"
+source = { git = "https://github.com/chmouel/aniflow#9a53437cec38b6405acba0d6395bd5f222b83e6c" }
+
+[[package]]
 name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -384,6 +389,9 @@ wheels = [
 name = "sharei"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "aniflow" },
+]
 
 [package.optional-dependencies]
 push = [
@@ -405,6 +413,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aniflow", git = "https://github.com/chmouel/aniflow" },
     { name = "cryptography", marker = "extra == 'push'", specifier = ">=42" },
     { name = "pillow", marker = "extra == 'thumbnails'", specifier = ">=11" },
     { name = "pillow-heif", marker = "extra == 'thumbnails'", specifier = ">=1" },

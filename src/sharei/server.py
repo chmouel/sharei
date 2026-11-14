@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import codecs
 import email.parser
 import email.policy
 import fnmatch
@@ -36,14 +35,23 @@ import tomllib
 import zlib
 from collections.abc import Callable
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import NamedTuple, TypedDict
-from urllib.parse import ParseResult, parse_qs, quote, unquote, urlparse, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
+
+from aniflow import comments, page, web
+from aniflow.themes import (
+    THEME_KEYS,
+    THEME_PICKER_JS,
+    THEME_READER_CSS,
+    THEMES,
+    theme_app_css,
+)
+from aniflow.themes import theme_script as aniflow_theme_script
+from aniflow.web import is_markdown, looks_like_text, vector_headers
 
 from sharei import notes, push
-from sharei.aniflow_brand import BRAND, BRAND_CSS
-from sharei.aniflow_ui import UI_CSS, UI_JS
 from sharei.assets import (
     ANNOTATE_JS,
     CAROUSEL_JS,
@@ -66,29 +74,13 @@ from sharei.assets import (
     PUSH_JS,
     QR_CSS,
     QR_JS,
+    READER_CSS,
+    READER_JS,
     SEARCH_CSS,
     SEARCH_JS,
     SHARE_JS,
     SORT_ICON,
     SW_JS,
-)
-from sharei.reader import (
-    MARKDOWN_CSS,
-    MARKDOWN_JS,
-    MARKDOWN_SCRIPTS,
-    PRESENT_BUTTON,
-    READER_CSS,
-    REVIEW_BUTTON,
-    REVIEW_DOCK,
-)
-from sharei.themes import (
-    THEME_KEYS,
-    THEME_PICKER_JS,
-    THEME_READER_CSS,
-    THEMES,
-    theme_app_css,
-    theme_script,
-    theme_select,
 )
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -248,12 +240,6 @@ CLIP: ClipState = {
 UPLOAD_MAX_BYTES = 2 * 1024**3
 # Review comments on dropped markdown live in <project>/drop/.comments/<name>.json.
 COMMENTS_DIR = ".comments"
-COMMENTS_MAX = 200
-COMMENT_MAX_CHARS = 4000
-COMMENT_MAX_LINES = 200
-COMMENT_TARGET_MAX = 120
-COMMENT_TARGET_KINDS = ("node", "edge", "diagram")
-COMMENTS_LOCK = threading.Lock()
 # Share target bodies are parsed in memory, so they get a lower cap than /upload.
 SHARE_MAX_BYTES = 200 * 1024**2
 SHARE_LOCK = threading.Lock()
@@ -274,20 +260,11 @@ THUMB_VERSION = 2
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 VENDOR = SCRIPT_DIR / "vendor"
-# Diagram icons built from Lucide by contrib/icons/make_icons.py, served by name only.
-ICONS_DIR = SCRIPT_DIR / "icons"
-ICON_NAMES = frozenset(path.stem for path in ICONS_DIR.glob("*.svg"))
 # Only these files are reachable under /vendor/, everything else in that folder stays private.
+# The reader's own libraries come from the aniflow package (web.Handler.send_asset).
 VENDOR_TYPES = {
-    "highlight.min.js": "text/javascript; charset=utf-8",
-    "markdown-it.min.js": "text/javascript; charset=utf-8",
-    "markdown-it-emoji.min.js": "text/javascript; charset=utf-8",
-    "markdown-it-footnote.min.js": "text/javascript; charset=utf-8",
-    "purify.min.js": "text/javascript; charset=utf-8",
     "markerjs3.js": "text/javascript; charset=utf-8",
     "markerjs-ui.js": "text/javascript; charset=utf-8",
-    "github-markdown.css": "text/css; charset=utf-8",
-    "mermaid.min.js": "text/javascript; charset=utf-8",
     "qrcode.js": "text/javascript; charset=utf-8",
     "pdf.min.mjs": "text/javascript; charset=utf-8",
     "pdf.worker.min.mjs": "text/javascript; charset=utf-8",
@@ -644,15 +621,6 @@ def thumbnail_cache_path(
     identity = f"{path.resolve()}:{path.stat().st_mtime_ns}:{THUMB_MAX}:{style}"
     digest = hashlib.sha256(f"{identity}:{version}".encode()).hexdigest()[:32]
     return THUMBS / f"{digest}.webp"
-
-
-def vector_headers(base: dict[str, str]) -> dict[str, str]:
-    """Serve an SVG inline but unable to reach the page: its scripts never run."""
-    return {
-        **base,
-        "Content-Security-Policy": VECTOR_CSP,
-        "X-Content-Type-Options": "nosniff",
-    }
 
 
 def render_thumbnail(path: Path, style: str = "top") -> bytes:
@@ -1104,242 +1072,18 @@ def comments_file(path: Path) -> Path:
 
 
 def comments_forget(path: Path) -> None:
-    with COMMENTS_LOCK:
+    with comments.LOCK:
         try:
             comments_file(path).unlink(missing_ok=True)
         except OSError:
             pass
 
 
-def comment_target_valid(target: object) -> bool:
-    """A diagram comment's target: the box, arrow or whole diagram it is about."""
-    return (
-        isinstance(target, dict)
-        and set(target) <= {"kind", "id", "label", "diagram"}
-        and target.get("kind") in COMMENT_TARGET_KINDS
-        and all(
-            isinstance(target.get(key, ""), str)
-            and len(target.get(key, "")) <= COMMENT_TARGET_MAX
-            for key in ("id", "label")
-        )
-        and isinstance(target.get("diagram"), int)
-        and not isinstance(target.get("diagram"), bool)
-        and 1 <= target["diagram"] <= 999
-    )
-
-
-def comment_valid(entry: object) -> bool:
-    return (
-        isinstance(entry, dict)
-        and ("target" not in entry or comment_target_valid(entry["target"]))
-        and isinstance(entry.get("id"), str)
-        and isinstance(entry.get("body"), str)
-        and isinstance(entry.get("quote"), list)
-        and all(isinstance(line, str) for line in entry["quote"])
-        and all(
-            isinstance(entry.get(key), int) and not isinstance(entry.get(key), bool)
-            for key in ("start", "end")
-        )
-        and 1 <= entry["start"] <= entry["end"]
-    )
-
-
-def comments_load(path: Path, *, storage: Path | None = None) -> list[dict]:
-    try:
-        data = json.loads((storage or comments_file(path)).read_text("utf-8"))
-    except (OSError, ValueError):
-        return []
-    return (
-        [entry for entry in data if comment_valid(entry)]
-        if isinstance(data, list)
-        else []
-    )
-
-
-def comments_save(
-    path: Path, entries: list[dict], *, storage: Path | None = None
-) -> None:
-    target = storage or comments_file(path)
-    if not entries:
-        target.unlink(missing_ok=True)
-        return
-    target.parent.mkdir(parents=storage is not None, exist_ok=True)
-    if target.parent.is_symlink() or (
-        storage is None and not under_root(target.parent)
-    ):
-        raise OSError(f"{target.parent} leads outside {ROOT}")
-    temporary = target.with_name(f".{target.name}.{secrets.token_hex(4)}.part")
-    try:
-        temporary.write_text(json.dumps(entries, indent=1), "utf-8")
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def markdown_lines(path: Path) -> list[str]:
-    """Source lines as markdown-it numbers them."""
-    text = path.read_text("utf-8", errors="replace")
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    return lines
-
-
-def comment_anchor(entry: dict, lines: list[str]) -> dict:
-    """Where the comment's quoted lines are now: same place, moved, or gone (outdated)."""
-    start, end, quoted = entry["start"], entry["end"], entry["quote"]
-    shown = {
-        key: entry[key]
-        for key in ("id", "body", "quote", "target", "created", "updated")
-        if key in entry
-    }
-    if lines[start - 1 : end] == quoted:
-        return {**shown, "start": start, "end": end, "outdated": False}
-    size = len(quoted)
-    found = [
-        index + 1
-        for index in range(len(lines) - size + 1)
-        if size and lines[index : index + size] == quoted
-    ]
-    if found:
-        moved = min(found, key=lambda line: abs(line - start))
-        return {**shown, "start": moved, "end": moved + size - 1, "outdated": False}
-    last = max(1, len(lines))
-    start = min(start, last)
-    return {
-        **shown,
-        "start": start,
-        "end": min(max(end, start), last),
-        "outdated": True,
-    }
-
-
-def comments_view(path: Path, *, storage: Path | None = None) -> dict[str, object]:
-    lines = markdown_lines(path)
-    with COMMENTS_LOCK:
-        entries = comments_load(path, storage=storage)
-    comments = sorted(
-        (comment_anchor(entry, lines) for entry in entries),
-        key=lambda comment: (
-            comment["start"],
-            comment["end"],
-            comment.get("created", 0),
-        ),
-    )
-    return {"name": path.name, "lines": len(lines), "comments": comments}
-
-
 def comments_count(path: Path) -> int:
     if not is_markdown(path.name) or not comments_file(path).is_file():
         return 0
-    with COMMENTS_LOCK:
-        return len(comments_load(path))
-
-
-def comments_prompt(view: dict, app: str = "sharei") -> str:
-    """The comments as one block of text to paste back to whoever wrote the file."""
-    name = view["name"]
-    if not view["comments"]:
-        return f"No review comments on {name}.\n"
-    parts = [f"Review comments on {name} ({app}):"]
-    for comment in view["comments"]:
-        where = (
-            str(comment["start"])
-            if comment["start"] == comment["end"]
-            else f"{comment['start']}-{comment['end']}"
-        )
-        head = f"{name}:{where}"
-        if target := comment.get("target"):
-            about = f"diagram {target['diagram']}"
-            label = target.get("label") or target.get("id")
-            if target["kind"] != "diagram" and label:
-                kind = "box" if target["kind"] == "node" else "arrow"
-                about += f", {kind} {json.dumps(label, ensure_ascii=False)}"
-            head += f" ({about})"
-        if comment["outdated"]:
-            head += " (outdated: these lines changed since the comment)"
-        quoted = "\n".join(f"> {line}".rstrip() for line in comment["quote"])
-        parts.append(f"{head}\n{quoted}\n{comment['body'].strip()}")
-    return "\n\n".join(parts) + "\n"
-
-
-def comments_in_lines(view: dict, query: str) -> dict:
-    """With ?lines=A-B, only the comments that start inside those lines, as one diagram's fence."""
-    wanted = (parse_qs(query).get("lines") or [""])[-1]
-    match = re.fullmatch(r"(\d{1,7})-(\d{1,7})", wanted)
-    if not match:
-        return view
-    first, last = int(match[1]), int(match[2])
-    kept = [c for c in view["comments"] if first <= c["start"] <= last]
-    return {**view, "comments": kept}
-
-
-def comment_change(
-    path: Path,
-    action: str,
-    comment_id: str,
-    data: object,
-    *,
-    storage: Path | None = None,
-) -> str | None:
-    """Add, edit or delete a comment. Returns an error message, or None when done."""
-    if action != "delete":
-        if not isinstance(data, dict) or not isinstance(data.get("body"), str):
-            return "body must be a string"
-        body = data["body"].strip()
-        if not body:
-            return "the comment is empty"
-        if len(body) > COMMENT_MAX_CHARS:
-            return f"comments are limited to {COMMENT_MAX_CHARS} characters"
-    now = time.time()
-    lines = markdown_lines(path)
-    with COMMENTS_LOCK:
-        entries = comments_load(path, storage=storage)
-        if action == "add":
-            start, end = data.get("start"), data.get("end", data.get("start"))
-            if not all(
-                isinstance(value, int) and not isinstance(value, bool)
-                for value in (start, end)
-            ):
-                return "start and end must be line numbers"
-            if not 1 <= start <= end <= len(lines):
-                return f"lines must be between 1 and {len(lines)}"
-            if end - start + 1 > COMMENT_MAX_LINES:
-                return f"a comment covers at most {COMMENT_MAX_LINES} lines"
-            if len(entries) >= COMMENTS_MAX:
-                return f"a file holds at most {COMMENTS_MAX} comments"
-            target = data.get("target")
-            if target is not None and not comment_target_valid(target):
-                return "target must name a node, edge or diagram"
-            entry = {
-                "id": secrets.token_hex(6),
-                "start": start,
-                "end": end,
-                "quote": lines[start - 1 : end],
-                "body": body,
-                "created": now,
-                "updated": now,
-            }
-            if target is not None:
-                entry["target"] = target
-            entries.append(entry)
-        else:
-            index = next(
-                (
-                    index
-                    for index, entry in enumerate(entries)
-                    if entry["id"] == comment_id
-                ),
-                None,
-            )
-            if index is None:
-                return "not found"
-            if action == "delete":
-                del entries[index]
-            else:
-                entries[index] = {**entries[index], "body": body, "updated": now}
-        comments_save(path, entries, storage=storage)
-    return None
+    with comments.LOCK:
+        return len(comments.load(comments_file(path)))
 
 
 def sweep_partials(max_age: float = 24 * 60 * 60) -> None:
@@ -1382,23 +1126,6 @@ def poub_files() -> list[PoubFile]:
     return files[:POUB_LIST_LIMIT]
 
 
-def is_markdown(name: str) -> bool:
-    return Path(name).suffix.lower() in MARKDOWN_SUFFIXES
-
-
-def looks_like_text(path: Path) -> bool:
-    """Cheap check on the first 8 KB, for listings: small enough, no NUL, valid UTF-8 so far."""
-    try:
-        if path.stat().st_size > TEXT_MAX_BYTES:
-            return False
-        with path.open("rb") as handle:
-            head = handle.read(8192)
-        codecs.getincrementaldecoder("utf-8")().decode(head, final=False)
-    except (OSError, UnicodeDecodeError):
-        return False
-    return b"\0" not in head
-
-
 def read_text_file(path: Path) -> str | None:
     try:
         if path.stat().st_size > TEXT_MAX_BYTES:
@@ -1436,6 +1163,10 @@ def code_language(name: str, text: str) -> str:
             if needle in interpreter:
                 return language
     return ""
+
+
+def theme_script(nonce: str = "") -> str:
+    return aniflow_theme_script(nonce, "sharei-theme")
 
 
 def qr_button() -> str:
@@ -1549,16 +1280,6 @@ def name_matches(
     return found + rest[: max(0, notes.SEARCH_NOTES_MAX - len(found))]
 
 
-def json_script(value: object) -> str:
-    """JSON for a data <script>, escaped so no "</script>" in it can close the block early."""
-    return (
-        json.dumps(value)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
-
-
 def markdown_page(
     title: str,
     text: str,
@@ -1566,11 +1287,10 @@ def markdown_page(
     back: tuple[str, str],
     links: list[tuple[str, str]],
     project: str | None = None,
-    comments: str = "",
+    comments_url: str = "",
     note_links: dict[str, dict[str, str] | None] | None = None,
     crumbs: list[tuple[str, str]] | None = None,
     icon: str = "",
-    local_root: str = "",
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
@@ -1578,19 +1298,12 @@ def markdown_page(
     With note_links it reads an Obsidian note: links go through that map.
     """
     nonce = secrets.token_urlsafe(16)
-    bases = (
-        f' data-poub="/poub/{quote(project)}/" data-md="/md/{quote(project)}/"'
-        if project
-        else ""
-    )
-    extra = ""
-    if local_root:
-        bases += f' data-local-root="{html.escape(local_root)}"'
+    data = ""
+    if project:
+        drop = {"poub": f"/poub/{quote(project)}/", "md": f"/md/{quote(project)}/"}
+        data += f'<script type="application/json" id="sharei-drop">{page.json_script(drop)}</script>'
     if note_links is not None:
-        bases += " data-notes"
-        if notes.VAULT and not notes.VAULT.strict_breaks:
-            bases += " data-breaks"
-        extra = f'<script type="application/json" id="notes-links">{json_script(note_links)}</script>'
+        data += f'<script type="application/json" id="notes-links">{page.json_script(note_links)}</script>'
     trail = (
         '<nav class="crumbs" aria-label="Folders">'
         + "".join(
@@ -1602,68 +1315,37 @@ def markdown_page(
         if crumbs
         else ""
     )
-    if comments:
-        bases += f' data-comments="{html.escape(comments)}" data-comment-max="{COMMENT_MAX_CHARS}"'
-    review = (REVIEW_BUTTON, REVIEW_DOCK) if comments else ("", "")
-    tools = theme_select(nonce) if local_root else qr_button() + search_button()
-    tools_script = (
-        f'<script nonce="{nonce}">{UI_JS}</script>'
-        if local_root
-        else qr_script(nonce) + search_script(nonce)
+    banner = (
+        f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
     )
-    favicon = "data:," if local_root else "/icon-192.png"
-    branding, brand_css = (BRAND, BRAND_CSS) if local_root else ("", "")
     actions = "".join(
         f'<a href="{html.escape(href)}"{" download" if label == "Download" else ""}>{html.escape(label)}</a>'
         for label, href in links
     )
-    if local_root:
-        help_link = (
-            '<a class="reader-help" href="/help">Help</a>'
-            if any(label == "Help" for label, _ in links)
-            else ""
-        )
-        menu_links = "".join(
-            f'<a href="{html.escape(href)}">{html.escape("View Markdown source" if label == "Raw" else label)}</a>'
-            for label, href in links
-            if label != "Help"
-        )
-        actions = help_link + (
-            f'<details class="aniflow-menu"><summary>More</summary><div class="menu-items">{menu_links}</div></details>'
-            if menu_links
-            else ""
-        )
-        brand_css += UI_CSS
-    body_class = ' class="aniflow-local"' if local_root else ""
-    banner = (
-        f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
+    options = page.reader_options(
+        comments=comments_url,
+        breaks=bool(
+            note_links is not None and notes.VAULT and not notes.VAULT.strict_breaks
+        ),
+        callouts=note_links is not None,
     )
-    source = json_script(text)
-    highlight = len(text.encode("utf-8")) <= HIGHLIGHT_MAX_BYTES
-    scripts = "".join(
-        f'<script nonce="{nonce}" src="/vendor/{name}"></script>'
-        for name in MARKDOWN_SCRIPTS
-        if highlight or name != "highlight.min.js"
+    document = page.reader_page(
+        title=title,
+        text=text,
+        nonce=nonce,
+        back=back,
+        options=options,
+        actions=actions,
+        tools=qr_button() + search_button(),
+        top=trail + banner,
+        style=QR_CSS + READER_CSS,
+        favicon="/icon-192.png",
+        theme_default=THEME_DEFAULT,
+        theme_key="sharei-theme",
+        before=f'{data}<script nonce="{nonce}">{READER_JS}</script>',
+        after=qr_script(nonce) + search_script(nonce),
     )
-    document = f"""<!doctype html>
-<html lang="en" data-theme-default="{THEME_DEFAULT}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark"><title>{html.escape(title)}</title>
-{theme_script(nonce)}
-<link rel="icon" href="{favicon}">
-<link rel="stylesheet" href="/vendor/github-markdown.css">
-<style>{MARKDOWN_CSS}{READER_CSS}{THEME_READER_CSS}{QR_CSS}{brand_css}</style></head><body{body_class}>
-<header class="bar progress"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(title)}</span><nav>{actions}{PRESENT_BUTTON}{review[0]}{tools}</nav></header>
-<main class="page reader">{branding}{trail}{banner}
-<details class="toc" id="toc" hidden><summary>Contents</summary><ol></ol></details>
-<article class="markdown-body"{bases}><noscript><pre>{html.escape(text)}</pre></noscript></article></main>
-{review[1]}
-<script type="application/json" id="markdown-source">{source}</script>
-{extra}
-{scripts}
-<script nonce="{nonce}">{MARKDOWN_JS}</script>
-{tools_script}
-</body></html>"""
-    return document.encode("utf-8"), nonce
+    return document, nonce
 
 
 def code_page(
@@ -1698,7 +1380,8 @@ def code_page(
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
-<style>{MARKDOWN_CSS}{CODE_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<link rel="stylesheet" href="/static/page.css">
+<style>{CODE_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
 <header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav>{actions}{qr_button()}{search_button()}</nav></header>
 <main class="page code-page">{notice}
 <div class="code"><div class="gutter">{gutter}</div><div class="scroll"><div class="line-mark" id="line-mark" hidden></div><pre><code id="code"{language}>{html.escape(text)}</code></pre></div></div>
@@ -1735,7 +1418,8 @@ def play_page(project: str, name: str) -> tuple[bytes, str]:
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
-<style>{MARKDOWN_CSS}{PLAY_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<link rel="stylesheet" href="/static/page.css">
+<style>{PLAY_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
 <header class="bar"><a href="/drop">← Drop</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}{search_button()}</nav></header>
 <main class="page play-page">{player}</main>
 {qr_script(nonce)}{search_script(nonce)}
@@ -1766,7 +1450,8 @@ def pdf_page(
 <meta name="color-scheme" content="light dark"><title>{html.escape(name)}</title>
 {theme_script(nonce)}
 <link rel="icon" href="/icon-192.png">
-<style>{MARKDOWN_CSS}{PDF_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
+<link rel="stylesheet" href="/static/page.css">
+<style>{PDF_CSS}{THEME_READER_CSS}{QR_CSS}</style></head><body>
 <header class="bar"><a href="{html.escape(back[1])}">← {html.escape(back[0])}</a><span class="name">{html.escape(name)}</span><nav><a href="{url}" download>Download</a>{qr_button()}{search_button()}</nav></header>
 <main class="page pdf-page" data-url="{url}"><p class="pdf-status">Loading…</p></main>
 <script type="module" nonce="{nonce}">{PDF_JS}</script>
@@ -1785,18 +1470,6 @@ def pdf_headers(nonce: str) -> dict[str, str]:
             "default-src 'none'; img-src 'self' blob: data:; connect-src 'self'; "
             f"worker-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
-        ),
-    }
-
-
-def markdown_headers(nonce: str) -> dict[str, str]:
-    return {
-        "Cache-Control": "no-cache",
-        "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy": (
-            "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; "
-            f"script-src 'self' 'nonce-{nonce}'; object-src 'none'; base-uri 'none'; "
-            "form-action 'none'; frame-ancestors 'self'"
         ),
     }
 
@@ -2888,44 +2561,12 @@ def local_host_names() -> set[str]:
     return {name.lower().rstrip(".") for name in names if name}
 
 
-def host_allowed(value: str | None) -> bool:
-    if not value:
-        return False
-    host = value.strip().lower()
-    if host.startswith("["):
-        end = host.find("]")
-        host = host[1:end] if end != -1 else host.lstrip("[")
-    else:
-        host = host.split(":", 1)[0]
-    host = host.rstrip(".")
-    if host == "localhost" or host in ALLOWED_HOSTS:
-        return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return host.endswith(ALLOWED_HOST_SUFFIXES)
-    return not address.is_global
+class Handler(web.Handler):
+    def allowed_hosts(self) -> set[str]:
+        return ALLOWED_HOSTS
 
-
-def origin_allowed(origin: str | None, host: str | None) -> bool:
-    if not origin:
-        return True
-    if origin.strip().lower().rstrip("/") in ALLOWED_ORIGINS:
-        return True
-    parsed = urlparse(origin)
-    return parsed.scheme == "http" and parsed.netloc.lower() == (host or "").lower()
-
-
-class Handler(BaseHTTPRequestHandler):
-    def request_allowed(self) -> bool:
-        host = self.headers.get("Host")
-        if not host_allowed(host):
-            self.send_error(403, "Host not allowed")
-            return False
-        if not origin_allowed(self.headers.get("Origin"), host):
-            self.send_error(403, "Cross-origin request refused")
-            return False
-        return True
+    def allowed_origins(self) -> set[str]:
+        return ALLOWED_ORIGINS
 
     def do_GET(self) -> None:
         if not self.request_allowed():
@@ -2963,6 +2604,9 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if self.send_asset(parsed.path):
+            return
+
         if parsed.path.startswith("/vendor/"):
             name = parsed.path.removeprefix("/vendor/")
             content_type = VENDOR_TYPES.get(name)
@@ -2974,20 +2618,6 @@ class Handler(BaseHTTPRequestHandler):
                     vendor_file,
                     content_type,
                     {"Cache-Control": "public, max-age=31536000, immutable"},
-                )
-                return
-
-        if parsed.path == "/icons/":
-            self.send_json({"icons": sorted(ICON_NAMES)})
-            return
-
-        if parsed.path.startswith("/icons/") and parsed.path.endswith(".svg"):
-            name = parsed.path.removeprefix("/icons/").removesuffix(".svg")
-            if name in ICON_NAMES:
-                self.send_file(
-                    ICONS_DIR / f"{name}.svg",
-                    "image/svg+xml",
-                    vector_headers({"Cache-Control": "public, max-age=86400"}),
                 )
                 return
 
@@ -3010,7 +2640,7 @@ class Handler(BaseHTTPRequestHandler):
                     project,
                     f"/comments/{quote(project)}/{quote(path.name)}",
                 )
-                self.send_html(body, markdown_headers(nonce))
+                self.send_html(body, page.reader_headers(nonce))
                 return
 
         if parsed.path.startswith("/comments/"):
@@ -3018,20 +2648,7 @@ class Handler(BaseHTTPRequestHandler):
             if path is None or not is_markdown(path.name):
                 self.send_json({"error": "not found"}, status=404)
                 return
-            try:
-                view = comments_view(path)
-            except OSError:
-                self.send_json({"error": "not found"}, status=404)
-                return
-            view = comments_in_lines(view, parsed.query)
-            if (parse_qs(parsed.query).get("format") or [""])[-1] == "prompt":
-                self.send_bytes(
-                    comments_prompt(view).encode("utf-8"),
-                    "text/plain; charset=utf-8",
-                    {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
-                )
-            else:
-                self.send_json(view)
+            self.send_comments(path, comments_file(path), parsed.query, "sharei")
             return
 
         if parsed.path.startswith("/view/"):
@@ -3072,7 +2689,7 @@ class Handler(BaseHTTPRequestHandler):
                 ("Clipboard", "/clip"),
                 [("Raw", "/clip/raw")],
             )
-            self.send_html(body, markdown_headers(nonce))
+            self.send_html(body, page.reader_headers(nonce))
             return
 
         if parsed.path.startswith("/poub/"):
@@ -3130,7 +2747,7 @@ class Handler(BaseHTTPRequestHandler):
                             crumbs=crumbs,
                             icon=notes_icon(index, relative),
                         )
-                        self.send_html(body, markdown_headers(nonce))
+                        self.send_html(body, page.reader_headers(nonce))
                         return
                 elif (text := read_text_file(path)) is not None:
                     body, nonce = code_page(path.name, text, download, back)
@@ -3316,7 +2933,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path.startswith("/comments/"):
-            self.handle_comment(parsed)
+            encoded = parsed.path.removeprefix("/comments/").partition("/")[2]
+            path = poub_path(encoded)
+            self.handle_comment(
+                parsed,
+                path,
+                comments_file(path) if path is not None else ROOT,
+                create_parents=False,
+                allowed=under_root,
+            )
             return
 
         if parsed.path == "/expiry":
@@ -3611,46 +3236,6 @@ class Handler(BaseHTTPRequestHandler):
             }
         )
 
-    def handle_comment(
-        self,
-        parsed: ParseResult,
-        *,
-        path: Path | None = None,
-        storage: Path | None = None,
-    ) -> None:
-        action, _, encoded = parsed.path.removeprefix("/comments/").partition("/")
-        if action not in ("add", "edit", "delete"):
-            self.send_json({"error": "not found"}, status=404)
-            return
-        path = path or poub_path(encoded)
-        if path is None or not is_markdown(path.name):
-            self.send_json({"error": "not found"}, status=404)
-            return
-        data: object = None
-        if action != "delete":
-            body = self.read_body(COMMENT_MAX_CHARS * 4 + 1024)
-            if body is None:
-                self.send_json({"error": "request too large"}, status=413)
-                return
-            try:
-                data = json.loads(body)
-            except ValueError:
-                self.send_json({"error": "body must be JSON"}, status=400)
-                return
-        comment_id = (parse_qs(parsed.query).get("id") or [""])[-1]
-        try:
-            error = comment_change(path, action, comment_id, data, storage=storage)
-            view = comments_view(path, storage=storage)
-        except OSError as failure:
-            self.send_json({"error": str(failure)}, status=500)
-            return
-        if error:
-            self.send_json(
-                {"error": error}, status=404 if error == "not found" else 400
-            )
-            return
-        self.send_json(view)
-
     def handle_share(self) -> None:
         content_type = self.headers.get("Content-Type") or ""
         if not content_type.lower().startswith("multipart/form-data"):
@@ -3805,42 +3390,6 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             data += chunk
 
-    def send_html(self, body: bytes, headers: dict[str, str] | None = None) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        for name, value in (headers or {}).items():
-            self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def send_json(
-        self,
-        payload: dict[str, object],
-        status: int = 200,
-        headers: dict[str, str] | None = None,
-    ) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        for name, value in (headers or {}).items():
-            self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def send_bytes(
-        self, body: bytes, content_type: str, headers: dict[str, str]
-    ) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        for name, value in headers.items():
-            self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(body)
-
     def send_thumbnail(self, path: Path, style: str = "top") -> None:
         immutable = {"Cache-Control": "public, max-age=31536000, immutable"}
         if path.suffix.lower() in VECTOR_SUFFIXES:
@@ -3912,49 +3461,6 @@ class Handler(BaseHTTPRequestHandler):
                 f"attachment; filename*=UTF-8''{quote(path.name)}"
             )
         self.send_file(path, content_type, headers)
-
-    def send_file(self, path: Path, content_type: str, headers: dict[str, str]) -> None:
-        size = path.stat().st_size
-        start, end = 0, size - 1
-        status = 200
-        # Video players need a single byte range to seek; anything fancier gets the whole file.
-        match = re.fullmatch(
-            r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip()
-        )
-        if match and (match[1] or match[2]):
-            if match[1]:
-                start = int(match[1])
-                end = min(int(match[2]), size - 1) if match[2] else size - 1
-            else:
-                start = max(size - int(match[2]), 0)
-            if start > end or start >= size:
-                self.send_response(416)
-                self.send_header("Content-Range", f"bytes */{size}")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            status = 206
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(end - start + 1))
-        if status == 206:
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        for name, value in headers.items():
-            self.send_header(name, value)
-        self.end_headers()
-        with path.open("rb") as stream:
-            stream.seek(start)
-            remaining = end - start + 1
-            try:
-                while remaining and (chunk := stream.read(min(128 * 1024, remaining))):
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                self.close_connection = True
-
-    def log_message(self, format: str, *args: object) -> None:
-        print(f"{self.client_address[0]} - {format % args}")
 
 
 def phone_ip() -> str | None:
