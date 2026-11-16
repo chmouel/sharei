@@ -1181,17 +1181,6 @@ def public_tokens_locked(key: str) -> list[str]:
     return [token for token, entry in PUBLIC.items() if entry["path"] == key]
 
 
-def public_token(path: Path) -> str | None:
-    key = expiry_key(path)
-    if key is None:
-        return None
-    with PUBLIC_LOCK:
-        tokens = [
-            token for token in public_tokens_locked(key) if public_live(PUBLIC[token])
-        ]
-    return tokens[0] if tokens else None
-
-
 def public_link(token: str, path: Path) -> str:
     slides = "#slide=1" if is_markdown(path.name) and is_presentation(path) else ""
     return f"{PUBLIC_URL}/public/{token}/{quote(path.name)}{slides}"
@@ -1201,22 +1190,26 @@ def public_state(path: Path) -> tuple[str, int]:
     """path's live public link and its expiry (0 for never), or ("", 0)."""
     if not PUBLIC:
         return "", 0
-    token = public_token(path)
-    if token is None:
+    key = expiry_key(path)
+    if key is None:
         return "", 0
-    with PUBLIC_LOCK:
-        entry = PUBLIC.get(token)
     try:
         current = public_identity(path)
     except OSError:
         return "", 0
-    if (
-        entry is None
-        or not public_live(entry)
-        or (entry["dev"], entry["ino"], entry["mtime"]) != current
-    ):
+    with PUBLIC_LOCK:
+        found = next(
+            (
+                (token, entry["expires"])
+                for token in public_tokens_locked(key)
+                if public_live(entry := PUBLIC[token])
+                and (entry["dev"], entry["ino"], entry["mtime"]) == current
+            ),
+            None,
+        )
+    if found is None:
         return "", 0
-    return public_link(token, path), entry["expires"]
+    return public_link(found[0], path), found[1]
 
 
 def public_url_for(path: Path) -> str:
@@ -1248,6 +1241,8 @@ def public_add(path: Path, seconds: int = PUBLIC_DEFAULT_SECONDS) -> tuple[str, 
                     entry["expires"] = previous
                     raise
                 return token, expires
+        # Links to bytes that were replaced outside sharei can never open again.
+        stale = {token: PUBLIC.pop(token) for token in public_tokens_locked(key)}
         token = secrets.token_urlsafe(16)
         PUBLIC[token] = PublicLink(
             path=key, dev=dev, ino=ino, mtime=mtime, expires=expires
@@ -1256,6 +1251,7 @@ def public_add(path: Path, seconds: int = PUBLIC_DEFAULT_SECONDS) -> tuple[str, 
             public_save_locked()
         except OSError:
             del PUBLIC[token]
+            PUBLIC.update(stale)
             raise
     return token, expires
 

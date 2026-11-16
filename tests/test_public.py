@@ -38,8 +38,11 @@ def upload(base, name, data, replace=False):
     return json.loads(body)
 
 
-def share(base, key, target="poub"):
-    status, _, body = call(base, "POST", f"/public?target={target}&key={key}", b"")
+def share(base, key, target="poub", seconds=None):
+    query = f"/public?target={target}&key={key}"
+    if seconds is not None:
+        query += f"&seconds={seconds}"
+    status, _, body = call(base, "POST", query, b"")
     assert status == 200, body
     return urlsplit(json.loads(body)["url"]).path
 
@@ -76,6 +79,23 @@ def test_markdown_reader_offers_the_public_link(live_server):
     link = share(live_server, "inbox/deck.md")
     page = call(live_server, "GET", "/md/inbox/deck.md")[2].decode()
     assert f'data-link="{server.PUBLIC_URL}{link}"' in page
+
+
+def test_sharing_again_after_an_outside_edit_shows_the_new_link(
+    live_server, sharei_root
+):
+    upload(live_server, "deck.md", b"# Deck\n")
+    old = share(live_server, "inbox/deck.md", seconds=0)
+    path = sharei_root / "inbox" / "drop" / "deck.md"
+    path.write_bytes(b"# Deck, rewritten\n")
+    page = call(live_server, "GET", "/md/inbox/deck.md")[2].decode()
+    assert 'data-link=""' in page
+
+    link = share(live_server, "inbox/deck.md")
+    assert link != old
+    page = call(live_server, "GET", "/md/inbox/deck.md")[2].decode()
+    assert f'data-link="{server.PUBLIC_URL}{link}"' in page
+    assert old.split("/")[2] not in server.PUBLIC
 
 
 def test_links_expire_after_one_day_by_default(live_server):
