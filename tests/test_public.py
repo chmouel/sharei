@@ -68,6 +68,7 @@ def test_shared_file_is_served_with_strict_headers(live_server):
 def test_markdown_reader_offers_the_public_link(live_server):
     upload(live_server, "deck.md", b"# Deck\n")
     page = call(live_server, "GET", "/md/inbox/deck.md")[2].decode()
+    assert 'id="theme-select"' in page
     assert (
         'data-public data-target="poub" data-key="inbox/deck.md" data-link=""' in page
     )
@@ -156,6 +157,7 @@ def test_markdown_is_rendered_for_visitors(live_server):
         assert prefix not in page
     assert '"/public/_assets/vendor/mermaid.min.js"' in page
     assert 'src=\\"/static/x\\"' in page  # the source itself is left as written
+    assert 'id="theme-select"' in page
     assert "present-go" in page and "/comments/" not in page and "/drop" not in page
     for asset in page.split('="/public/_assets/')[1:]:
         name = "/public/_assets/" + asset.split('"', 1)[0]

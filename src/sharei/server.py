@@ -1687,6 +1687,7 @@ def markdown_page(
         favicon="/icon-192.png",
         theme_default=THEME_DEFAULT,
         theme_key="sharei-theme",
+        theme=True,
         before=f'{data}<script nonce="{nonce}">{READER_JS}</script>',
         after=share_script + qr_script(nonce) + search_script(nonce),
     )
@@ -1726,6 +1727,7 @@ def public_markdown_page(
         style=READER_CSS + ".bar > a:first-child { display:none }",
         theme_default=THEME_DEFAULT,
         theme_key="sharei-theme",
+        theme=True,
         before=f'<script nonce="{nonce}">{PUBLIC_READER_JS}</script>',
     ).decode()
     for prefix in PUBLIC_ASSET_ATTRIBUTES:

@@ -56,7 +56,9 @@ up (see below).
 The round button at the top right of each page picks a colour theme: light,
 dark, Dracula, Tokyo Night, Rosé Pine or Rosé Pine Dawn. Auto, the default,
 follows your device. Each browser remembers its own choice, and the `theme`
-setting picks the default for browsers that haven't chosen yet.
+setting picks the default for browsers that haven't chosen yet. A markdown
+page, including one opened from a public link, has the same choice behind
+the half-circle icon in its top bar.
 
 If you add sharei to your Android home screen, it shows up in the Share menu,
 so you can send a link, some text or a photo from any app to your computer.
@@ -403,7 +405,10 @@ on the diagram; Escape wipes the drawing.
 To talk through a note, press Present in the top bar (or `p`). Each `##`
 section becomes a full-screen slide, a diagram on its own fills the
 screen, and the arrow keys play a slide's story before moving to the next
-slide. Escape takes you back to the page.
+slide. To move on before the story ends, use the arrows in the corner of
+the screen, `n` and `b`, or Shift+Page Down and Shift+Page Up. The button
+next to them switches the colour theme while you present. Escape takes you
+back to the page.
 
 A markdown file whose front matter says `presentation: true` (or `yes`) is
 treated as a deck: Drop shows a small ▶ Present badge on its row and opens
