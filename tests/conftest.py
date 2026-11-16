@@ -40,6 +40,8 @@ def sharei_root(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "PUSH_DIR", tmp_path / "cache" / "push")
     monkeypatch.setattr(server, "PUSH_KEY", [])
     monkeypatch.setattr(server, "PUSH_PENDING", {})
+    monkeypatch.setattr(server, "PUBLIC", {})
+    monkeypatch.setattr(server, "EXPIRY", {})
     return root
 
 

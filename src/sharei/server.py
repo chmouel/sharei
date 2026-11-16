@@ -37,6 +37,7 @@ from collections.abc import Callable
 from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from stat import S_ISREG
 from typing import NamedTuple, TypedDict
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
 
@@ -72,6 +73,7 @@ from sharei.assets import (
     PDF_JS,
     PLAY_CSS,
     PLAY_ICON,
+    PUBLIC_JS,
     PUSH_JS,
     QR_CSS,
     QR_JS,
@@ -214,6 +216,23 @@ EXPIRY: dict[str, float] = {}
 EXPIRY_MAX = 30 * 24 * 60 * 60
 EXPIRY_SWEEP_SECONDS = 60
 
+PUBLIC_FILE = ".public.json"
+PUBLIC_LOCK = threading.Lock()
+PUBLIC_TOKEN = re.compile(r"[A-Za-z0-9_-]{22}")
+PUBLIC_ROUTE = re.compile(r"/public/([A-Za-z0-9_-]{22})(?:/.*)?")
+# Caddy sets this on requests that come in through the internet-facing /public/* handle.
+PUBLIC_HEADER = "X-Sharei-Public"
+
+
+class PublicLink(TypedDict):
+    path: str
+    dev: int
+    ino: int
+    mtime: int
+
+
+PUBLIC: dict[str, PublicLink] = {}
+
 
 class ClipEntry(TypedDict):
     id: int
@@ -312,6 +331,7 @@ class PoubFile(TypedDict):
     presentation: bool
     timestamp: float
     expires: float | None
+    public: str
 
 
 THEME_DEFAULT = "auto"
@@ -611,6 +631,7 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
                 f"&t={THUMB_VERSION}",
                 "timestamp": str(modified),
                 "expires": str(expires_at(path) or ""),
+                "public": public_url_for(path),
             }
         )
     return sorted(shots, key=lambda shot: float(shot["timestamp"]), reverse=True)
@@ -760,6 +781,7 @@ def delete_shot(encoded: str) -> bool:
     path = shot_path(encoded)
     if path is None:
         return False
+    public_forget(path)
     forget_thumbnail(path)
     path.unlink()
     expiry_forget(path)
@@ -769,6 +791,7 @@ def delete_shot(encoded: str) -> bool:
 def delete_all_shots(project: str | None = None) -> int:
     deleted = 0
     for path in shot_files(project):
+        public_forget(path)
         try:
             forget_thumbnail(path)
             path.unlink()
@@ -807,12 +830,14 @@ def replace_image(path: Path, payload: bytes) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+    public_rebind(path)
 
 
 def delete_poub(encoded: str) -> bool:
     path = poub_path(encoded)
     if path is None:
         return False
+    public_forget(path)
     forget_thumbnail(path)
     path.unlink()
     expiry_forget(path)
@@ -823,6 +848,7 @@ def delete_poub(encoded: str) -> bool:
 def delete_all_poub(project: str | None = None) -> int:
     deleted = 0
     for path in poub_paths(project):
+        public_forget(path)
         try:
             forget_thumbnail(path)
             path.unlink()
@@ -927,6 +953,7 @@ def sweep_expired() -> int:
                 continue
             if when > now:
                 continue
+            public_forget(path)
             try:
                 forget_thumbnail(path)  # both styles, shots and drops alike
                 path.unlink()
@@ -1052,6 +1079,7 @@ def publish_poub(temporary: Path, name: str) -> Path:
         temporary.unlink(missing_ok=True)
         expiry_forget(candidate)
         comments_forget(candidate)
+        public_forget(candidate)
         return candidate
     raise OSError("too many files already use that name")
 
@@ -1062,10 +1090,12 @@ def replace_poub(temporary: Path, name: str) -> Path | None:
     if path.is_symlink() or not path.is_file():
         return None
     if expired(path):
+        public_forget(path)
         expiry_forget(path)
         comments_forget(path)
     forget_thumbnail(path)
     os.replace(temporary, path)
+    public_rebind(path)
     return path
 
 
@@ -1086,6 +1116,183 @@ def comments_count(path: Path) -> int:
         return 0
     with comments.LOCK:
         return len(comments.load(comments_file(path)))
+
+
+def public_identity(path: Path | os.stat_result) -> tuple[int, int, int]:
+    stat = path if isinstance(path, os.stat_result) else path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_mtime_ns
+
+
+def public_load() -> None:
+    """Read the public links. An unreadable or corrupt file turns every link off."""
+    with PUBLIC_LOCK:
+        PUBLIC.clear()
+        try:
+            data = json.loads((ROOT / PUBLIC_FILE).read_text())
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as error:
+            print(f"Cannot read {ROOT / PUBLIC_FILE}, public links are off: {error}")
+            return
+        if not isinstance(data, dict):
+            return
+        for token, entry in data.items():
+            if (
+                PUBLIC_TOKEN.fullmatch(token)
+                and isinstance(entry, dict)
+                and isinstance(entry.get("path"), str)
+                and all(type(entry.get(key)) is int for key in ("dev", "ino", "mtime"))
+            ):
+                PUBLIC[token] = PublicLink(
+                    path=entry["path"],
+                    dev=entry["dev"],
+                    ino=entry["ino"],
+                    mtime=entry["mtime"],
+                )
+
+
+def public_save_locked() -> None:
+    """Write the links durably; raises OSError so callers never report a save that failed."""
+    target = ROOT / PUBLIC_FILE
+    temporary = target.with_name(f"{PUBLIC_FILE}.{secrets.token_hex(4)}.part")
+    try:
+        with temporary.open("w") as stream:
+            json.dump(PUBLIC, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def public_tokens_locked(key: str) -> list[str]:
+    return [token for token, entry in PUBLIC.items() if entry["path"] == key]
+
+
+def public_token(path: Path) -> str | None:
+    key = expiry_key(path)
+    if key is None:
+        return None
+    with PUBLIC_LOCK:
+        tokens = public_tokens_locked(key)
+    return tokens[0] if tokens else None
+
+
+def public_link(token: str, path: Path) -> str:
+    return f"{PUBLIC_URL}/public/{token}/{quote(path.name)}"
+
+
+def public_url_for(path: Path) -> str:
+    """The public link of path when it has a live one, else an empty string."""
+    if not PUBLIC:
+        return ""
+    token = public_token(path)
+    if token is None:
+        return ""
+    with PUBLIC_LOCK:
+        entry = PUBLIC.get(token)
+    try:
+        current = public_identity(path)
+    except OSError:
+        return ""
+    if entry is None or (entry["dev"], entry["ino"], entry["mtime"]) != current:
+        return ""
+    return public_link(token, path)
+
+
+def public_add(path: Path) -> str:
+    """Make path public, reusing its token when it already has one."""
+    key = expiry_key(path)
+    if key is None:
+        raise OSError(f"{path} is outside {ROOT}")
+    dev, ino, mtime = public_identity(path)
+    with PUBLIC_LOCK:
+        for token in public_tokens_locked(key):
+            entry = PUBLIC[token]
+            if (entry["dev"], entry["ino"], entry["mtime"]) == (dev, ino, mtime):
+                return token
+        token = secrets.token_urlsafe(16)
+        PUBLIC[token] = PublicLink(path=key, dev=dev, ino=ino, mtime=mtime)
+        try:
+            public_save_locked()
+        except OSError:
+            del PUBLIC[token]
+            raise
+    return token
+
+
+def public_unshare(path: Path) -> int:
+    """Revoke path's links at once; raises OSError when the revocation could not be saved."""
+    key = expiry_key(path)
+    if key is None:
+        return 0
+    with PUBLIC_LOCK:
+        tokens = public_tokens_locked(key)
+        for token in tokens:
+            del PUBLIC[token]
+        if tokens:
+            public_save_locked()
+    return len(tokens)
+
+
+def public_forget(path: Path) -> None:
+    """Revoke path's links before it goes away. A failed save only matters after a restart,
+    and then the identity check in public_open() still refuses any other file at that path."""
+    try:
+        public_unshare(path)
+    except OSError as error:
+        print(f"Cannot save {ROOT / PUBLIC_FILE}: {error}")
+
+
+def public_rebind(path: Path) -> None:
+    """Keep path's link on the new bytes after its owner replaced or annotated it."""
+    key = expiry_key(path)
+    if key is None:
+        return
+    with PUBLIC_LOCK:
+        tokens = public_tokens_locked(key)
+        if not tokens:
+            return
+        dev, ino, mtime = public_identity(path)
+        for token in tokens:
+            PUBLIC[token] = PublicLink(path=key, dev=dev, ino=ino, mtime=mtime)
+        try:
+            public_save_locked()
+        except OSError as error:
+            print(f"Cannot save {ROOT / PUBLIC_FILE}: {error}")
+
+
+def public_open(token: str) -> tuple[Path, io.BufferedReader] | None:
+    """The shared file behind token, opened, or None. The file must still be a visible,
+    unexpired drop or shot, and the very file that was shared: same device, inode and mtime."""
+    if not PUBLIC_TOKEN.fullmatch(token):
+        return None
+    with PUBLIC_LOCK:
+        entry = PUBLIC.get(token)
+    if entry is None:
+        return None
+    parts = entry["path"].split("/")
+    if len(parts) >= 3 and parts[1] == "shots":
+        path = shot_path(quote(entry["path"]))
+    elif len(parts) == 3 and parts[1] == "drop":
+        path = poub_path(f"{quote(parts[0])}/{quote(parts[2])}")
+    else:
+        path = None
+    if path is None:
+        return None
+    try:
+        stream = path.open("rb")
+    except OSError:
+        return None
+    stat = os.fstat(stream.fileno())
+    if not S_ISREG(stat.st_mode) or public_identity(stat) != (
+        entry["dev"],
+        entry["ino"],
+        entry["mtime"],
+    ):
+        stream.close()
+        return None
+    return path, stream
 
 
 def sweep_partials(max_age: float = 24 * 60 * 60) -> None:
@@ -1183,6 +1390,7 @@ def poub_files() -> list[PoubFile]:
                 presentation=is_presentation(path),
                 timestamp=stat.st_mtime,
                 expires=expires_at(path),
+                public=public_url_for(path),
             )
         )
     files.sort(key=lambda entry: entry["timestamp"], reverse=True)
@@ -1847,14 +2055,21 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
                 f'data-name="{name}" aria-label="Share {name}" hidden>↗</button>'
             )
         expires = f"{entry['expires']:.0f}" if entry["expires"] else ""
+        link = html.escape(entry["public"])
+        public = (
+            f'<button class="file-public{" set" if link else ""}" type="button" data-public '
+            f'data-target="poub" data-key="{entry["url"]}" data-link="{link}" data-name="{name}" '
+            f'aria-label="Public link for {name}">🌐</button>'
+        )
+        pill = '<span class="public-pill">public</span>' if link else ""
         groups.setdefault(entry["project"], []).append(f"""
           <div class="file-row{" has-tools" if annotate else ""}">
             <a class="file" href="{href}"{download}>
               <span class="file-thumb">{thumb}</span>
-              <span class="file-copy"><strong>{name}</strong><small>{entry["size"]} <i>·</i> {entry["date"]}<span class="expires-left" data-expires-left="{expires}" data-prefix=" · expires in " hidden></span></small></span>
+              <span class="file-copy"><strong>{name}</strong><small>{pill}{entry["size"]} <i>·</i> {entry["date"]}<span class="expires-left" data-expires-left="{expires}" data-prefix=" · expires in " hidden></span></small></span>
               <span class="file-action">{action}</span>
             </a>
-            <span class="file-tools">{qr}{share}{annotate}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
+            <span class="file-tools">{qr}{share}{annotate}{public}<button class="file-expiry" type="button" data-expiry data-compact data-target="poub" data-key="{entry["url"]}" data-expires="{expires}" aria-label="Expiry for {name}">⏱</button><button class="file-delete" type="button" data-url="{entry["url"]}" aria-label="Delete {name}">✕</button></span>
           </div>""")
     wipe = (
         '<button class="wipe" id="delete-all" type="button">Delete all</button>'
@@ -1893,6 +2108,7 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
   <script>{DROP_JS}</script>
   <script>{ANNOTATE_JS}</script>
   <script>{EXPIRY_JS}</script>
+  <script>{PUBLIC_JS}</script>
   <script>{SHARE_JS}</script>
   {live_script("drop", live_stamp(poub_paths()))}"""
     return layout("Drop files", "drop", tab_counts, body, extra_css=DROP_CSS)
@@ -2104,7 +2320,7 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
               <div class="tile-wrap">
                 <a class="tile" href="{shot["url"]}" data-index="{index}">
                   <img src="{shot["thumb"]}" alt="{html.escape(shot["name"])}" loading="lazy" decoding="async">
-                  <span>{html.escape(shot["name"])}</span>
+                  <span>{"🌐 " if shot["public"] else ""}{html.escape(shot["name"])}</span>
                 </a>{f'<span class="tile-expiry" data-expires-left="{shot["expires"]}" data-prefix="⏱ " hidden></span>' if shot["expires"] else ""}
                 <button class="tile-delete" type="button" data-key="{shot["key"]}" aria-label="Delete {html.escape(shot["name"])}">✕</button>
               </div>"""
@@ -2132,7 +2348,16 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
         [
             {
                 key: shot[key]
-                for key in ("project", "name", "date", "key", "url", "thumb", "expires")
+                for key in (
+                    "project",
+                    "name",
+                    "date",
+                    "key",
+                    "url",
+                    "thumb",
+                    "expires",
+                    "public",
+                )
             }
             for shot in shots
         ]
@@ -2146,6 +2371,8 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
       <span class="viewer-tools"><button class="annotate" id="annotate-shot" type="button" data-annotate
         data-target="shots" hidden>Annotate</button>
       <button class="share" id="share-shot" type="button" hidden>Share</button>
+      <button class="share" id="public-shot" type="button" data-public data-target="shot"
+        aria-label="Public link">🌐</button>
       <button class="expiry-button" id="expiry-shot" type="button" data-expiry data-target="shot"
         data-label="Expire">Expire</button>
       <button class="wipe" id="delete-shot" type="button">Delete</button>
@@ -2159,6 +2386,7 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
   <script>{CAROUSEL_JS}</script>
   <script>{ANNOTATE_JS}</script>
   <script>{EXPIRY_JS}</script>
+  <script>{PUBLIC_JS}</script>
   <script>{SHARE_JS}</script>
   {live_script("shots", live_stamp(shot_files()))}"""
     return layout("Screenshots", "shots", tab_counts, body, wide=True)
@@ -2314,6 +2542,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                     else {}
                 ),
                 **({"presentation": True} if is_presentation(path) else {}),
+                **({"public": link} if (link := public_url_for(path)) else {}),
             }
         )
     shots = [
@@ -2324,6 +2553,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
             "age_seconds": int(now - float(shot["timestamp"])),
             "url": shot["url"].split("?", 1)[0],
             **({"expires": float(shot["expires"])} if shot["expires"] else {}),
+            **({"public": shot["public"]} if shot["public"] else {}),
         }
         for shot in available_shots(project)[:limit]
     ]
@@ -2647,6 +2877,9 @@ class Handler(web.Handler):
         if not self.request_allowed():
             return
         parsed = urlparse(self.path)
+        if self.public_request() or parsed.path.startswith("/public/"):
+            self.send_public(parsed.path)
+            return
         if parsed.path == "/":
             self.send_response(302)
             self.send_header("Location", "/shots")
@@ -2983,7 +3216,14 @@ class Handler(web.Handler):
     def do_POST(self) -> None:
         if not self.request_allowed():
             return
+        if self.public_request():
+            self.send_error(404)
+            return
         parsed = urlparse(self.path)
+        if parsed.path in ("/public", "/public/delete"):
+            self.handle_public(parsed.path, parse_qs(parsed.query))
+            return
+
         if parsed.path == "/shots/delete-all":
             project = self.query_project(parse_qs(parsed.query))
             if project is not False:
@@ -3205,6 +3445,102 @@ class Handler(web.Handler):
             return
         self.send_json({"deleted": 1})
 
+    def public_request(self) -> bool:
+        """Whether the request came through the proxy's public door; any value counts."""
+        return self.headers.get(PUBLIC_HEADER) is not None
+
+    def send_public(self, path: str) -> None:
+        match = PUBLIC_ROUTE.fullmatch(path)
+        opened = public_open(match[1]) if match else None
+        if opened is None:
+            self.send_error(404)
+            return
+        file, stream = opened
+        with stream:
+            content_type, headers = shared_file_headers(file, raw=False)
+            headers["Cache-Control"] = "no-store"
+            headers["Referrer-Policy"] = "no-referrer"
+            headers["X-Robots-Tag"] = "noindex"
+            # No scripts at all, unlike the LAN's HTML_CSP: nothing public may run code.
+            headers["Content-Security-Policy"] = "sandbox"
+            self.send_stream(stream, content_type, headers)
+
+    def send_stream(
+        self, stream: io.BufferedReader, content_type: str, headers: dict[str, str]
+    ) -> None:
+        """send_file() for a file that is already open, with the same single-range support."""
+        size = os.fstat(stream.fileno()).st_size
+        start, end, status = 0, size - 1, 200
+        match = re.fullmatch(
+            r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip()
+        )
+        if match and (match[1] or match[2]):
+            if match[1]:
+                start = int(match[1])
+                end = min(int(match[2]), size - 1) if match[2] else size - 1
+            else:
+                start = max(size - int(match[2]), 0)
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            status = 206
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        stream.seek(start)
+        remaining = end - start + 1
+        try:
+            while remaining and (chunk := stream.read(min(128 * 1024, remaining))):
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+
+    def handle_public(self, route: str, query: dict[str, list[str]]) -> None:
+        target = (query.get("target") or [""])[-1]
+        resolve = {"poub": poub_path, "shot": shot_path}.get(target)
+        if resolve is None:
+            self.send_json({"error": "target must be poub or shot"}, status=400)
+            return
+        path = resolve((query.get("key") or [""])[-1])
+        if path is None:
+            self.send_json({"error": "not found"}, status=404)
+            return
+        if route == "/public/delete":
+            try:
+                self.send_json({"deleted": public_unshare(path)})
+            except OSError as error:
+                self.send_json(
+                    {
+                        "error": "the link is off until the next restart, but this "
+                        f"could not be saved; unshare again later: {error}"
+                    },
+                    status=500,
+                )
+            return
+        try:
+            token = public_add(path)
+        except OSError as error:
+            self.send_json({"error": str(error)}, status=500)
+            return
+        self.send_json({"url": public_link(token, path)})
+
+    def log_message(self, format: str, *args: object) -> None:
+        message = format % args
+        print(
+            f"{self.client_address[0]} - "
+            f"{re.sub(r'/public/[^/ ?]+', '/public/<redacted>', message)}"
+        )
+
     def handle_expiry(self, query: dict[str, list[str]]) -> None:
         target = (query.get("target") or [""])[-1]
         resolve = {"poub": poub_path, "shot": shot_path}.get(target)
@@ -3310,6 +3646,7 @@ class Handler(web.Handler):
                 **({"view": view} if view else {}),
                 **({"presentation": True} if is_presentation(path) else {}),
                 **({"replaced": True} if replaced else {}),
+                **({"public": link} if (link := public_url_for(path)) else {}),
             }
         )
 
@@ -3509,35 +3846,40 @@ class Handler(web.Handler):
     def send_shared_file(self, path: Path, raw: bool) -> None:
         """A dropped or shared file: media inline, text as text/plain on request, the rest
         as a download."""
-        headers = {
-            "Cache-Control": "no-cache",
-            "X-Content-Type-Options": "nosniff",
-        }
-        suffix = path.suffix.lower()
-        content_type = (
-            AUDIO_TYPES.get(suffix)
-            or HEIC_TYPES.get(suffix)
-            or VECTOR_TYPES.get(suffix)
-            or mimetypes.guess_type(path.name)[0]
-            or "application/octet-stream"
-        )
-        if raw and (suffix in MARKDOWN_SUFFIXES or looks_like_text(path)):
-            content_type = "text/plain; charset=utf-8"
-        elif suffix in HTML_SUFFIXES:
-            # Render in the browser, but in an opaque origin so the page
-            # cannot reach the sharei API or its storage.
-            headers["Content-Security-Policy"] = HTML_CSP
-        elif suffix in VECTOR_SUFFIXES:
-            headers.update(vector_headers({}))
-        elif (
-            suffix not in IMAGE_LIKE_SUFFIXES
-            and suffix not in HEIC_SUFFIXES
-            and suffix not in MEDIA_SUFFIXES
-        ):
-            headers["Content-Disposition"] = (
-                f"attachment; filename*=UTF-8''{quote(path.name)}"
-            )
+        content_type, headers = shared_file_headers(path, raw)
         self.send_file(path, content_type, headers)
+
+
+def shared_file_headers(path: Path, raw: bool) -> tuple[str, dict[str, str]]:
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+    }
+    suffix = path.suffix.lower()
+    content_type = (
+        AUDIO_TYPES.get(suffix)
+        or HEIC_TYPES.get(suffix)
+        or VECTOR_TYPES.get(suffix)
+        or mimetypes.guess_type(path.name)[0]
+        or "application/octet-stream"
+    )
+    if raw and (suffix in MARKDOWN_SUFFIXES or looks_like_text(path)):
+        content_type = "text/plain; charset=utf-8"
+    elif suffix in HTML_SUFFIXES:
+        # Render in the browser, but in an opaque origin so the page
+        # cannot reach the sharei API or its storage.
+        headers["Content-Security-Policy"] = HTML_CSP
+    elif suffix in VECTOR_SUFFIXES:
+        headers.update(vector_headers({}))
+    elif (
+        suffix not in IMAGE_LIKE_SUFFIXES
+        and suffix not in HEIC_SUFFIXES
+        and suffix not in MEDIA_SUFFIXES
+    ):
+        headers["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(path.name)}"
+        )
+    return content_type, headers
 
 
 def phone_ip() -> str | None:
@@ -3771,6 +4113,7 @@ def main() -> None:
     drop_dir(DEFAULT_PROJECT).mkdir(parents=True, exist_ok=True)
     sweep_partials()
     expiry_load()
+    public_load()
     sweep_expired()
     threading.Thread(target=expiry_sweeper, daemon=True).start()
     if PUSH_ENABLED:

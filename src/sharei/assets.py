@@ -60,19 +60,25 @@ EXTRA_CSS = """
   .annotator-credit { margin:0; padding:3px 0; color:var(--faint); font-size:10.5px; line-height:1.4; text-align:center; }
   .annotator-credit a { color:var(--soft); text-decoration:underline; text-underline-offset:2px; }
   .file-row { position:relative; display:flex; }
-  .file-row .file { flex:1; padding-right:80px; }
-  .file-row.has-tools .file { padding-right:144px; }
+  .file-row .file { flex:1; padding-right:112px; }
+  .file-row.has-tools .file { padding-right:176px; }
   .file-tools { position:absolute; top:50%; right:10px; transform:translateY(-50%); display:flex; gap:6px; }
   .file-tools .file-delete { position:static; }
-  .file-annotate, .file-expiry, .file-share { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .file-annotate:focus-visible, .file-expiry:focus-visible, .file-share:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .file-annotate, .file-expiry, .file-share, .file-public { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .file-annotate:focus-visible, .file-expiry:focus-visible, .file-share:focus-visible, .file-public:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .file-public { filter:grayscale(1); opacity:.7; }
+  .file-public.set { filter:none; opacity:1; border-color:var(--accent); background:color-mix(in srgb, var(--accent) 18%, var(--base)); }
+  .public-pill { display:inline-block; margin-right:6px; padding:1px 6px; border-radius:999px; background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); font-size:10.5px; font-weight:650; }
+  .public-menu { max-width:min(320px, calc(100vw - 16px)); }
+  .public-menu code { padding:6px 8px; border-radius:8px; background:var(--field); color:var(--ink); font-size:11px; overflow-wrap:anywhere; user-select:all; }
+  .public-menu code[hidden] { display:none; }
   .file-share[hidden] { display:none; }
   .file-qr { display:none; }
   @media (min-width:900px) {
     .file-qr { display:grid; place-items:center; width:26px; height:26px; border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:8px; background:color-mix(in srgb, var(--base) 72%, transparent); color:var(--accent); font:inherit; font-size:12px; line-height:1; cursor:pointer; }
     .file-qr:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-    .file-row .file { padding-right:112px; }
-    .file-row.has-tools .file { padding-right:176px; }
+    .file-row .file { padding-right:144px; }
+    .file-row.has-tools .file { padding-right:208px; }
   }
   .file-expiry { border-color:color-mix(in srgb, var(--warn) 30%, transparent); color:color-mix(in srgb, var(--warn) 70%, var(--muted)); }
   .file-expiry.set, .expiry-button.set { border-color:color-mix(in srgb, var(--warn) 60%, transparent); color:var(--warn); }
@@ -160,6 +166,98 @@ if (typeof navigator.share === "function") {
     });
   });
 }
+"""
+
+
+PUBLIC_JS = """
+(() => {
+  const menu = document.createElement("div");
+  menu.className = "expiry-menu public-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "dialog");
+  menu.setAttribute("aria-label", "Public link");
+  menu.innerHTML = "<span></span><code hidden></code><div></div>";
+  const title = menu.querySelector("span"), code = menu.querySelector("code"), row = menu.querySelector("div");
+  document.body.append(menu);
+  const previousBusy = window.liveBusy;
+  window.liveBusy = () => !menu.hidden || (previousBusy ? previousBusy() : false);
+  let owner = null;
+  const absolute = (link) => new URL(link, location.href).href;
+
+  async function copy(link) {
+    try {
+      await navigator.clipboard.writeText(absolute(link));
+    } catch (error) {
+      prompt("Public link", absolute(link));
+    }
+  }
+  async function call(route, button) {
+    const query = "?target=" + encodeURIComponent(button.dataset.target) + "&key=" + encodeURIComponent(button.dataset.key);
+    const response = await fetch(route + query, { method: "POST" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "HTTP " + response.status);
+    return body;
+  }
+  function action(label, run) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", run);
+    row.append(button);
+  }
+  function close() { menu.hidden = true; owner = null; }
+  function open(button) {
+    owner = button;
+    const link = button.dataset.link;
+    row.replaceChildren();
+    if (link) {
+      title.textContent = "Anyone with this link can download it";
+      code.textContent = absolute(link);
+      code.hidden = false;
+      action("Copy link", async () => { close(); await copy(link); });
+      action("Unshare", async () => {
+        close();
+        try {
+          await call("/public/delete", button);
+          location.reload();
+        } catch (error) {
+          alert("Could not unshare: " + error.message);
+        }
+      });
+    } else {
+      title.textContent = "Make " + (button.dataset.name || "this file") + " public?";
+      code.hidden = true;
+      action("Share publicly", async () => {
+        close();
+        try {
+          const body = await call("/public", button);
+          await copy(body.url);
+          location.reload();
+        } catch (error) {
+          alert("Could not share: " + error.message);
+        }
+      });
+      action("Cancel", close);
+    }
+    menu.hidden = false;
+    const box = button.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
+    menu.style.left = Math.max(8, Math.min(box.right - width, innerWidth - width - 8)) + "px";
+    menu.style.top = (box.bottom + height + 12 > innerHeight ? Math.max(8, box.top - height - 6) : box.bottom + 6) + "px";
+    row.querySelector("button").focus({ preventScroll: true });
+  }
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-public]");
+    if (button) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (owner === button) close(); else open(button);
+    } else if (!menu.contains(event.target)) close();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !menu.hidden) { event.stopPropagation(); close(); }
+  }, true);
+  addEventListener("resize", close);
+})();
 """
 
 
@@ -275,6 +373,12 @@ CAROUSEL_JS = """
     const expiry = $("expiry-shot");
     expiry.dataset.key = shot.key;
     expiry.dataset.expires = shot.expires || "";
+    const linkButton = $("public-shot");
+    linkButton.dataset.key = shot.key;
+    linkButton.dataset.name = shot.name;
+    linkButton.dataset.link = shot.public || "";
+    linkButton.textContent = shot.public ? "🌐 Public" : "🌐";
+    linkButton.classList.toggle("set", !!shot.public);
     if (window.shareiExpiryPaint) window.shareiExpiryPaint();
     $("counter").textContent = `${current + 1} / ${shots.length}`;
     $("caption-name").textContent = shot.name;

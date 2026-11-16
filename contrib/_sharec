@@ -80,6 +80,7 @@ _arguments -s -S \
     '(-y --yes)'{-y,--yes}'[upload a markdown file'\''s local images without asking]' \
     '--json[print the upload as JSON]' \
     '--replace[overwrite the dropped file with the same name, keeping its comments]' \
+    '--public[also make the upload public and print its link]' \
     '1:file to share, get to fetch, clip to set the clipboard, notes to list or search the notes, cat to print a route, or cp to copy text (.md/.markdown is shown as markdown, text files highlighted):__sharei_shot_files'
 
 # vim: ft=zsh

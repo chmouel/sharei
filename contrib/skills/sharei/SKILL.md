@@ -106,6 +106,19 @@ the user at the `view` link as usual, or at `/md/<project>/<name>#slide=1` to
 open slide one. `/recent` drop items and the upload JSON carry
 `presentation: true` for these.
 
+### Public links
+
+Everything on sharei is private to the user's network. Only when the user
+asks to share something with someone outside, make it public:
+
+```bash
+sharec report.pdf -p <project> --public   # prints "Public:   https://.../public/<token>/report.pdf"
+```
+
+Anyone holding that link can download the file until it is deleted, expires,
+or the user unshares it from Drop or Screenshots (🌐). `/recent` items and the
+upload JSON carry `public` with the link. Never make a file public on your own.
+
 ### Review comments
 
 The user can comment on lines of a shared markdown file from its `/md`

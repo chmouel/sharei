@@ -49,6 +49,7 @@ proxy with authentication (see SECURITY.md).
   review comments from `/comments/...?format=prompt` (or the JSON). A name
   not among the 50 newest drops needs `-p`. `sharec FILE --replace` uploads
   with `replace=1` so a revised file keeps its name and comments.
+  `sharec FILE --public` then POSTs `/public` and prints the link.
   `sharec clip [TEXT|-] [--ttl S] [--clear]` writes `/clip`, `/clip/ttl` and
   `/clip/clear`; with `--ttl` and no TEXT only the expiry changes.
   `sharec get clip --json` prints `/clip/state` (the text and its history),
@@ -105,6 +106,8 @@ the service.
     checked by `aniflow.comments`) marks a diagram comment
   - `<root>/.expiry.json`: expiries set from the UI, mapping a path relative
     to the root to an epoch
+  - `<root>/.public.json`: public links, mapping a token to `{path, dev,
+    ino, mtime}` (path relative to the root, the rest from `stat`)
 - Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
   project is `inbox`.
 - Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`
@@ -207,6 +210,14 @@ Files:
 - `/vendor/...`
 - `/static/...`, `/icons/<name>.svg`: aniflow's built files and diagram
   icons, served by `send_asset()`
+- `/public/<token>[/<name>]`: a drop or screenshot made public, the only
+  route reachable from outside (see the security rules). `<name>` is
+  cosmetic. Served as an attachment (images, video and audio inline) with
+  `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+  `X-Robots-Tag: noindex` and a `sandbox` CSP without scripts, from the
+  descriptor `public_open()` checked (`send_stream`). The Drop rows (🌐,
+  `public-pill`) and the shot viewer (`#public-shot`) drive it through
+  `PUBLIC_JS`; `/recent` and the upload reply carry `public` (the URL)
 
 Data:
 
@@ -243,6 +254,9 @@ POST:
 - `/share`: Android share target, converting HEIC the same way
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
+- `/public?target=poub|shot&key=`: makes a file public, returns `{url}`
+  (the same token when it already is); `/public/delete?target=&key=`
+  returns `{deleted}`, or 500 when the revoke could not be saved
 - `/clip`, `/clip/clear`, `/clip/ttl`
 - `/push/subscribe`, `/push/unsubscribe`: push only, JSON subscription body
 - `/clip/history/restore?id=`, `/clip/history/delete?id=`, `/clip/history/clear`
@@ -279,6 +293,19 @@ These exist on purpose. Keep them when changing or adding code.
   an expired or missing file has none, and every delete, sweep or new
   publish under the name calls `comments_forget()`. Comment text is
   rendered with `textContent`, never as HTML.
+- Public links: the proxy sets `X-Sharei-Public` on `/public/*` only and
+  strips it elsewhere. With the header present (any value), `do_GET`
+  serves only `/public/<token>` and `do_POST` returns 404, before any other
+  routing; sharei may narrow what the proxy calls public, never widen it.
+  The route maps a token to a stored path, never joins the URL onto one,
+  re-checks it through `shot_path()`/`poub_path()` and compares the opened
+  file's dev, inode and mtime with the stored ones, so another file at the
+  same path is a 404. `public_forget()` runs before every unlink (deletes,
+  sweep) and after every publish, and in `replace_poub`'s expired branch;
+  a live replace or an annotation calls `public_rebind()`. A failed save
+  raises: an add rolls back, an unshare stays revoked in memory and
+  answers 500. `log_message` redacts the token. Lock order:
+  `EXPIRY_LOCK` then `PUBLIC_LOCK`, never the reverse.
 - Artifacts: `/download/<key>` only serves a path found by the last scan
   (`available_artifacts()`), never a path from the request. The scanner
   (`artifact_files`) keeps only regular files whose resolved path stays

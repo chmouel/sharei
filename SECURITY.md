@@ -25,6 +25,30 @@ password in front.
 
 Markdown is formatted in your browser and never leaves your machine.
 
+## Public links
+
+A file you share publicly is the one exception to the password. Its link
+holds 128 random bits and is the only key: anyone who has it can download
+that one file, and nobody can guess it. The link stops working as soon as
+you unshare, delete or replace an expired file, or when the file expires. It
+is also refused when another file shows up at the same place. Copies already
+downloaded stay with whoever downloaded them.
+
+Public files are sent with a `sandbox` Content-Security-Policy, so an HTML
+or SVG file cannot run scripts, and with `no-store` and `no-referrer`.
+sharei hides the links in its own request log.
+
+The proxy decides which requests are public, by setting `X-Sharei-Public` on
+`/public/*` and removing it everywhere else (see the README). With the
+header present, sharei serves `GET /public/<token>` and returns 404 for
+everything else, uploads and deletes included. A proxy that forgets to strip
+the header on private paths makes them unreachable, never public. A proxy
+that lets other paths through without the password exposes them, as it
+would without this feature.
+
+If saving an unshare fails, sharei says so: the link is off right away but
+comes back after a restart, so unshare it again.
+
 Phone notifications, when turned on, go through the push service of the
 phone's browser (Google, Mozilla or Apple). The message, a file name or the
 first words of the clipboard, is encrypted for that browser, but the service

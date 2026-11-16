@@ -237,6 +237,15 @@ def upload(name: str, data: bytes, project: str, replace: bool = False) -> dict:
         raise failure(f"Uploading {name}", error) from error
 
 
+def make_public(project: str, name: str) -> str:
+    params = {"target": "poub", "key": f"{project}/{name}"}
+    try:
+        with request(f"/public?{urlencode(params)}", b"") as response:
+            return json.load(response)["url"]
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as error:
+        raise failure(f"Making {name} public", error) from error
+
+
 def fetch(path: str) -> bytes:
     try:
         with request(path) as response:
@@ -1200,6 +1209,12 @@ def parse_args() -> argparse.Namespace:
         help="overwrite the dropped file with the same name instead of adding "
         "a numbered copy; markdown review comments stay with it",
     )
+    parser.add_argument(
+        "--public",
+        action="store_true",
+        help="also make the upload public and print its link, which works for "
+        "anyone who has it",
+    )
     parser.add_argument("file", nargs="?", type=Path, metavar="FILE")
     args = parser.parse_args()
     if args.file is not None:
@@ -1262,8 +1277,10 @@ def main() -> int:
                 return 0
             name = markdown_name(Path(name or "note.md").name)
     response = upload(name, data, project, args.replace)
-    for key in ("url", "view"):
-        if response.get(key):
+    if args.public and not response.get("public"):
+        response["public"] = make_public(response["project"], response["name"])
+    for key in ("url", "view", "public"):
+        if response.get(key, "").startswith("/"):
             response[key] = f"{public_url()}{response[key]}"
     if args.json:
         print(json.dumps(response, indent=2))
@@ -1273,6 +1290,8 @@ def main() -> int:
     print(f"Download: {response['url']}")
     if response.get("view"):
         print(f"Open it:  {response['view']}")
+    if response.get("public"):
+        print(f"Public:   {response['public']}")
     return 0
 
 

@@ -150,6 +150,47 @@ there:
 public_url = "https://share.example.com"
 ```
 
+## Share a file with anyone
+
+Everything above stays behind your password. To hand one file to someone
+else, tap 🌐 on it in Drop (or in the screenshot viewer) and choose Share
+publicly. sharei copies a link like
+`https://share.example.com/public/<random>/report.pdf`, built from
+`public_url`. Anyone who has that link can download the file, so send it only
+to the people meant to see it. Tap 🌐 again to copy the link or to Unshare it.
+Deleting the file or letting it expire also kills the link, but people who
+already downloaded it keep their copy. From the terminal,
+`sharec report.pdf --public` uploads the file and prints its link.
+
+Public files are served as plain downloads or images. Pages, scripts and
+markdown are never run or rendered for visitors.
+
+The proxy has to let `/public/*` through without the password and tell sharei
+that it did, by setting `X-Sharei-Public`. Every other request must have that
+header removed, otherwise sharei cannot tell your requests from public ones:
+
+```caddy
+share.example.com {
+    handle /public/* {
+        reverse_proxy localhost:8000 {
+            header_up X-Sharei-Public 1
+        }
+    }
+    handle {
+        basic_auth {
+            me <hash from `caddy hash-password`>
+        }
+        reverse_proxy localhost:8000 {
+            header_up -X-Sharei-Public
+        }
+    }
+}
+```
+
+When that header is present, sharei answers nothing but `/public/<link>`,
+so a confused path cannot reach the rest. Don't turn on an access log for
+this site, or make it drop the address, since the address is the key.
+
 ## Tell it where your builds are
 
 Add an `[[artifacts]]` entry per project to the config, with the folder and the
