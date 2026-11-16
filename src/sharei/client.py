@@ -237,8 +237,10 @@ def upload(name: str, data: bytes, project: str, replace: bool = False) -> dict:
         raise failure(f"Uploading {name}", error) from error
 
 
-def make_public(project: str, name: str) -> str:
+def make_public(project: str, name: str, seconds: int | None = None) -> str:
     params = {"target": "poub", "key": f"{project}/{name}"}
+    if seconds is not None:
+        params["seconds"] = str(seconds)
     try:
         with request(f"/public?{urlencode(params)}", b"") as response:
             return json.load(response)["url"]
@@ -1213,10 +1215,21 @@ def parse_args() -> argparse.Namespace:
         "--public",
         action="store_true",
         help="also make the upload public and print its link, which works for "
-        "anyone who has it",
+        "anyone who has it for one day",
+    )
+    parser.add_argument(
+        "--public-ttl",
+        type=int,
+        metavar="SECONDS",
+        help="make the upload public for SECONDS instead of one day, 0 for no end "
+        "(the server caps it at 30 days); implies --public",
     )
     parser.add_argument("file", nargs="?", type=Path, metavar="FILE")
     args = parser.parse_args()
+    if args.public_ttl is not None:
+        if args.public_ttl < 0:
+            parser.error("--public-ttl must be 0 or more")
+        args.public = True
     if args.file is not None:
         if args.action in (SCREENSHOT, MARKDOWN_CLIPBOARD):
             parser.error("FILE cannot be used with --screenshot or --clipboard")
@@ -1277,8 +1290,10 @@ def main() -> int:
                 return 0
             name = markdown_name(Path(name or "note.md").name)
     response = upload(name, data, project, args.replace)
-    if args.public and not response.get("public"):
-        response["public"] = make_public(response["project"], response["name"])
+    if args.public and (args.public_ttl is not None or not response.get("public")):
+        response["public"] = make_public(
+            response["project"], response["name"], args.public_ttl
+        )
     for key in ("url", "view", "public"):
         if response.get(key, "").startswith("/"):
             response[key] = f"{public_url()}{response[key]}"

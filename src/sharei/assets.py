@@ -176,8 +176,11 @@ PUBLIC_JS = """
   menu.hidden = true;
   menu.setAttribute("role", "dialog");
   menu.setAttribute("aria-label", "Public link");
-  menu.innerHTML = "<span></span><code hidden></code><div></div>";
-  const title = menu.querySelector("span"), code = menu.querySelector("code"), row = menu.querySelector("div");
+  menu.innerHTML = "<span></span><code hidden></code><div></div><span class='public-for'>Change to</span><div></div>";
+  const title = menu.querySelector("span"), code = menu.querySelector("code");
+  const [row, choices] = menu.querySelectorAll("div");
+  const durations = [["1h", 3600], ["24h", 86400], ["7d", 604800], ["30d", 2592000], ["Never", 0]];
+  const DEFAULT_SECONDS = 86400;
   document.body.append(menu);
   const previousBusy = window.liveBusy;
   window.liveBusy = () => !menu.hidden || (previousBusy ? previousBusy() : false);
@@ -191,30 +194,56 @@ PUBLIC_JS = """
       prompt("Public link", absolute(link));
     }
   }
-  async function call(route, button) {
-    const query = "?target=" + encodeURIComponent(button.dataset.target) + "&key=" + encodeURIComponent(button.dataset.key);
+  function left(when) {
+    const seconds = Number(when) - Date.now() / 1000;
+    if (seconds < 60) return "under a minute";
+    if (seconds < 3600) return Math.round(seconds / 60) + "m";
+    if (seconds < 86400) return Math.round(seconds / 3600) + "h";
+    return Math.round(seconds / 86400) + "d";
+  }
+  async function call(route, button, seconds) {
+    let query = "?target=" + encodeURIComponent(button.dataset.target) + "&key=" + encodeURIComponent(button.dataset.key);
+    if (seconds !== undefined) query += "&seconds=" + seconds;
     const response = await fetch(route + query, { method: "POST" });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "HTTP " + response.status);
     return body;
   }
-  function action(label, run) {
+  function action(label, run, where = row) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
     button.addEventListener("click", run);
-    row.append(button);
+    where.append(button);
+    return button;
+  }
+  // Sharing and changing the expiry are the same call: the server keeps a live link's token.
+  function share(button, seconds, copyIt) {
+    return async () => {
+      close();
+      try {
+        const body = await call("/public", button, seconds);
+        if (copyIt) await copy(body.url);
+        location.reload();
+      } catch (error) {
+        alert("Could not share: " + error.message);
+      }
+    };
   }
   function close() { menu.hidden = true; owner = null; }
   function open(button) {
     owner = button;
     const link = button.dataset.link;
+    const expires = button.dataset.publicExpires;
     row.replaceChildren();
+    choices.replaceChildren();
+    const forLabel = menu.querySelector(".public-for");
+    let focus = null;
     if (link) {
-      title.textContent = "Anyone with this link can open it";
+      title.textContent = "Anyone with this link can open it " + (expires ? "for " + left(expires) : "with no end");
       code.textContent = absolute(link);
       code.hidden = false;
-      action("Copy link", async () => { close(); await copy(link); });
+      focus = action("Copy link", async () => { close(); await copy(link); });
       action("Unshare", async () => {
         close();
         try {
@@ -224,26 +253,26 @@ PUBLIC_JS = """
           alert("Could not unshare: " + error.message);
         }
       });
+      forLabel.hidden = false;
+      for (const [label, seconds] of durations) action(label, share(button, seconds, false), choices);
     } else {
-      title.textContent = "Make " + (button.dataset.name || "this file") + " public?";
+      title.textContent = "Make " + (button.dataset.name || "this file") + " public for";
       code.hidden = true;
-      action("Share publicly", async () => {
-        close();
-        try {
-          const body = await call("/public", button);
-          await copy(body.url);
-          location.reload();
-        } catch (error) {
-          alert("Could not share: " + error.message);
+      forLabel.hidden = true;
+      for (const [label, seconds] of durations) {
+        const choice = action(label, share(button, seconds, true));
+        if (seconds === DEFAULT_SECONDS) {
+          choice.setAttribute("aria-pressed", "true");
+          focus = choice;
         }
-      });
+      }
       action("Cancel", close);
     }
     menu.hidden = false;
     const box = button.getBoundingClientRect(), width = menu.offsetWidth, height = menu.offsetHeight;
     menu.style.left = Math.max(8, Math.min(box.right - width, innerWidth - width - 8)) + "px";
     menu.style.top = (box.bottom + height + 12 > innerHeight ? Math.max(8, box.top - height - 6) : box.bottom + 6) + "px";
-    row.querySelector("button").focus({ preventScroll: true });
+    focus.focus({ preventScroll: true });
   }
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-public]");
@@ -377,6 +406,7 @@ CAROUSEL_JS = """
     linkButton.dataset.key = shot.key;
     linkButton.dataset.name = shot.name;
     linkButton.dataset.link = shot.public || "";
+    linkButton.dataset.publicExpires = shot.public_expires || "";
     linkButton.textContent = shot.public ? "🌐 Public" : "🌐";
     linkButton.classList.toggle("set", !!shot.public);
     if (window.shareiExpiryPaint) window.shareiExpiryPaint();
@@ -2003,6 +2033,7 @@ READER_CSS = """
   .public-menu code { overflow-wrap:anywhere; color:var(--fgColor-default); }
   .public-menu div { display:flex; flex-wrap:wrap; gap:6px; }
   .public-menu button { padding:7px 10px; border:1px solid var(--borderColor-default); border-radius:10px; background:var(--bgColor-muted); color:var(--fgColor-default); font:inherit; font-weight:600; cursor:pointer; }
+  .public-menu button[aria-pressed=true] { background:var(--fgColor-accent); border-color:var(--fgColor-accent); color:var(--bgColor-default); }
   .public-menu button:focus-visible { outline:2px solid var(--focus-outlineColor); outline-offset:2px; }
   @media (max-width:599px) { .reader .present-go { width:100%; justify-content:center; } }
   .reader .markdown-body mark { padding:.05em .2em; border-radius:3px; background:color-mix(in srgb, var(--fgColor-attention) 26%, transparent); color:inherit; }

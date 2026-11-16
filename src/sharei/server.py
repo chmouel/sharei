@@ -223,6 +223,7 @@ PUBLIC_TOKEN = re.compile(r"[A-Za-z0-9_-]{22}")
 PUBLIC_ROUTE = re.compile(r"/public/([A-Za-z0-9_-]{22})(?:/.*)?")
 # Caddy sets this on requests that come in through the internet-facing /public/* handle.
 PUBLIC_HEADER = "X-Sharei-Public"
+PUBLIC_DEFAULT_SECONDS = 24 * 60 * 60
 
 
 class PublicLink(TypedDict):
@@ -230,6 +231,7 @@ class PublicLink(TypedDict):
     dev: int
     ino: int
     mtime: int
+    expires: int  # epoch seconds, 0 for never
 
 
 PUBLIC: dict[str, PublicLink] = {}
@@ -333,6 +335,7 @@ class PoubFile(TypedDict):
     timestamp: float
     expires: float | None
     public: str
+    public_expires: int
 
 
 THEME_DEFAULT = "auto"
@@ -632,7 +635,8 @@ def available_shots(project: str | None = None) -> list[dict[str, str]]:
                 f"&t={THUMB_VERSION}",
                 "timestamp": str(modified),
                 "expires": str(expires_at(path) or ""),
-                "public": public_url_for(path),
+                "public": (public := public_state(path))[0],
+                "public_expires": str(public[1] or ""),
             }
         )
     return sorted(shots, key=lambda shot: float(shot["timestamp"]), reverse=True)
@@ -976,6 +980,7 @@ def expiry_sweeper() -> None:
         time.sleep(EXPIRY_SWEEP_SECONDS)
         try:
             sweep_expired()
+            public_sweep()
         except Exception as error:  # noqa: BLE001 - keep the sweeper alive
             print(f"Expiry sweep failed: {error}")
 
@@ -1144,11 +1149,13 @@ def public_load() -> None:
                 and isinstance(entry.get("path"), str)
                 and all(type(entry.get(key)) is int for key in ("dev", "ino", "mtime"))
             ):
+                expires = entry.get("expires", 0)
                 PUBLIC[token] = PublicLink(
                     path=entry["path"],
                     dev=entry["dev"],
                     ino=entry["ino"],
                     mtime=entry["mtime"],
+                    expires=expires if type(expires) is int else 1,
                 )
 
 
@@ -1166,6 +1173,10 @@ def public_save_locked() -> None:
         temporary.unlink(missing_ok=True)
 
 
+def public_live(entry: PublicLink) -> bool:
+    return not entry["expires"] or entry["expires"] > time.time()
+
+
 def public_tokens_locked(key: str) -> list[str]:
     return [token for token, entry in PUBLIC.items() if entry["path"] == key]
 
@@ -1175,7 +1186,9 @@ def public_token(path: Path) -> str | None:
     if key is None:
         return None
     with PUBLIC_LOCK:
-        tokens = public_tokens_locked(key)
+        tokens = [
+            token for token in public_tokens_locked(key) if public_live(PUBLIC[token])
+        ]
     return tokens[0] if tokens else None
 
 
@@ -1184,43 +1197,81 @@ def public_link(token: str, path: Path) -> str:
     return f"{PUBLIC_URL}/public/{token}/{quote(path.name)}{slides}"
 
 
-def public_url_for(path: Path) -> str:
-    """The public link of path when it has a live one, else an empty string."""
+def public_state(path: Path) -> tuple[str, int]:
+    """path's live public link and its expiry (0 for never), or ("", 0)."""
     if not PUBLIC:
-        return ""
+        return "", 0
     token = public_token(path)
     if token is None:
-        return ""
+        return "", 0
     with PUBLIC_LOCK:
         entry = PUBLIC.get(token)
     try:
         current = public_identity(path)
     except OSError:
-        return ""
-    if entry is None or (entry["dev"], entry["ino"], entry["mtime"]) != current:
-        return ""
-    return public_link(token, path)
+        return "", 0
+    if (
+        entry is None
+        or not public_live(entry)
+        or (entry["dev"], entry["ino"], entry["mtime"]) != current
+    ):
+        return "", 0
+    return public_link(token, path), entry["expires"]
 
 
-def public_add(path: Path) -> str:
-    """Make path public, reusing its token when it already has one."""
+def public_url_for(path: Path) -> str:
+    """The public link of path when it has a live one, else an empty string."""
+    return public_state(path)[0]
+
+
+def public_add(path: Path, seconds: int = PUBLIC_DEFAULT_SECONDS) -> tuple[str, int]:
+    """Make path public for seconds (0 for ever), reusing its live token and moving its expiry.
+    Returns the token and the expiry."""
     key = expiry_key(path)
     if key is None:
         raise OSError(f"{path} is outside {ROOT}")
     dev, ino, mtime = public_identity(path)
+    expires = int(time.time()) + seconds if seconds else 0
     with PUBLIC_LOCK:
         for token in public_tokens_locked(key):
             entry = PUBLIC[token]
-            if (entry["dev"], entry["ino"], entry["mtime"]) == (dev, ino, mtime):
-                return token
+            if public_live(entry) and (entry["dev"], entry["ino"], entry["mtime"]) == (
+                dev,
+                ino,
+                mtime,
+            ):
+                previous = entry["expires"]
+                entry["expires"] = expires
+                try:
+                    public_save_locked()
+                except OSError:
+                    entry["expires"] = previous
+                    raise
+                return token, expires
         token = secrets.token_urlsafe(16)
-        PUBLIC[token] = PublicLink(path=key, dev=dev, ino=ino, mtime=mtime)
+        PUBLIC[token] = PublicLink(
+            path=key, dev=dev, ino=ino, mtime=mtime, expires=expires
+        )
         try:
             public_save_locked()
         except OSError:
             del PUBLIC[token]
             raise
-    return token
+    return token, expires
+
+
+def public_sweep() -> None:
+    """Drop expired links from the store; public_open() already refuses them."""
+    with PUBLIC_LOCK:
+        expired = [token for token, entry in PUBLIC.items() if not public_live(entry)]
+        if not expired:
+            return
+        for token in expired:
+            del PUBLIC[token]
+        try:
+            public_save_locked()
+        except OSError as error:
+            print(f"Cannot save {ROOT / PUBLIC_FILE}: {error}")
 
 
 def public_unshare(path: Path) -> int:
@@ -1257,7 +1308,7 @@ def public_rebind(path: Path) -> None:
             return
         dev, ino, mtime = public_identity(path)
         for token in tokens:
-            PUBLIC[token] = PublicLink(path=key, dev=dev, ino=ino, mtime=mtime)
+            PUBLIC[token].update(dev=dev, ino=ino, mtime=mtime)
         try:
             public_save_locked()
         except OSError as error:
@@ -1271,7 +1322,7 @@ def public_open(token: str) -> tuple[Path, io.BufferedReader] | None:
         return None
     with PUBLIC_LOCK:
         entry = PUBLIC.get(token)
-    if entry is None:
+    if entry is None or not public_live(entry):
         return None
     parts = entry["path"].split("/")
     if len(parts) >= 3 and parts[1] == "shots":
@@ -1392,7 +1443,8 @@ def poub_files() -> list[PoubFile]:
                 presentation=is_presentation(path),
                 timestamp=stat.st_mtime,
                 expires=expires_at(path),
-                public=public_url_for(path),
+                public=(public := public_state(path))[0],
+                public_expires=public[1],
             )
         )
     files.sort(key=lambda entry: entry["timestamp"], reverse=True)
@@ -1565,14 +1617,14 @@ def markdown_page(
     crumbs: list[tuple[str, str]] | None = None,
     icon: str = "",
     presentation: bool = False,
-    public: tuple[str, str] | None = None,
+    public: tuple[str, str, int] | None = None,
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
     With a comments URL the page also offers review mode, for line comments kept on the server.
     With note_links it reads an Obsidian note: links go through that map. A presentation drop
-    gets a button that starts aniflow's slides. public, a drop's key and its current public link
-    (or ""), adds the 🌐 button that shares or unshares it.
+    gets a button that starts aniflow's slides. public, a drop's key, its current public link
+    (or "") and that link's expiry, adds the 🌐 button that shares or unshares it.
     """
     nonce = secrets.token_urlsafe(16)
     data = ""
@@ -1614,10 +1666,11 @@ def markdown_page(
     )
     share_tool = share_script = ""
     if public is not None:
-        key, link = (html.escape(value) for value in public)
+        key, link = html.escape(public[0]), html.escape(public[1])
         share_tool = (
             f'<button type="button" class="reader-public{" set" if link else ""}" data-public '
-            f'data-target="poub" data-key="{key}" data-link="{link}" data-name="{html.escape(title)}" '
+            f'data-target="poub" data-key="{key}" data-link="{link}" '
+            f'data-public-expires="{public[2] or ""}" data-name="{html.escape(title)}" '
             f'aria-label="Public link for {html.escape(title)}">🌐</button>'
         )
         share_script = f'<script nonce="{nonce}">{PUBLIC_JS}</script>'
@@ -2113,7 +2166,8 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
         link = html.escape(entry["public"])
         public = (
             f'<button class="file-public{" set" if link else ""}" type="button" data-public '
-            f'data-target="poub" data-key="{entry["url"]}" data-link="{link}" data-name="{name}" '
+            f'data-target="poub" data-key="{entry["url"]}" data-link="{link}" '
+            f'data-public-expires="{entry["public_expires"] or ""}" data-name="{name}" '
             f'aria-label="Public link for {name}">🌐</button>'
         )
         pill = '<span class="public-pill">public</span>' if link else ""
@@ -2412,6 +2466,7 @@ def shots_page(shots: list[dict[str, str]], tab_counts: Counts) -> bytes:
                     "thumb",
                     "expires",
                     "public",
+                    "public_expires",
                 )
             }
             for shot in shots
@@ -3005,7 +3060,7 @@ class Handler(web.Handler):
                     presentation=is_presentation(path),
                     public=(
                         f"{quote(project)}/{quote(path.name)}",
-                        public_url_for(path),
+                        *public_state(path),
                     ),
                 )
                 self.send_html(body, page.reader_headers(nonce))
@@ -3596,6 +3651,13 @@ class Handler(web.Handler):
         if resolve is None:
             self.send_json({"error": "target must be poub or shot"}, status=400)
             return
+        seconds_text = (query.get("seconds") or [str(PUBLIC_DEFAULT_SECONDS)])[-1]
+        seconds = int(seconds_text) if seconds_text.isdigit() else -1
+        if not 0 <= seconds <= EXPIRY_MAX:
+            self.send_json(
+                {"error": f"seconds must be between 0 and {EXPIRY_MAX}"}, status=400
+            )
+            return
         path = resolve((query.get("key") or [""])[-1])
         if path is None:
             self.send_json({"error": "not found"}, status=404)
@@ -3613,11 +3675,11 @@ class Handler(web.Handler):
                 )
             return
         try:
-            token = public_add(path)
+            token, expires = public_add(path, seconds)
         except OSError as error:
             self.send_json({"error": str(error)}, status=500)
             return
-        self.send_json({"url": public_link(token, path)})
+        self.send_json({"url": public_link(token, path), "expires": expires})
 
     def log_message(self, format: str, *args: object) -> None:
         message = format % args

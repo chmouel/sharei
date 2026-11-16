@@ -77,6 +77,48 @@ def test_markdown_reader_offers_the_public_link(live_server):
     assert f'data-link="{server.PUBLIC_URL}{link}"' in page
 
 
+def test_links_expire_after_one_day_by_default(live_server):
+    upload(live_server, "notes.txt", b"hello")
+    before = time.time()
+    status, _, body = call(
+        live_server, "POST", "/public?target=poub&key=inbox/notes.txt", b""
+    )
+    assert status == 200
+    expires = json.loads(body)["expires"]
+    assert before + 86400 - 5 <= expires <= time.time() + 86400 + 5
+    token = urlsplit(json.loads(body)["url"]).path.split("/")[2]
+    assert b'data-public-expires="%d"' % expires in call(live_server, "GET", "/drop")[2]
+
+    status, _, body = call(
+        live_server, "POST", "/public?target=poub&key=inbox/notes.txt&seconds=0", b""
+    )
+    assert json.loads(body)["expires"] == 0
+    assert urlsplit(json.loads(body)["url"]).path.split("/")[2] == token
+
+    for seconds in ("-1", "x", str(server.EXPIRY_MAX + 1)):
+        status, _, _ = call(
+            live_server,
+            "POST",
+            f"/public?target=poub&key=inbox/notes.txt&seconds={seconds}",
+            b"",
+        )
+        assert status == 400
+
+
+def test_expired_links_are_refused_and_swept(live_server):
+    upload(live_server, "notes.txt", b"hello")
+    link = share(live_server, "inbox/notes.txt")
+    token = link.split("/")[2]
+    server.PUBLIC[token]["expires"] = int(time.time()) - 1
+
+    assert call(live_server, "GET", link, headers=PUBLIC)[0] == 404
+    assert "public" not in json.loads(call(live_server, "GET", "/recent")[2])["drop"][0]
+    assert share(live_server, "inbox/notes.txt") != link
+    server.public_sweep()
+    assert token not in server.PUBLIC
+    assert token not in json.loads((server.ROOT / server.PUBLIC_FILE).read_text())
+
+
 def test_html_and_shots_can_be_public(live_server, sharei_root):
     upload(live_server, "page.html", b"<script>alert(1)</script>")
     status, headers, _ = call(

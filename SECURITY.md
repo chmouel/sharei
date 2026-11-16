@@ -29,8 +29,10 @@ Markdown is formatted in your browser and never leaves your machine.
 
 A file you share publicly is the one exception to the password. Its link
 holds 128 random bits and is the only key: anyone who has it can download
-that one file, and nobody can guess it. The link stops working as soon as
-you unshare, delete or replace an expired file, or when the file expires. It
+that one file, and nobody can guess it. A link lasts one day unless you
+pick another duration (up to 30 days, or no end). It stops working as soon as
+it runs out, as soon as you unshare, delete or replace an expired file, or
+when the file expires. It
 is also refused when another file shows up at the same place. Copies already
 downloaded stay with whoever downloaded them.
 

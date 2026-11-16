@@ -113,10 +113,12 @@ asks to share something with someone outside, make it public:
 
 ```bash
 sharec report.pdf -p <project> --public   # prints "Public:   https://.../public/<token>/report.pdf"
+sharec report.pdf -p <project> --public-ttl 604800   # the same, for 7 days (0 for no end)
 ```
 
-Anyone holding that link can download the file until it is deleted, expires,
-or the user unshares it from Drop or Screenshots (🌐). `/recent` items and the
+Anyone holding that link can open the file for one day by default, until the
+link or the file expires, the file is deleted, or the user unshares it from
+Drop, Screenshots or the markdown page (🌐). `/recent` items and the
 upload JSON carry `public` with the link. Never make a file public on your own.
 
 ### Review comments

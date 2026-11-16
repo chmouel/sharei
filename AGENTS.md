@@ -49,7 +49,8 @@ proxy with authentication (see SECURITY.md).
   review comments from `/comments/...?format=prompt` (or the JSON). A name
   not among the 50 newest drops needs `-p`. `sharec FILE --replace` uploads
   with `replace=1` so a revised file keeps its name and comments.
-  `sharec FILE --public` then POSTs `/public` and prints the link.
+  `sharec FILE --public` then POSTs `/public` and prints the link;
+  `--public-ttl S` implies it and passes `seconds=S`.
   `sharec clip [TEXT|-] [--ttl S] [--clear]` writes `/clip`, `/clip/ttl` and
   `/clip/clear`; with `--ttl` and no TEXT only the expiry changes.
   `sharec get clip --json` prints `/clip/state` (the text and its history),
@@ -107,7 +108,8 @@ the service.
   - `<root>/.expiry.json`: expiries set from the UI, mapping a path relative
     to the root to an epoch
   - `<root>/.public.json`: public links, mapping a token to `{path, dev,
-    ino, mtime}` (path relative to the root, the rest from `stat`)
+    ino, mtime, expires}` (path relative to the root, then `stat`, then the
+    link's own expiry epoch, 0 for never)
 - Project names must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. The default
   project is `inbox`.
 - Cache: `~/.cache/sharei` (`$XDG_CACHE_HOME/sharei`). It holds `clip.json`
@@ -266,8 +268,10 @@ POST:
 - `/share`: Android share target, converting HEIC the same way
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days
-- `/public?target=poub|shot&key=`: makes a file public, returns `{url}`
-  (the same token when it already is); `/public/delete?target=&key=`
+- `/public?target=poub|shot&key=[&seconds=]`: makes a file public for
+  `seconds` (default `PUBLIC_DEFAULT_SECONDS`, one day; `0` for never,
+  maximum `EXPIRY_MAX`), returns `{url, expires}`. A live link keeps its
+  token and takes the new expiry, which is how the 🌐 menu changes it; `/public/delete?target=&key=`
   returns `{deleted}`, or 500 when the revoke could not be saved
 - `/clip`, `/clip/clear`, `/clip/ttl`
 - `/push/subscribe`, `/push/unsubscribe`: push only, JSON subscription body
@@ -313,7 +317,8 @@ These exist on purpose. Keep them when changing or adding code.
   The route maps a token to a stored path, never joins the URL onto one,
   re-checks it through `shot_path()`/`poub_path()` and compares the opened
   file's dev, inode and mtime with the stored ones, so another file at the
-  same path is a 404. `public_forget()` runs before every unlink (deletes,
+  same path is a 404. An expired link (`public_live()`) is a 404 at once and
+  `public_sweep()` drops it on the expiry sweeper's next pass. `public_forget()` runs before every unlink (deletes,
   sweep) and after every publish, and in `replace_poub`'s expired branch;
   a live replace or an annotation calls `public_rebind()`. A failed save
   raises: an add rolls back, an unshare stays revoked in memory and

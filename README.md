@@ -154,14 +154,16 @@ public_url = "https://share.example.com"
 
 Everything above stays behind your password. To hand one file to someone
 else, tap 🌐 on it in Drop (or in the screenshot viewer, or at the top of a
-markdown page) and choose Share
-publicly. sharei copies a link like
+markdown page) and choose how long the link works: 1 hour, 24 hours (the
+default), 7 days, 30 days or Never. sharei copies a link like
 `https://share.example.com/public/<random>/report.pdf`, built from
-`public_url`. Anyone who has that link can download the file, so send it only
-to the people meant to see it. Tap 🌐 again to copy the link or to Unshare it.
-Deleting the file or letting it expire also kills the link, but people who
-already downloaded it keep their copy. From the terminal,
-`sharec report.pdf --public` uploads the file and prints its link.
+`public_url`. Anyone who has that link can open the file until it runs out, so
+send it only to the people meant to see it. Tap 🌐 again to copy the link,
+change how long it lasts, or Unshare it. Deleting the file or letting it
+expire also kills the link, but people who already downloaded it keep their
+copy. From the terminal, `sharec report.pdf --public` uploads the file and
+prints a link that lasts a day; `--public-ttl 604800` makes it a week, and
+`--public-ttl 0` removes the limit.
 
 Public files are served as plain downloads or images, and HTML pages and
 scripts are never run for visitors. Markdown is the exception: it opens as a
