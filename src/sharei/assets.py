@@ -187,11 +187,15 @@ PUBLIC_JS = """
   let owner = null;
   const absolute = (link) => new URL(link, location.href).href;
 
+  const REOPEN = "sharei-public-reopen";
+
   async function copy(link) {
     try {
       await navigator.clipboard.writeText(absolute(link));
+      return true;
     } catch (error) {
       prompt("Public link", absolute(link));
+      return false;
     }
   }
   function left(when) {
@@ -223,7 +227,8 @@ PUBLIC_JS = """
       close();
       try {
         const body = await call("/public", button, seconds);
-        if (copyIt) await copy(body.url);
+        const copied = copyIt && await copy(body.url);
+        sessionStorage.setItem(REOPEN, JSON.stringify([button.dataset.target, button.dataset.key, copied]));
         location.reload();
       } catch (error) {
         alert("Could not share: " + error.message);
@@ -231,7 +236,7 @@ PUBLIC_JS = """
     };
   }
   function close() { menu.hidden = true; owner = null; }
-  function open(button) {
+  function open(button, copied = false) {
     owner = button;
     const link = button.dataset.link;
     const expires = button.dataset.publicExpires;
@@ -240,7 +245,7 @@ PUBLIC_JS = """
     const forLabel = menu.querySelector(".public-for");
     let focus = null;
     if (link) {
-      title.textContent = "Anyone with this link can open it " + (expires ? "for " + left(expires) : "with no end");
+      title.textContent = (copied ? "Link copied. " : "") + "Anyone with this link can open it " + (expires ? "for " + left(expires) : "with no end");
       code.textContent = absolute(link);
       code.hidden = false;
       focus = action("Copy link", async () => { close(); await copy(link); });
@@ -286,6 +291,16 @@ PUBLIC_JS = """
     if (event.key === "Escape" && !menu.hidden) { event.stopPropagation(); close(); }
   }, true);
   addEventListener("resize", close);
+  const reopen = sessionStorage.getItem(REOPEN);
+  if (reopen) {
+    sessionStorage.removeItem(REOPEN);
+    try {
+      const [target, key, copied] = JSON.parse(reopen);
+      const button = [...document.querySelectorAll("[data-public]")]
+        .find((item) => item.dataset.target === target && item.dataset.key === key);
+      if (button && button.dataset.link) open(button, copied);
+    } catch (error) {}
+  }
 })();
 """
 
