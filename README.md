@@ -404,8 +404,9 @@ on the diagram; Escape wipes the drawing.
 
 To talk through a note, press Present in the top bar (or `p`). Each `##`
 section becomes a full-screen slide, a diagram on its own fills the
-screen, and the arrow keys play a slide's story before moving to the next
-slide. To move on before the story ends, use the arrows in the corner of
+screen, and its story starts playing as soon as the slide opens
+(`autoplay: false` in the front matter turns that off). The arrow keys
+step through a slide's story before moving to the next slide. To move on before the story ends, use the arrows in the corner of
 the screen, `n` and `b`, or Shift+Page Down and Shift+Page Up. The button
 next to them switches the colour theme while you present. Escape takes you
 back to the page.

@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 [[package]]
 name = "aniflow"
 version = "0.1.0"
-source = { git = "https://github.com/chmouel/aniflow#b05556f1bdbf4776b24007c098945466ddf13a03" }
+source = { git = "https://github.com/chmouel/aniflow#f7399649dce8bc78f4b0645a852974b4bbc34edf" }
 
 [[package]]
 name = "cffi"
