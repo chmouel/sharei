@@ -211,7 +211,7 @@ PUBLIC_JS = """
     const link = button.dataset.link;
     row.replaceChildren();
     if (link) {
-      title.textContent = "Anyone with this link can download it";
+      title.textContent = "Anyone with this link can open it";
       code.textContent = absolute(link);
       code.hidden = false;
       action("Copy link", async () => { close(); await copy(link); });
@@ -1997,6 +1997,13 @@ READER_CSS = """
   .reader .present-go:active { transform:translateY(1px) scale(.995); box-shadow:0 1px 2px rgba(0,0,0,.12); }
   .reader .present-go:focus-visible { outline:2px solid var(--focus-outlineColor); outline-offset:3px; }
   body.presenting .reader .present-bar { display:none; }
+  .reader-public.set { color:var(--fgColor-accent); }
+  .public-menu { position:fixed; z-index:40; display:grid; gap:8px; max-width:min(100vw - 16px, 420px); padding:10px 12px; border:1px solid var(--borderColor-default); border-radius:12px; background:var(--bgColor-default); box-shadow:0 12px 32px rgba(0,0,0,.35); color:var(--fgColor-muted); font:12px system-ui,-apple-system,sans-serif; }
+  .public-menu[hidden] { display:none; }
+  .public-menu code { overflow-wrap:anywhere; color:var(--fgColor-default); }
+  .public-menu div { display:flex; flex-wrap:wrap; gap:6px; }
+  .public-menu button { padding:7px 10px; border:1px solid var(--borderColor-default); border-radius:10px; background:var(--bgColor-muted); color:var(--fgColor-default); font:inherit; font-weight:600; cursor:pointer; }
+  .public-menu button:focus-visible { outline:2px solid var(--focus-outlineColor); outline-offset:2px; }
   @media (max-width:599px) { .reader .present-go { width:100%; justify-content:center; } }
   .reader .markdown-body mark { padding:.05em .2em; border-radius:3px; background:color-mix(in srgb, var(--fgColor-attention) 26%, transparent); color:inherit; }
   .reader .markdown-body .note-tag { padding:0 7px; border-radius:999px; background:color-mix(in srgb, var(--fgColor-accent) 14%, transparent); color:var(--fgColor-accent); font-size:.9em; font-weight:500; white-space:nowrap; }
@@ -2244,6 +2251,25 @@ READER_JS = r"""
     findLine();
     addEventListener('hashchange', findLine);
     if (presentGo && document.getElementById('present')?.hidden !== false) {
+      document.querySelector('.present-bar')?.remove();
+    }
+  });
+})();
+"""
+
+# The public reader: diagram icons come from the public asset path, every other picture or
+# link is left alone, so it points at nothing a visitor can reach.
+PUBLIC_READER_JS = r"""
+(() => {
+  window.aniflowPage = {
+    resolveImage: (value) =>
+      /^\/icons\/[A-Za-z0-9_-]+\.svg$/.test(value || '') ? '/public/_assets' + value : null,
+  };
+  const presentGo = document.getElementById('present-go');
+  if (!presentGo) return;
+  presentGo.addEventListener('click', () => document.getElementById('present')?.click());
+  addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('present')?.hidden !== false) {
       document.querySelector('.present-bar')?.remove();
     }
   });

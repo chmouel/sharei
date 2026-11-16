@@ -150,7 +150,8 @@ Pages:
   `#present` button so fullscreen and the slide dock behave the same, and
   removes itself when aniflow has fewer than two slides, which it marks by
   leaving `#present` hidden. aniflow draws the frontmatter as its properties
-  panel, so `presentation: Yes` just shows there.
+  panel, so `presentation: Yes` just shows there. `public=(key, link)` adds
+  the 🌐 tool (`.reader-public`, the same `PUBLIC_JS` menu as Drop).
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
@@ -215,9 +216,20 @@ Files:
   cosmetic. Served as an attachment (images, video and audio inline) with
   `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
   `X-Robots-Tag: noindex` and a `sandbox` CSP without scripts, from the
-  descriptor `public_open()` checked (`send_stream`). The Drop rows (🌐,
+  descriptor `public_open()` checked (`send_stream`). A markdown file up to
+  `TEXT_MAX_BYTES` gets `public_markdown_page()` instead (`?raw` downloads
+  it): the aniflow reader with no comments, notes, search, QR or live
+  reload, `img-src 'self' data:`, and `PUBLIC_READER_JS` mapping
+  `/icons/` to `/public/_assets/icons/` (other pictures stay unresolved).
+  aniflow hardcodes `/static/` and `/vendor/`, so the page rewrites those
+  attribute prefixes (`PUBLIC_ASSET_ATTRIBUTES`); a test fails if one is
+  left. `public_link()` adds `#slide=1` for a presentation. The Drop rows (🌐,
   `public-pill`) and the shot viewer (`#public-shot`) drive it through
   `PUBLIC_JS`; `/recent` and the upload reply carry `public` (the URL)
+- `/public/_assets/<static|vendor|icons>/<name>`: aniflow's bundled files
+  for the public reader, through `send_asset()`; any other folder, a
+  nested or empty name is a 404. Tokens are 22 characters, so `_assets`
+  never is one
 
 Data:
 
@@ -295,7 +307,8 @@ These exist on purpose. Keep them when changing or adding code.
   rendered with `textContent`, never as HTML.
 - Public links: the proxy sets `X-Sharei-Public` on `/public/*` only and
   strips it elsewhere. With the header present (any value), `do_GET`
-  serves only `/public/<token>` and `do_POST` returns 404, before any other
+  serves only `/public/<token>` and `/public/_assets/` (bundled files, no
+  user data) and `do_POST` returns 404, before any other
   routing; sharei may narrow what the proxy calls public, never widen it.
   The route maps a token to a stored path, never joins the URL onto one,
   re-checks it through `shot_path()`/`poub_path()` and compares the opened

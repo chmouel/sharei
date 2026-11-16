@@ -36,11 +36,17 @@ downloaded stay with whoever downloaded them.
 
 Public files are sent with a `sandbox` Content-Security-Policy, so an HTML
 or SVG file cannot run scripts, and with `no-store` and `no-referrer`.
-sharei hides the links in its own request log.
+sharei hides the links in its own request log. A markdown file is the
+exception: it opens in the same reader as the private `/md` pages, under a
+nonce-only script policy, with its HTML cleaned by DOMPurify and images
+limited to sharei itself. Only sharei's own scripts run, never anything in
+the file. The reader loads its bundled styles, scripts and icons from
+`/public/_assets/`, which holds nothing but those built-in files.
 
 The proxy decides which requests are public, by setting `X-Sharei-Public` on
 `/public/*` and removing it everywhere else (see the README). With the
-header present, sharei serves `GET /public/<token>` and returns 404 for
+header present, sharei serves `GET /public/<token>` and
+`/public/_assets/` and returns 404 for
 everything else, uploads and deletes included. A proxy that forgets to strip
 the header on private paths makes them unreachable, never public. A proxy
 that lets other paths through without the password exposes them, as it

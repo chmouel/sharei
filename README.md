@@ -153,7 +153,8 @@ public_url = "https://share.example.com"
 ## Share a file with anyone
 
 Everything above stays behind your password. To hand one file to someone
-else, tap 🌐 on it in Drop (or in the screenshot viewer) and choose Share
+else, tap 🌐 on it in Drop (or in the screenshot viewer, or at the top of a
+markdown page) and choose Share
 publicly. sharei copies a link like
 `https://share.example.com/public/<random>/report.pdf`, built from
 `public_url`. Anyone who has that link can download the file, so send it only
@@ -162,8 +163,10 @@ Deleting the file or letting it expire also kills the link, but people who
 already downloaded it keep their copy. From the terminal,
 `sharec report.pdf --public` uploads the file and prints its link.
 
-Public files are served as plain downloads or images. Pages, scripts and
-markdown are never run or rendered for visitors.
+Public files are served as plain downloads or images, and HTML pages and
+scripts are never run for visitors. Markdown is the exception: it opens as a
+formatted page with its diagrams and a Raw link, and a presentation opens on
+its first slide. Pictures it takes from other drops are not shown.
 
 The proxy has to let `/public/*` through without the password and tell sharei
 that it did, by setting `X-Sharei-Public`. Every other request must have that

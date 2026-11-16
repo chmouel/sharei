@@ -65,6 +65,18 @@ def test_shared_file_is_served_with_strict_headers(live_server):
     assert b"public-pill" in call(live_server, "GET", "/drop")[2]
 
 
+def test_markdown_reader_offers_the_public_link(live_server):
+    upload(live_server, "deck.md", b"# Deck\n")
+    page = call(live_server, "GET", "/md/inbox/deck.md")[2].decode()
+    assert (
+        'data-public data-target="poub" data-key="inbox/deck.md" data-link=""' in page
+    )
+
+    link = share(live_server, "inbox/deck.md")
+    page = call(live_server, "GET", "/md/inbox/deck.md")[2].decode()
+    assert f'data-link="{server.PUBLIC_URL}{link}"' in page
+
+
 def test_html_and_shots_can_be_public(live_server, sharei_root):
     upload(live_server, "page.html", b"<script>alert(1)</script>")
     status, headers, _ = call(
@@ -80,6 +92,63 @@ def test_html_and_shots_can_be_public(live_server, sharei_root):
     status, headers, body = call(live_server, "GET", link, headers=PUBLIC)
     assert (status, headers["Content-Type"]) == (200, "image/png")
     assert body.startswith(b"\x89PNG")
+
+
+def test_markdown_is_rendered_for_visitors(live_server):
+    source = b'---\npresentation: true\n---\n# Talk\n\n<img src="/static/x">\n'
+    upload(live_server, "talk.md", source)
+    status, _, body = call(
+        live_server, "POST", "/public?target=poub&key=inbox/talk.md", b""
+    )
+    url = json.loads(body)["url"]
+    assert url.endswith("/talk.md#slide=1")
+    link = urlsplit(url).path
+
+    status, headers, body = call(live_server, "GET", link, headers=PUBLIC)
+    assert status == 200 and headers["Content-Type"].startswith("text/html")
+    csp = headers["Content-Security-Policy"]
+    assert "script-src 'nonce-" in csp and "img-src 'self' data:;" in csp
+    assert headers["Cache-Control"] == "no-store"
+    page = body.decode()
+    for prefix in server.PUBLIC_ASSET_ATTRIBUTES:
+        assert prefix not in page
+    assert '"/public/_assets/vendor/mermaid.min.js"' in page
+    assert 'src=\\"/static/x\\"' in page  # the source itself is left as written
+    assert "present-go" in page and "/comments/" not in page and "/drop" not in page
+    for asset in page.split('="/public/_assets/')[1:]:
+        name = "/public/_assets/" + asset.split('"', 1)[0]
+        assert call(live_server, "GET", name, headers=PUBLIC)[0] == 200, name
+
+    status, headers, body = call(live_server, "GET", f"{link}?raw=1", headers=PUBLIC)
+    assert (status, body) == (200, source)
+    assert headers["Content-Disposition"].startswith("attachment")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/public/_assets/icons/user.svg",
+        "/public/_assets/vendor/mermaid.min.js",
+        "/public/_assets/static/aniflow.css",
+    ],
+)
+def test_public_assets_are_served(live_server, path):
+    assert call(live_server, "GET", path, headers=PUBLIC)[0] == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/public/_assets/icons/",
+        "/public/_assets/icons/nope.svg",
+        "/public/_assets/other/aniflow.css",
+        "/public/_assets/static/../../drop",
+        "/public/_assets/static/x/aniflow.css",
+        "/public/_assets/",
+    ],
+)
+def test_public_assets_reach_nothing_else(live_server, path):
+    assert call(live_server, "GET", path, headers=PUBLIC)[0] == 404
 
 
 @pytest.mark.parametrize(

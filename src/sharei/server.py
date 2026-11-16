@@ -74,6 +74,7 @@ from sharei.assets import (
     PLAY_CSS,
     PLAY_ICON,
     PUBLIC_JS,
+    PUBLIC_READER_JS,
     PUSH_JS,
     QR_CSS,
     QR_JS,
@@ -1179,7 +1180,8 @@ def public_token(path: Path) -> str | None:
 
 
 def public_link(token: str, path: Path) -> str:
-    return f"{PUBLIC_URL}/public/{token}/{quote(path.name)}"
+    slides = "#slide=1" if is_markdown(path.name) and is_presentation(path) else ""
+    return f"{PUBLIC_URL}/public/{token}/{quote(path.name)}{slides}"
 
 
 def public_url_for(path: Path) -> str:
@@ -1563,12 +1565,14 @@ def markdown_page(
     crumbs: list[tuple[str, str]] | None = None,
     icon: str = "",
     presentation: bool = False,
+    public: tuple[str, str] | None = None,
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
     With a comments URL the page also offers review mode, for line comments kept on the server.
     With note_links it reads an Obsidian note: links go through that map. A presentation drop
-    gets a button that starts aniflow's slides.
+    gets a button that starts aniflow's slides. public, a drop's key and its current public link
+    (or ""), adds the 🌐 button that shares or unshares it.
     """
     nonce = secrets.token_urlsafe(16)
     data = ""
@@ -1608,6 +1612,15 @@ def markdown_page(
         ),
         callouts=note_links is not None,
     )
+    share_tool = share_script = ""
+    if public is not None:
+        key, link = (html.escape(value) for value in public)
+        share_tool = (
+            f'<button type="button" class="reader-public{" set" if link else ""}" data-public '
+            f'data-target="poub" data-key="{key}" data-link="{link}" data-name="{html.escape(title)}" '
+            f'aria-label="Public link for {html.escape(title)}">🌐</button>'
+        )
+        share_script = f'<script nonce="{nonce}">{PUBLIC_JS}</script>'
     document = page.reader_page(
         title=title,
         text=text,
@@ -1615,16 +1628,58 @@ def markdown_page(
         back=back,
         options=options,
         actions=actions,
-        tools=qr_button() + search_button(),
+        tools=share_tool + qr_button() + search_button(),
         top=trail + hero + banner,
         style=QR_CSS + READER_CSS,
         favicon="/icon-192.png",
         theme_default=THEME_DEFAULT,
         theme_key="sharei-theme",
         before=f'{data}<script nonce="{nonce}">{READER_JS}</script>',
-        after=qr_script(nonce) + search_script(nonce),
+        after=share_script + qr_script(nonce) + search_script(nonce),
     )
     return document, nonce
+
+
+PUBLIC_ASSETS = "/public/_assets"
+# aniflow's reader links its files from /static/ and /vendor/, which only the LAN reaches.
+# Attribute-prefixed, so the embedded source (where quotes are escaped) is never touched.
+PUBLIC_ASSET_ATTRIBUTES = tuple(
+    f'{attribute}="/{folder}/'
+    for attribute in ("src", "href")
+    for folder in ("static", "vendor")
+)
+
+
+def public_markdown_page(
+    title: str, text: str, presentation: bool
+) -> tuple[bytes, str]:
+    """The reader for a public markdown link: no comments, search, QR or private links."""
+    nonce = secrets.token_urlsafe(16)
+    hero = (
+        '<div class="present-bar"><button type="button" class="present-go" id="present-go">'
+        f"{PLAY_ICON}<span>Play presentation</span></button></div>"
+        if presentation
+        else ""
+    )
+    document = page.reader_page(
+        title=title,
+        text=text,
+        nonce=nonce,
+        back=("Top", "#"),
+        options=page.reader_options(mermaid=f"{PUBLIC_ASSETS}/vendor/mermaid.min.js"),
+        actions='<a href="?raw=1" download>Raw</a>',
+        top=hero,
+        # reader_page always draws a back link; a visitor has nowhere to go back to.
+        style=READER_CSS + ".bar > a:first-child { display:none }",
+        theme_default=THEME_DEFAULT,
+        theme_key="sharei-theme",
+        before=f'<script nonce="{nonce}">{PUBLIC_READER_JS}</script>',
+    ).decode()
+    for prefix in PUBLIC_ASSET_ATTRIBUTES:
+        document = document.replace(
+            prefix, prefix.replace('="', f'="{PUBLIC_ASSETS}', 1)
+        )
+    return document.encode(), nonce
 
 
 def code_page(
@@ -2878,7 +2933,7 @@ class Handler(web.Handler):
             return
         parsed = urlparse(self.path)
         if self.public_request() or parsed.path.startswith("/public/"):
-            self.send_public(parsed.path)
+            self.send_public(parsed.path, parsed.query)
             return
         if parsed.path == "/":
             self.send_response(302)
@@ -2948,6 +3003,10 @@ class Handler(web.Handler):
                     project,
                     f"/comments/{quote(project)}/{quote(path.name)}",
                     presentation=is_presentation(path),
+                    public=(
+                        f"{quote(project)}/{quote(path.name)}",
+                        public_url_for(path),
+                    ),
                 )
                 self.send_html(body, page.reader_headers(nonce))
                 return
@@ -3449,21 +3508,47 @@ class Handler(web.Handler):
         """Whether the request came through the proxy's public door; any value counts."""
         return self.headers.get(PUBLIC_HEADER) is not None
 
-    def send_public(self, path: str) -> None:
+    def send_public(self, path: str, query: str) -> None:
+        if path.startswith(f"{PUBLIC_ASSETS}/"):
+            folder, _, name = path.removeprefix(f"{PUBLIC_ASSETS}/").partition("/")
+            known = folder in ("static", "vendor", "icons") and name and "/" not in name
+            if not (known and self.send_asset(f"/{folder}/{name}")):
+                self.send_error(404)
+            return
         match = PUBLIC_ROUTE.fullmatch(path)
         opened = public_open(match[1]) if match else None
         if opened is None:
             self.send_error(404)
             return
         file, stream = opened
+        headers = {
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Robots-Tag": "noindex",
+        }
         with stream:
-            content_type, headers = shared_file_headers(file, raw=False)
-            headers["Cache-Control"] = "no-store"
-            headers["Referrer-Policy"] = "no-referrer"
-            headers["X-Robots-Tag"] = "noindex"
-            # No scripts at all, unlike the LAN's HTML_CSP: nothing public may run code.
-            headers["Content-Security-Policy"] = "sandbox"
-            self.send_stream(stream, content_type, headers)
+            if is_markdown(file.name) and "raw" not in parse_qs(
+                query, keep_blank_values=True
+            ):
+                data = stream.read(TEXT_MAX_BYTES + 1)
+                if len(data) <= TEXT_MAX_BYTES:
+                    body, nonce = public_markdown_page(
+                        file.name,
+                        data.decode("utf-8", errors="replace"),
+                        is_presentation(file),
+                    )
+                    reader = page.reader_headers(nonce)
+                    # Same-origin pictures only, so the page cannot make visitors call out.
+                    reader["Content-Security-Policy"] = reader[
+                        "Content-Security-Policy"
+                    ].replace("img-src 'self' https: data:", "img-src 'self' data:")
+                    self.send_html(body, {**reader, **headers})
+                    return
+                stream.seek(0)
+            content_type, file_headers = shared_file_headers(file, raw=False)
+            # No scripts at all, unlike the LAN's HTML_CSP: the shared file never runs code.
+            file_headers["Content-Security-Policy"] = "sandbox"
+            self.send_stream(stream, content_type, {**file_headers, **headers})
 
     def send_stream(
         self, stream: io.BufferedReader, content_type: str, headers: dict[str, str]
