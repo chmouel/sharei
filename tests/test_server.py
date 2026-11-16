@@ -81,6 +81,82 @@ def test_reader_css_covers_both_modes():
         assert "--bgColor-default" in block
 
 
+def _css_vars(block: str) -> dict[str, str]:
+    return dict(re.findall(r"--([\w-]+):\s*([^;]+);", block))
+
+
+def _relative_luminance(color: str) -> float:
+    def channel(value: int) -> float:
+        value /= 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (
+        channel(int(color[index : index + 2], 16)) for index in (1, 3, 5)
+    )
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _contrast(one: str, other: str) -> float:
+    high, low = sorted(
+        (_relative_luminance(one), _relative_luminance(other)), reverse=True
+    )
+    return (high + 0.05) / (low + 0.05)
+
+
+def _mix(one: str, other: str, weight: float) -> str:
+    first = [int(one[index : index + 2], 16) for index in (1, 3, 5)]
+    second = [int(other[index : index + 2], 16) for index in (1, 3, 5)]
+    blended = (
+        round(x * weight + y * (1 - weight)) for x, y in zip(first, second, strict=True)
+    )
+    return "#" + "".join(f"{value:02x}" for value in blended)
+
+
+def test_presentation_button_text_meets_wcag_aa_in_every_theme():
+    from aniflow import themes
+
+    from sharei.assets import READER_CSS
+    from sharei.server import THEME_READER_CSS
+
+    def block(css: str, selector: str) -> str:
+        return css.split(selector, 1)[1].split("}", 1)[0]
+
+    button = block(READER_CSS, ".reader .present-go {")
+    mix = re.search(
+        r"--present-go:color-mix\(in srgb, var\((--[\w-]+)\) (\d+)%, var\((--[\w-]+)\)\)",
+        button,
+    )
+    text = re.search(r"; color:var\((--[\w-]+)\)", button)
+    hover = re.search(r"(\d+)%", block(READER_CSS, ".reader .present-go:hover {"))
+    shares = (int(mix.group(2)) / 100, int(hover.group(1)) / 100)
+    accent, ink, text = (mix.group(1)[2:], mix.group(3)[2:], text.group(1)[2:])
+
+    modes = {
+        mode: _css_vars(
+            block(THEME_READER_CSS, f'html[data-mode="{mode}"] .markdown-body {{')
+        )
+        for mode in ("dark", "light")
+    }
+    overrides = {
+        name: _css_vars(
+            block(THEME_READER_CSS, f'html[data-theme="{name}"] .markdown-body {{')
+        )
+        if f'html[data-theme="{name}"]' in THEME_READER_CSS
+        else {}
+        for name in themes.THEMES
+    }
+
+    for name, (_, mode, _) in themes.THEMES.items():
+        palette = modes[mode] | overrides[name]
+        for share in shares:
+            background = _mix(palette[accent], palette[ink], share)
+            assert _contrast(background, palette[text]) >= 4.5, (
+                name,
+                share,
+                background,
+            )
+
+
 def test_binary_has_no_viewer(live_server):
     result = upload(live_server, "blob.bin", b"\x00\x01\x02")
     assert "view" not in result
@@ -916,3 +992,112 @@ def test_qr_can_be_turned_off(live_server, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as error:
         get(live_server + "/vendor/qrcode.js")
     assert error.value.code == 404
+
+
+DECK = (
+    b"---\ntitle: Shipping\npresentation: true\n---\n"
+    b"# Shipping\n\n## Why\n\nOne binary.\n\n## How\n\nstdlib.\n"
+)
+
+
+def test_presentation_frontmatter_reads_true_and_yes(tmp_path):
+    from sharei import server
+
+    cases = {
+        "true.md": "---\npresentation: true\n---\n",
+        "case.md": "---\npresentation: TRUE\n---\n",
+        "yes.md": "---\ntitle: x\npresentation: yes  # deck\n---\n",
+        "quoted.md": '---\npresentation: "Yes"\n---\n',
+        "crlf.md": "---\r\npresentation: true\r\n---\r\n",
+        "false.md": "---\npresentation: false\n---\n",
+        "missing.md": "---\ntitle: x\n---\n",
+        "none.md": "# Just a note\n",
+        "nested.md": "---\nmeta:\n  presentation: true\n---\n",
+        "empty.md": "---\n---\n",
+        "unclosed.md": "---\npresentation: true\n",
+        "value.md": "---\npresentation: sometimes\n---\n",
+        "quoted-hash.md": '---\npresentation: "true # not a deck"\n---\n',
+        "mismatched.md": "---\npresentation: \"true'\n---\n",
+        "unpaired.md": "---\npresentation: 'yes\"\n---\n",
+        "unclosed-quote.md": '---\npresentation: "true\n---\n',
+        "after-quote.md": '---\npresentation: "true" now\n---\n',
+        "quoted-comment.md": '---\npresentation: "true"  # deck\n---\n',
+        "oversized.md": "---\ntitle: " + "x" * (32 * 1024) + "\n---\n",
+    }
+    wanted = {
+        "true.md",
+        "case.md",
+        "yes.md",
+        "quoted.md",
+        "crlf.md",
+        "quoted-comment.md",
+    }
+    for name, text in cases.items():
+        path = tmp_path / name
+        path.write_text(text)
+        assert server.presentation_frontmatter(path) is (name in wanted), name
+
+
+def test_only_markdown_drops_are_presentations(tmp_path):
+    from sharei import server
+
+    text = "---\npresentation: true\n---\n"
+    deck = tmp_path / "deck.md"
+    deck.write_text(text)
+    other = tmp_path / "deck.txt"
+    other.write_text(text)
+    assert server.is_presentation(deck) is True
+    assert server.is_presentation(other) is False
+    assert server.is_presentation(tmp_path / "missing.md") is False
+
+
+def test_presentation_detection_follows_the_file(tmp_path):
+    from sharei import server
+
+    path = tmp_path / "deck.md"
+    path.write_text("---\ntitle: x\n---\n# Deck\n")
+    assert server.is_presentation(path) is False
+    path.write_text("---\npresentation: yes\n---\n# Deck\n")
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    assert server.is_presentation(path) is True
+
+
+def test_drop_listing_offers_present_on_presentations(live_server):
+    upload(live_server, "talk.md", DECK)
+    upload(live_server, "note.md", b"---\ntitle: x\n---\n# Note\n")
+    _, _, body = get(live_server + "/drop")
+    assert b'href="/md/inbox/talk.md#slide=1"' in body
+    assert b'href="/md/inbox/note.md"' in body
+    deck = body.split(b"talk.md", 1)[1].split(b"</a>", 1)[0]
+    assert b'class="present-badge"' in deck and b'class="play-icon"' in deck
+    note = body.split(b"note.md", 1)[1].split(b"</a>", 1)[0]
+    assert b"present-badge" not in note
+
+
+def test_recent_flags_presentations(live_server):
+    upload(live_server, "talk.md", DECK)
+    upload(live_server, "note.md", b"---\ntitle: x\n---\n# Note\n")
+    _, _, body = get(live_server + "/recent")
+    items = {item["name"]: item for item in json.loads(body)["drop"]}
+    assert items["talk.md"]["presentation"] is True
+    assert "presentation" not in items["note.md"]
+
+
+def test_upload_answers_whether_it_was_a_presentation(live_server):
+    assert upload(live_server, "talk.md", DECK)["presentation"] is True
+    result = upload(live_server, "note.md", b"---\ntitle: x\n---\n# Note\n")
+    assert "presentation" not in result
+
+
+def test_markdown_page_offers_play_only_on_presentations(live_server):
+    upload(live_server, "talk.md", DECK)
+    upload(live_server, "note.md", b"---\ntitle: x\n---\n# Note\n")
+    _, _, body = get(live_server + "/md/inbox/talk.md")
+    assert b'class="present-bar"' in body
+    assert b'id="present-go"' in body
+    assert b"Play presentation" in body
+    assert body.count(b"present-go") > 1
+    _, _, body = get(live_server + "/md/inbox/note.md")
+    assert b'id="present-go"' not in body
+    assert b'class="present-bar"' not in body

@@ -359,6 +359,23 @@ section becomes a full-screen slide, a diagram on its own fills the
 screen, and the arrow keys play a slide's story before moving to the next
 slide. Escape takes you back to the page.
 
+A markdown file whose front matter says `presentation: true` (or `yes`) is
+treated as a deck: Drop shows a small ▶ Present badge on its row and opens
+it straight in slides, and the page itself gets a Play presentation button
+above the text. Any other value, or no front matter at all, leaves it a
+plain document.
+
+```markdown
+---
+title: Q3 review
+presentation: true
+---
+
+# Q3 review
+
+## What shipped
+```
+
 ![A walkthrough playing through a flowchart with pictures](docs/screenshots/walkthrough.gif)
 
 The share button next to the story controls saves the selected scenario as a looping

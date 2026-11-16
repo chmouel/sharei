@@ -965,6 +965,10 @@ DROP_CSS = """
   .file-copy strong { overflow:hidden; font-size:14px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
   .file-copy small { color:var(--muted); font-size:11px; }
   .file-action { color:var(--accent); font-size:12px; font-weight:650; }
+  .present-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 9px 4px 7px; border:1px solid color-mix(in srgb, var(--accent) 38%, transparent); border-radius:999px; background:color-mix(in srgb, var(--accent) 13%, var(--panel)); color:color-mix(in srgb, var(--accent) 80%, var(--ink)); font-size:11px; font-weight:700; line-height:1; white-space:nowrap; transition:background .15s ease, border-color .15s ease, color .15s ease, transform .15s ease; }
+  .present-badge .play-icon { flex:0 0 auto; width:.9em; height:.9em; }
+  .file:hover .present-badge { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .file:active .present-badge { transform:scale(.96); }
   .project-pick { display:flex; align-items:center; gap:8px; margin:0 2px 12px; color:var(--muted); font-size:13px; }
   .project-pick select { flex:1; min-height:40px; padding:0 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font:inherit; font-size:14px; }
   .project-pick select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
@@ -1119,6 +1123,13 @@ NOTE_ICON = (
     'fill-rule="evenodd" d="M7 2.5h7.2c.5 0 1 .2 1.4.6l3.3 3.3c.4.4.6.9.6 1.4v11.7a2 2 0 0 1-2 2H7a2 '
     '2 0 0 1-2-2v-15a2 2 0 0 1 2-2ZM8.5 11h7v1.5h-7Zm0 3.5h7V16h-7Zm0-7h3.5V9H8.5Z"/>'
     '<path fill="currentColor" opacity=".45" d="M14.5 2.6v3.4a1.5 1.5 0 0 0 1.5 1.5h3.4Z"/></svg>'
+)
+
+# A stroked triangle so the corners stay round; 1em keeps it in step with its label.
+PLAY_ICON = (
+    '<svg class="play-icon" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" '
+    'focusable="false"><path fill="currentColor" stroke="currentColor" stroke-width="2" '
+    'stroke-linejoin="round" d="M8.5 5.2 18.8 12 8.5 18.8Z"/></svg>'
 )
 
 
@@ -1875,6 +1886,14 @@ SEARCH_JS = """
 
 READER_CSS = """
   .reader .crumbs .note-icon { width:1.25em; height:1.25em; margin-right:5px; object-fit:contain; vertical-align:-.3em; }
+  .reader .present-bar { display:flex; margin:0 0 18px; }
+  .reader .present-go { --present-go:color-mix(in srgb, var(--fgColor-accent) 45%, var(--fgColor-default)); display:inline-flex; align-items:center; gap:10px; min-height:48px; padding:0 22px 0 18px; border:1px solid color-mix(in srgb, var(--present-go) 72%, transparent); border-radius:12px; background:var(--present-go); color:var(--bgColor-default); font:inherit; font-size:15px; font-weight:650; letter-spacing:-.005em; cursor:pointer; -webkit-tap-highlight-color:transparent; box-shadow:0 1px 2px rgba(0,0,0,.10), 0 12px 26px -18px var(--present-go); transition:transform .14s ease, box-shadow .16s ease, background .16s ease; }
+  .reader .present-go .play-icon { flex:0 0 auto; width:16px; height:16px; }
+  .reader .present-go:hover { --present-go:color-mix(in srgb, var(--fgColor-accent) 30%, var(--fgColor-default)); box-shadow:0 2px 4px rgba(0,0,0,.10), 0 16px 30px -18px var(--present-go); }
+  .reader .present-go:active { transform:translateY(1px) scale(.995); box-shadow:0 1px 2px rgba(0,0,0,.12); }
+  .reader .present-go:focus-visible { outline:2px solid var(--focus-outlineColor); outline-offset:3px; }
+  body.presenting .reader .present-bar { display:none; }
+  @media (max-width:599px) { .reader .present-go { width:100%; justify-content:center; } }
   .reader .markdown-body mark { padding:.05em .2em; border-radius:3px; background:color-mix(in srgb, var(--fgColor-attention) 26%, transparent); color:inherit; }
   .reader .markdown-body .note-tag { padding:0 7px; border-radius:999px; background:color-mix(in srgb, var(--fgColor-accent) 14%, transparent); color:var(--fgColor-accent); font-size:.9em; font-weight:500; white-space:nowrap; }
   .reader .markdown-body .note-missing { color:var(--fgColor-muted); text-decoration:underline dotted color-mix(in srgb, var(--fgColor-muted) 50%, transparent); text-underline-offset:.2em; }
@@ -2110,9 +2129,19 @@ READER_JS = r"""
     page.preprocess = stripComments;
   }
   window.aniflowPage = page;
+  // The banner hands over to aniflow's own Present button, so fullscreen and the slide dock
+  // behave exactly as they do from the bar; a document it cannot split into slides has none.
+  const presentGo = document.getElementById('present-go');
+  if (presentGo) {
+    presentGo.addEventListener('click', () => document.getElementById('present')?.click());
+  }
+
   addEventListener('DOMContentLoaded', () => {
     findLine();
     addEventListener('hashchange', findLine);
+    if (presentGo && document.getElementById('present')?.hidden !== false) {
+      document.querySelector('.present-bar')?.remove();
+    }
   });
 })();
 """

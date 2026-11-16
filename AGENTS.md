@@ -127,7 +127,11 @@ Pages:
 - `/artifacts`: Artifacts, from the `[[artifacts]]` config entries
 - `/shots`: screenshots
 - `/clip`: clipboard
-- `/drop`: dropped files
+- `/drop`: dropped files. A markdown drop whose frontmatter has
+  `presentation: true` (or `yes`, case-insensitive; `is_presentation()`, which
+  caches per path, mtime and size) carries a `▶ Present` badge and links to
+  `/md/<project>/<name>#slide=1`, which is the hash aniflow's `slides.js`
+  presents from
 - `/md/<project>/<name>`: a dropped markdown file, rendered in the browser
   by aniflow's reader. `markdown_page()` builds it with `page.reader_page()`
   and `page.reader_options()` and adds sharei's chrome (bar, QR, search,
@@ -138,7 +142,12 @@ Pages:
   notes. Comments go to `/comments/<project>/<name>`, stored by sharei;
   their anchoring and limits come from `aniflow.comments`. Storage keys and
   events are aniflow's (`aniflow-diagram-speed`, `aniflow-comments`...);
-  only the theme keeps `sharei-theme`.
+  only the theme keeps `sharei-theme`. A presentation drop gets a
+  `Play presentation` button (`presentation=True`); it clicks aniflow's own
+  `#present` button so fullscreen and the slide dock behave the same, and
+  removes itself when aniflow has fewer than two slides, which it marks by
+  leaving `#present` hidden. aniflow draws the frontmatter as its properties
+  panel, so `presentation: Yes` just shows there.
 - `/view/<project>/<name>`: a dropped text file with line numbers and
   highlight.js. A file counts as text when it is at most 2 MB, valid UTF-8 and
   has no NUL bytes (`looks_like_text`, `read_text_file`). Highlighting is
@@ -203,7 +212,7 @@ Data:
 
 - `/state`: stamps for the live reload
 - `/recent`: newest items as JSON with the server's `public_url`, used by the
-  skill
+  skill. A presentation drop also carries `presentation: true`
 - `/sw.js` (service worker), `/push/key` (VAPID public key): push only
 - `/notes-search`: every shared note, folder and file for the picker,
   `{items: [{p, k, h, t, i}]}` (path, kind, link, mtime, icon), rebuilt per
@@ -230,7 +239,7 @@ POST:
   `replace=1` overwrites an existing visible file of that name in place
   (`replace_poub()`, keeping its expiry and comments) and adds
   `"replaced": true`; with no such file it is a normal upload.
-  Returns `{project, name, size, url, view?}`.
+  Returns `{project, name, size, url, view?, presentation?}`.
 - `/share`: Android share target, converting HEIC the same way
 - `/annotate`
 - `/expiry?target=poub|shot&key=&seconds=`: `0` clears, maximum 30 days

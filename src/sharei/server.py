@@ -71,6 +71,7 @@ from sharei.assets import (
     PDF_CSS,
     PDF_JS,
     PLAY_CSS,
+    PLAY_ICON,
     PUSH_JS,
     QR_CSS,
     QR_JS,
@@ -308,6 +309,7 @@ class PoubFile(TypedDict):
     thumb: str
     image: bool
     text: bool
+    presentation: bool
     timestamp: float
     expires: float | None
 
@@ -1098,6 +1100,66 @@ def sweep_partials(max_age: float = 24 * 60 * 60) -> None:
             continue
 
 
+# A drop is a presentation when its frontmatter says so; only the leading block is read.
+PRESENTATION_MAX_BYTES = 16 * 1024
+PRESENTATION_MAX_LINES = 200
+PRESENTATION_TRUE = {"true", "yes"}
+PRESENTATION_KEY = re.compile(r"presentation[ \t]*:[ \t]*(.*?)[ \t]*$")
+PRESENTATION_CACHE: dict[tuple[str, int, int], bool] = {}
+PRESENTATION_CACHE_MAX = 2048
+PRESENTATION_COMMENT = re.compile(r"[ \t]#.*$")
+
+
+def presentation_value(raw: str) -> str:
+    """The scalar after the colon: quoted text up to its matching quote, else up to a `#` comment.
+
+    Quotes that do not pair up, or text after the closing one that is not a comment, give "".
+    """
+    if raw[:1] in ("'", '"'):
+        end = raw.find(raw[0], 1)
+        if end < 0 or raw[end + 1 :].strip()[:1] not in ("", "#"):
+            return ""
+        return raw[1:end].strip().lower()
+    return PRESENTATION_COMMENT.sub("", raw).strip().lower()
+
+
+def presentation_frontmatter(path: Path) -> bool:
+    """Whether the file's leading frontmatter block has `presentation:` set to true or yes."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(PRESENTATION_MAX_BYTES)
+    except OSError:
+        return False
+    lines = head.decode("utf-8", "replace").split("\n", PRESENTATION_MAX_LINES + 1)
+    if lines[0].rstrip() != "---":
+        return False
+    value = ""
+    for line in lines[1:]:
+        if line.rstrip() in ("---", "..."):
+            return value in PRESENTATION_TRUE
+        match = PRESENTATION_KEY.match(line)
+        if match and not value:
+            value = presentation_value(match.group(1))
+    return False
+
+
+def is_presentation(path: Path) -> bool:
+    if not is_markdown(path.name):
+        return False
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if key in PRESENTATION_CACHE:
+        return PRESENTATION_CACHE[key]
+    found = presentation_frontmatter(path)
+    if len(PRESENTATION_CACHE) >= PRESENTATION_CACHE_MAX:
+        PRESENTATION_CACHE.clear()
+    PRESENTATION_CACHE[key] = found
+    return found
+
+
 def poub_files() -> list[PoubFile]:
     files: list[PoubFile] = []
     for path in poub_paths():
@@ -1118,6 +1180,7 @@ def poub_files() -> list[PoubFile]:
                 else "",
                 image=path.suffix.lower() in IMAGE_LIKE_SUFFIXES,
                 text=looks_like_text(path),
+                presentation=is_presentation(path),
                 timestamp=stat.st_mtime,
                 expires=expires_at(path),
             )
@@ -1291,11 +1354,13 @@ def markdown_page(
     note_links: dict[str, dict[str, str] | None] | None = None,
     crumbs: list[tuple[str, str]] | None = None,
     icon: str = "",
+    presentation: bool = False,
 ) -> tuple[bytes, str]:
     """The reader page and the nonce its scripts run under. The browser renders the markdown.
 
     With a comments URL the page also offers review mode, for line comments kept on the server.
-    With note_links it reads an Obsidian note: links go through that map.
+    With note_links it reads an Obsidian note: links go through that map. A presentation drop
+    gets a button that starts aniflow's slides.
     """
     nonce = secrets.token_urlsafe(16)
     data = ""
@@ -1318,6 +1383,12 @@ def markdown_page(
     banner = (
         f'<p class="notice" role="status">{html.escape(notice)}</p>' if notice else ""
     )
+    hero = (
+        '<div class="present-bar"><button type="button" class="present-go" id="present-go">'
+        f"{PLAY_ICON}<span>Play presentation</span></button></div>"
+        if presentation
+        else ""
+    )
     actions = "".join(
         f'<a href="{html.escape(href)}"{" download" if label == "Download" else ""}>{html.escape(label)}</a>'
         for label, href in links
@@ -1337,7 +1408,7 @@ def markdown_page(
         options=options,
         actions=actions,
         tools=qr_button() + search_button(),
-        top=trail + banner,
+        top=trail + hero + banner,
         style=QR_CSS + READER_CSS,
         favicon="/icon-192.png",
         theme_default=THEME_DEFAULT,
@@ -1739,6 +1810,9 @@ def drop_page(files: list[PoubFile], tab_counts: Counts) -> bytes:
             action = "Read"
             download = ""
             href = f"/md/{entry['url']}"
+            if entry["presentation"]:
+                href += "#slide=1"
+                action = f'<span class="present-badge">{PLAY_ICON}Present</span>'
         elif is_html:
             thumb = (
                 f'<iframe src="/poub/{entry["url"]}" sandbox="" tabindex="-1" aria-hidden="true" '
@@ -2239,6 +2313,7 @@ def recent_payload(limit: int, project: str | None = None) -> dict[str, object]:
                     if (view := view_url(path.parent.parent.name, path))
                     else {}
                 ),
+                **({"presentation": True} if is_presentation(path) else {}),
             }
         )
     shots = [
@@ -2639,6 +2714,7 @@ class Handler(web.Handler):
                     [("Raw", f"{url}?raw=1"), ("Download", url)],
                     project,
                     f"/comments/{quote(project)}/{quote(path.name)}",
+                    presentation=is_presentation(path),
                 )
                 self.send_html(body, page.reader_headers(nonce))
                 return
@@ -3232,6 +3308,7 @@ class Handler(web.Handler):
                 "size": path.stat().st_size,
                 "url": f"/poub/{quote(project)}/{quote(path.name)}",
                 **({"view": view} if view else {}),
+                **({"presentation": True} if is_presentation(path) else {}),
                 **({"replaced": True} if replaced else {}),
             }
         )

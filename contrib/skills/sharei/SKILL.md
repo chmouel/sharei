@@ -90,6 +90,22 @@ document's git repository or, outside one, its own folder.
 `/icons/` pictures need no upload. Open the `view` link once after sharing
 and fix any steps listed under the diagram's warning badge.
 
+When the user asks for slides, a deck or something to present, write the
+document with one `##` section per slide and this front matter:
+
+```markdown
+---
+title: Q3 review
+presentation: true
+---
+```
+
+Drop then shows it with a `▶ Present` badge and opens it in slides, and the
+`/md` page gets a Play presentation button. Only `true` or `yes` count. Point
+the user at the `view` link as usual, or at `/md/<project>/<name>#slide=1` to
+open slide one. `/recent` drop items and the upload JSON carry
+`presentation: true` for these.
+
 ### Review comments
 
 The user can comment on lines of a shared markdown file from its `/md`
