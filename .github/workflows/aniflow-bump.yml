@@ -1,0 +1,88 @@
+name: aniflow bump
+
+# aniflow is pinned to main's tip in uv.lock. This re-resolves that pin and, if
+# it moved, checks the result and opens a pull request for review.
+#
+# The checks run here rather than in CI because a branch pushed with the
+# workflow token does not trigger other workflows.
+#
+# Creating the pull request needs Settings > Actions > General > "Allow GitHub
+# Actions to create and approve pull requests". Scheduled workflows are
+# disabled after 60 days without repository activity.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: aniflow-bump
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BRANCH: aniflow-bump
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Move the pin to main's tip
+        run: uv lock --upgrade-package aniflow
+
+      - name: Stop when main has not moved
+        run: |
+          if git diff --quiet uv.lock; then
+            echo "aniflow pin is already at main's tip."
+            echo "changed=false" >> "$GITHUB_ENV"
+          else
+            echo "changed=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check the new pin
+        if: env.changed == 'true'
+        run: |
+          uv run --group dev ruff format --check .
+          uv run --group dev ruff check .
+          uv run --group dev pytest
+
+      - name: Open or update the pull request
+        if: env.changed == 'true'
+        env:
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          sha() { sed -n 's/.*aniflow.*#\([0-9a-f]\{40\}\)".*/\1/p' | head -1; }
+          old=$(git show HEAD:uv.lock | sha)
+          new=$(sha < uv.lock)
+          echo "aniflow $old -> $new" >> "$GITHUB_STEP_SUMMARY"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -m "build: bump aniflow to ${new:0:7}" uv.lock
+          git push --force origin "$BRANCH"
+
+          body=$(cat <<EOF
+          \`uv lock --upgrade-package aniflow\` moved the pin from \`${old:0:7}\` to \`${new:0:7}\`.
+
+          https://github.com/chmouel/aniflow/compare/${old}...${new}
+
+          The checks in the bump workflow passed; CI does not run on this
+          branch, so it shows as unchecked.
+          EOF
+          )
+
+          case $(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || echo NONE) in
+            OPEN) gh pr edit "$BRANCH" --body "$body" ;;
+            CLOSED) gh pr reopen "$BRANCH" ;;
+            MERGED) echo "the previous bump is already merged" ;;
+            *) gh pr create --base "$BASE" --head "$BRANCH" \
+                 --title "build: bump aniflow to ${new:0:7}" --body "$body" ;;
+          esac

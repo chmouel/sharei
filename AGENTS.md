@@ -28,9 +28,12 @@ proxy with authentication (see SECURITY.md).
   `aniflow.comments` (the comment model and limits), `aniflow.page`
   (`reader_page`, `reader_options`, `reader_headers`) and `aniflow.themes`.
   Reader and diagram internals are documented in aniflow's AGENTS.md; change
-  them there. The dependency is the git URL, pinned to a commit in
+  them there. The dependency is the git URL on `main`, pinned to a commit in
   `uv.lock`; `uv lock --upgrade-package aniflow` moves it to the latest
-  push. To try local aniflow changes, `uv pip install -e ../aniflow` and
+  push, and the `aniflow bump` workflow does that weekly and opens a pull
+  request when main moved (the checks run in that workflow, since a branch
+  it pushes with the workflow token does not trigger CI). To try local
+  aniflow changes, `uv pip install -e ../aniflow` and
   use `uv run --no-sync` until the next `uv sync`.
 - `src/sharei/push.py`: Web Push (RFC 8291 aes128gcm encryption, RFC 8292
   VAPID) on top of `cryptography`, the optional `push` extra. Without it
