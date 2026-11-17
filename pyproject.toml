@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Utilities",
 ]
-dependencies = ["aniflow @ git+https://github.com/chmouel/aniflow"]
+dependencies = ["aniflow @ git+https://github.com/chmouel/aniflow@main"]
 
 [project.optional-dependencies]
 thumbnails = ["Pillow>=11", "pillow-heif>=1"]

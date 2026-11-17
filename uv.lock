@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 [[package]]
 name = "aniflow"
 version = "0.1.0"
-source = { git = "https://github.com/chmouel/aniflow#398c35d45e280836fd7a61c5a01c7060ad0cf3c8" }
+source = { git = "https://github.com/chmouel/aniflow?rev=main#e1e1d48af9ff8bc7a7b18caee914e950b4cd66ab" }
 
 [[package]]
 name = "cffi"
@@ -413,7 +413,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aniflow", git = "https://github.com/chmouel/aniflow" },
+    { name = "aniflow", git = "https://github.com/chmouel/aniflow?rev=main" },
     { name = "cryptography", marker = "extra == 'push'", specifier = ">=42" },
     { name = "pillow", marker = "extra == 'thumbnails'", specifier = ">=11" },
     { name = "pillow-heif", marker = "extra == 'thumbnails'", specifier = ">=1" },
