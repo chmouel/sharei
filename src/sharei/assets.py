@@ -120,7 +120,9 @@ EXTRA_CSS = """
   .caption { display:grid; gap:4px; padding:12px 16px 18px; text-align:center; }
   .caption strong { font-size:14px; font-weight:650; overflow-wrap:anywhere; }
   .caption small { color:var(--muted); font-size:12px; }
-  @media (max-width:599px) { .gallery { grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:10px 8px; } .nav { display:none; } }
+  /* Two big tiles per row on a phone: three left each one about 100px wide, too small to
+     recognise a screenshot or hit its delete button. */
+  @media (max-width:599px) { .gallery { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px 12px; } .tile { font-size:12px; } .tile-delete, .file-delete { width:32px; height:32px; font-size:13px; } .nav { display:none; } }
 """
 
 

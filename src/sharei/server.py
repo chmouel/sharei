@@ -277,9 +277,9 @@ ALLOWED_HOST_SUFFIXES = (
     ".internal",
     ".ts.net",
 )
-THUMB_MAX = 480
+THUMB_MAX = 640
 # Bumped when the bytes a thumbnail holds change, so an old cached one is not served.
-THUMB_VERSION = 2
+THUMB_VERSION = 3
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 VENDOR = SCRIPT_DIR / "vendor"
